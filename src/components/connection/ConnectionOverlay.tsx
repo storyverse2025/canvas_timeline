@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMappingStore } from '@/stores/mapping-store'
 import { useCanvasStore } from '@/stores/canvas-store'
 
@@ -19,8 +19,11 @@ export function ConnectionOverlay({ containerRef }: ConnectionOverlayProps) {
   const selectedNodeIds = useCanvasStore((s) => s.selectedNodeIds)
   const [lines, setLines] = useState<LineCoords[]>([])
 
-  // Only show connections for selected nodes
-  const activeLinks = links.filter((l) => selectedNodeIds.includes(l.canvasNodeId))
+  // Only show connections for selected nodes — memoize to avoid new array each render
+  const activeLinks = useMemo(
+    () => links.filter((l) => selectedNodeIds.includes(l.canvasNodeId)),
+    [links, selectedNodeIds]
+  )
 
   // Calculate line positions
   useEffect(() => {
@@ -33,9 +36,7 @@ export function ConnectionOverlay({ containerRef }: ConnectionOverlayProps) {
     const containerRect = containerRef.getBoundingClientRect()
 
     for (const link of activeLinks) {
-      // Find canvas node element
       const nodeEl = containerRef.querySelector(`[data-id="${link.canvasNodeId}"]`)
-      // Find timeline shot element (now uses data-timeline-item on shot containers)
       const timelineEl = document.querySelector(`[data-timeline-item="${link.timelineItemId}"]`)
 
       if (nodeEl && timelineEl) {
@@ -53,7 +54,7 @@ export function ConnectionOverlay({ containerRef }: ConnectionOverlayProps) {
     }
 
     setLines(newLines)
-  }, [containerRef, activeLinks, selectedNodeIds])
+  }, [containerRef, activeLinks])
 
   if (lines.length === 0) return null
 
