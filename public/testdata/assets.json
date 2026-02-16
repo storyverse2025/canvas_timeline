@@ -1,0 +1,84 @@
+{
+  "characters": [
+    {
+      "id": "char_001",
+      "name": "林夜",
+      "role": "男主角",
+      "age": 22,
+      "occupation": "凡人修士",
+      "persona": {
+        "appearance": "凌乱黑发，冷峻坚毅的眼神，穿深色破旧修士袍，腕缠暗红布条",
+        "personality": "沉默坚韧，以命搏命，冷静得可怕",
+        "weakness": "凡人之躯，实力远不如对手",
+        "specialty": "裂剑魂火、阵纹激活、以命为赌注的战斗方式"
+      },
+      "prompt": "A high-quality 3D animation character model sheet in a clear 2x2 grid layout on a neutral HDRI studio background. The four tiles are: top-left is front full-body view, top-right is right side profile full-body view, bottom-left is back full-body view, bottom-right is face close-up portrait from shoulders up. The character is an Asian male young xianxia warrior, age around 20, with messy dark black hair falling over his forehead and eyes, cold determined narrow eyes with dark irises, sharp angular jawline, lean athletic build. He wears dark tattered and weathered robes in charcoal gray and black tones with frayed hems and battle-worn fabric. A dark red cloth bandage is wrapped tightly around his left wrist. He carries a cracked ancient straight sword on his back, the blade showing visible crack lines that glow with faint cold blue soul-fire light. A small jade talisman hangs at his waist, pulsing faint cyan-blue light. In all three body tiles the character is shown head to toe with hands and feet fully visible. High-quality 3D animation rendering, PBR materials with metallic and roughness detail, subsurface scattering skin, high-poly geometry, volumetric lighting, Unreal Engine 5 quality, cinematic render, subtle rim lighting. No flat 2D, no cel-shading, no photorealism, stylized 3D animation character design.",
+      "image_url": "assets/characters/char_001_selected.png",
+      "look_references": [
+        {"id": "look_001", "image_url": "assets/characters/char_001_v1.png", "is_locked": false, "prompt": "3D xianxia warrior, dark robes, cracked sword, jade talisman"},
+        {"id": "look_002", "image_url": "assets/characters/char_001_v2.png", "is_locked": false, "prompt": "3D xianxia warrior variant 2"},
+        {"id": "look_005", "image_url": "assets/characters/char_001_v3.png", "is_locked": false, "prompt": "2D anime character model sheet, 4-view grid, Asian young male xianxia warrior, dark tattered robes, cracked sword, jade talisman, cel-shading"},
+        {"id": "look_007", "image_url": "assets/characters/char_001_v4.png", "is_locked": true, "prompt": "3D animation character model sheet, 4-view grid, PBR materials, Asian male xianxia warrior, dark tattered robes, cracked sword with blue soul-fire, jade talisman, UE5 quality"}
+      ],
+      "locked_look_id": "look_007",
+      "first_episode": 1
+    },
+    {
+      "id": "char_002",
+      "name": "执法者",
+      "role": "反派",
+      "age": null,
+      "occupation": "天道执法者",
+      "persona": {
+        "appearance": "白衣黑边，眉心淡金印记，身后悬浮三道霜白剑影，气质高冷威压",
+        "personality": "冷漠权威，视规则为绝对，蔑视凡人",
+        "weakness": "过于自信，未预料到林夜的以命搏命",
+        "specialty": "三道霜白剑影、眉心淡金印记（规则之力）"
+      },
+      "prompt": "A high-quality 3D animation character model sheet in a clear 2x2 grid layout on a neutral HDRI studio background. The four tiles are: top-left is front full-body view, top-right is right side profile full-body view, bottom-left is back full-body view, bottom-right is face close-up portrait from shoulders up. The character is an Asian male tall imposing xianxia enforcer figure, age appears mid-30s, with long straight black hair tied back in a neat topknot, cold authoritative expression, sharp elegant features, pale complexion. He wears flowing pristine white robes with crisp black trim along edges collars and cuffs, immaculate billowing fabric. A faint pale gold mystical sigil mark on his forehead between the eyebrows. Three translucent frost-white spectral sword shadows float behind him in a fan formation. In all three body tiles the character is shown head to toe with hands and feet fully visible. High-quality 3D animation rendering, PBR materials with silk fabric shading and roughness, subsurface scattering skin, high-poly geometry, volumetric lighting, Unreal Engine 5 quality, cinematic render, subtle rim lighting. No flat 2D, no cel-shading, no photorealism, stylized 3D animation character design.",
+      "image_url": "assets/characters/char_002_selected.png",
+      "look_references": [
+        {"id": "look_003", "image_url": "assets/characters/char_002_v1.png", "is_locked": false, "prompt": "3D xianxia enforcer, white robes, spectral swords"},
+        {"id": "look_004", "image_url": "assets/characters/char_002_v2.png", "is_locked": false, "prompt": "3D xianxia enforcer variant 2"},
+        {"id": "look_006", "image_url": "assets/characters/char_002_v3.png", "is_locked": false, "prompt": "2D anime character model sheet, 4-view grid, Asian male xianxia enforcer, white robes black trim, gold forehead sigil, spectral swords, cel-shading"},
+        {"id": "look_008", "image_url": "assets/characters/char_002_v4.png", "is_locked": true, "prompt": "3D animation character model sheet, 4-view grid, PBR materials, Asian male xianxia enforcer, white robes black trim, gold forehead sigil, spectral swords, UE5 quality"}
+      ],
+      "locked_look_id": "look_008",
+      "first_episode": 1
+    }
+  ],
+  "scenes": [
+    {
+      "id": "scene_001",
+      "name": "荒城断坛",
+      "story_facts": {"location": "荒漠中的残破祭坛", "time": "夜", "event": "林夜与执法者的生死对决"},
+      "visual_look": {"material": "破碎石质祭坛，古老阵纹", "lighting": "冷月光，高对比明暗", "era": "上古仙侠", "mood": "荒凉、压迫、神秘"},
+      "prompt": "A cinematic wide establishing shot of an ancient ruined altar in a vast desert wasteland at night, rendered in high-quality 3D animation style with ray-traced global illumination. A crumbling stone platform at the center with intricate magical array patterns carved into the ground, the array lines cracked and fractured with faint cold blue glow emanating from within. Cold silver moonlight from a large pale moon in a dark indigo sky with faint stars. Scattered broken stone pillars, debris, wind-swept sand. Volumetric fog and depth haze creating atmospheric perspective. PBR stone materials with roughness and weathering detail, volumetric dust particles caught in moonbeams. Desolate xianxia atmosphere, ancient power, oppressive loneliness. Color palette: deep blues, cold silvers, dark stone grays with glowing blue array cracks. Completely empty scene, no people, no humans, no characters, no figures, no silhouettes. Cinematic 16:9 composition, Unreal Engine 5 quality, ray-traced shadows and reflections. No flat 2D, no cel-shading, no photorealism.",
+      "image_url": "assets/scenes/scene_001_selected.png",
+      "look_references": [
+        {"id": "scene_look_001", "image_url": "assets/scenes/scene_001_v1.png", "is_locked": false, "prompt": "3D ruined altar, desert wasteland, night, magical array"},
+        {"id": "scene_look_002", "image_url": "assets/scenes/scene_001_v2.png", "is_locked": false, "prompt": "3D ruined altar variant 2"},
+        {"id": "scene_look_003", "image_url": "assets/scenes/scene_001_v3.png", "is_locked": false, "prompt": "2D animation ruined altar, desert night, glowing array, empty, cel-shading"},
+        {"id": "scene_look_004", "image_url": "assets/scenes/scene_001_v4.png", "is_locked": true, "prompt": "3D animation ruined altar, ray-traced GI, PBR stone, volumetric fog, desert night, glowing array, UE5 quality"}
+      ],
+      "locked_look_id": "scene_look_004",
+      "locked_facts": true
+    }
+  ],
+  "props": [
+    {
+      "id": "prop_001",
+      "name": "残缺玉简",
+      "description": "一枚破损的古玉简，裂缝中透出青蓝色脉动光芒，如同微弱心跳。表面隐约可见古文字。",
+      "prompt": "A cinematic product shot of a cracked ancient jade talisman tablet rendered in high-quality 3D animation style, centered composition on a dark background. A small rectangular palm-sized jade tablet made of translucent green jade with PBR material rendering showing subsurface scattering through the jade, visible surface wear and ancient patina. Deep cracks running through the tablet with cyan-blue pulsing light emanating from within each crack like a faint heartbeat glow. Ancient Chinese inscription characters faintly etched into the jade surface, partially worn away. Chipped irregular edges from age and damage. High-quality 3D animation rendering, PBR jade material with translucency and roughness maps, volumetric internal glow from cracks, controlled studio HDRI lighting, high-poly detail. Clear silhouette against dark background. No people, no hands, displayed like a museum artifact. Unreal Engine 5 quality, no flat 2D, no cel-shading, no photorealism.",
+      "image_url": "assets/props/prop_001_selected.png",
+      "look_references": [
+        {"id": "prop_look_001", "image_url": "assets/props/prop_001_v1.png", "is_locked": false, "prompt": "3D cracked jade talisman, cyan-blue glow, dark background"},
+        {"id": "prop_look_002", "image_url": "assets/props/prop_001_v2.png", "is_locked": false, "prompt": "2D animation cracked jade talisman, cyan-blue glow, stylized material, cel-shading"},
+        {"id": "prop_look_003", "image_url": "assets/props/prop_001_v3.png", "is_locked": true, "prompt": "3D animation cracked jade talisman, PBR jade material, subsurface scattering, cyan-blue glow, UE5 quality"}
+      ],
+      "locked_look_id": "prop_look_003",
+      "appearances": [{"episode_number": 1, "scene_number": 1, "shot_number": 3}]
+    }
+  ]
+}

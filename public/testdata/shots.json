@@ -1,0 +1,946 @@
+{
+  "episodes": [
+    {
+      "episode_number": 1,
+      "shots": [
+        {
+          "id": "shot_001",
+          "shot_number": 1,
+          "beat_number": 1,
+          "description": "月下对峙——执法者宣判死刑。林夜与执法者在月光荒坛对视，三道霜白剑影亮起。",
+          "dialogue": "00.00s-02.00s: ambient sound, no dialogue\n02.00s-04.00s: 【char_002】: 凡人逆命，必死。",
+          "duration": 12,
+          "storyboard_frame_id": "frame_001",
+          "character_ids": [
+            "char_001",
+            "char_002"
+          ],
+          "scene_id": "scene_001",
+          "reference_frame": "storyboard/episode_1/frame_001_extracted.png",
+          "beat": {
+            "segments": [
+              {
+                "time_range": "00.00s-01.00s",
+                "action": "Static Hold — 两人月下对峙，尘雾缓慢飘散",
+                "locked": false
+              },
+              {
+                "time_range": "01.00s-03.00s",
+                "action": "Push In — 执法者抬手，剑影亮起 [char_002]",
+                "locked": false
+              },
+              {
+                "time_range": "03.00s-05.00s",
+                "action": "Rack Focus — 三道霜白剑影蜂鸣点亮 [char_002]",
+                "locked": false
+              },
+              {
+                "time_range": "05.00s-07.00s",
+                "action": "Return Snap — 林夜握紧裂剑，蓝光裂缝渗出 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "07.00s-09.00s",
+                "action": "Static Floating — 两人对峙，尘雾中月光如刃 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "09.00s-11.00s",
+                "action": "Dutch Angle Close Up — 林夜眼神坚毅特写 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "11.00s-12.00s",
+                "action": "Static Hold — 对峙定格，风吹衣袂 [char_001]",
+                "locked": false
+              }
+            ],
+            "locks": {
+              "character": true,
+              "scene": true,
+              "style": false
+            }
+          },
+          "prompt": "GOAL: Establish the death-sentence standoff between mortal warrior and divine enforcer at the moonlit ruined altar.\nSHOT_PLAN:\n  00.00s-01.00s: Static Hold (No Movement) — two warriors face off at moonlit altar, dust drifts slowly [char_001]\n  01.00s-03.00s: Push In (Killer Intent) — Enforcer raises one hand, three frost-white sword shadows ignite with piercing hum, fog swirls [char_002]\n  03.00s-05.00s: Rack Focus (Fast) — sword shadows pulse with cold light, dust particles caught in moonbeam [char_002]\n  05.00s-07.00s: Return Snap (Reaction) — Lin Ye tightens grip on cracked sword, faint blue soul-fire seeps through blade cracks [char_001]\n  07.00s-09.00s: Static Floating — standoff holds, moonlight cuts through dust like blade between them [char_001]\n  09.00s-11.00s: Dutch Angle Close Up (Tension) — Lin Ye's cold determined eyes, wind catches hair [char_001]\n  11.00s-12.00s: Static Hold (No Movement) — standoff frozen, robes billow in wind [char_001]\nDIALOGUE:\n  00.00s-02.00s: ambient sound, no dialogue\n  02.00s-04.00s: 【char_002】: 凡人逆命，必死。\nEXPORT: Cold moonlight chiaroscuro, dust particles, frost-white sword glow, faint blue crack-light on blade, desolate altar stone, volumetric fog\nVISUAL_PROMPT: Two warriors face off at moonlit ruined altar, three spectral swords ignite, cracked blade glows blue, dust swirls in cold light",
+          "video_url": "shots/episode_1/shot_001_selected.mp4",
+          "image_url": "storyboard/episode_1/frame_001_selected.png",
+          "status": "completed",
+          "tool_used": "kling_o3_i2v",
+          "quality_score": 4.8,
+          "quality_issues": [],
+          "versions": [
+            {
+              "version": 1,
+              "video_url": "shots/episode_1/shot_001_v1.mp4",
+              "prompt": "Starting from the top-left panel, two warriors face off at moonlit ruined altar...",
+              "tool_used": "kling_v2.1_master_i2v",
+              "reference_frame": "storyboard/episode_1/frame_001_extracted.png",
+              "quality_score": null,
+              "quality_issues": [],
+              "timestamp": "2026-02-15T01:00:00Z",
+              "selected": false
+            },
+            {
+              "version": 2,
+              "video_url": "shots/episode_1/shot_001_v2.mp4",
+              "prompt": "GOAL: Establish the death-sentence standoff between mortal warrior and divine enforcer at the moonlit ruined altar.\nSHOT_PLAN:\n  00.00s-01.00s: Static Hold (No Movement) — two warriors face off at moonlit altar, dust drifts slowly [char_001]\n  01.00s-03.00s: Push In (Killer Intent) — Enforcer raises one hand, three frost-white sword shadows ignite with piercing hum, fog swirls [char_002]\n  03.00s-05.00s: Rack Focus (Fast) — sword shadows pulse with cold light, dust particles caught in moonbeam [char_002]\n  05.00s-07.00s: Return Snap (Reaction) — Lin Ye tightens grip on cracked sword, faint blue soul-fire seeps through blade cracks [char_001]\n  07.00s-09.00s: Static Floating — standoff holds, moonlight cuts through dust like blade between them [char_001]\n  09.00s-11.00s: Dutch Angle Close Up (Tension) — Lin Ye's cold determined eyes, wind catches hair [char_001]\n  11.00s-12.00s: Static Hold (No Movement) — standoff frozen, robes billow in wind [char_001]\nDIALOGUE:\n  00.00s-02.00s: ambient sound, no dialogue\n  02.00s-04.00s: 【char_002】: 凡人逆命，必死。\nEXPORT: Cold moonlight chiaroscuro, dust particles, frost-white sword glow, faint blue crack-light on blade, desolate altar stone, volumetric fog\nVISUAL_PROMPT: Two warriors face off at moonlit ruined altar, three spectral swords ignite, cracked blade glows blue, dust swirls in cold light",
+              "tool_used": "kling_o3_i2v",
+              "reference_frame": "storyboard/episode_1/frame_001_extracted.png",
+              "quality_score": 4.8,
+              "quality_issues": [],
+              "timestamp": "2026-02-15T07:03:17Z",
+              "selected": true
+            }
+          ]
+        },
+        {
+          "id": "shot_002",
+          "shot_number": 2,
+          "beat_number": 2,
+          "description": "第一剑——林夜硬接被震退。剑影白蛇出洞，林夜举剑格挡，火花四溅，被震退三步。",
+          "dialogue": "00.00s-02.00s: ambient sound, no dialogue\n02.00s-04.00s: 【char_002】: 这就是你的全部？",
+          "duration": 12,
+          "storyboard_frame_id": "frame_002",
+          "character_ids": [
+            "char_001",
+            "char_002"
+          ],
+          "scene_id": "scene_001",
+          "reference_frame": "storyboard/episode_1/frame_002_extracted.png",
+          "beat": {
+            "segments": [
+              {
+                "time_range": "00.00s-01.00s",
+                "action": "Static Hold — 剑影蓄势，雾气翻涌",
+                "locked": false
+              },
+              {
+                "time_range": "01.00s-03.00s",
+                "action": "Crash Zoom In — 第一道剑影如白蛇刺出 [char_002]",
+                "locked": false
+              },
+              {
+                "time_range": "03.00s-05.00s",
+                "action": "Snap Zoom — 林夜举剑格挡，银白火花爆开 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "05.00s-07.00s",
+                "action": "Reverse Pullback — 林夜被震退三步，靴底划出沟痕 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "07.00s-09.00s",
+                "action": "Profile Tracking — 林夜稳住身形，碎石飞溅 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "09.00s-11.00s",
+                "action": "Static Floating — 执法者纹丝不动，蔑视目光 [char_002]",
+                "locked": false
+              },
+              {
+                "time_range": "11.00s-12.00s",
+                "action": "Static Hold — 尘埃落定在林夜脚边 [char_001]",
+                "locked": false
+              }
+            ],
+            "locks": {
+              "character": true,
+              "scene": true,
+              "style": false
+            }
+          },
+          "prompt": "GOAL: Show the overwhelming power gap as the first sword shadow knocks Lin Ye back three steps.\nSHOT_PLAN:\n  00.00s-01.00s: Static Hold (No Movement) — sword shadow coils, fog churns around altar [char_002]\n  01.00s-03.00s: Crash Zoom In (Head on) — first frost-white sword shadow launches like white serpent at chest [char_002]\n  03.00s-05.00s: Snap Zoom (Face) — Lin Ye raises cracked sword to block, silver-white sparks explode on collision [char_001]\n  05.00s-07.00s: Reverse Pullback (Vacuum) — impact sends Lin Ye sliding back three steps, boots gouge stone [char_001]\n  07.00s-09.00s: Profile Tracking (Handheld Shake) — Lin Ye steadies stance, stone debris scatters [char_001]\n  09.00s-11.00s: Static Floating — Enforcer stands utterly still, contemptuous gaze, dust settles [char_002]\n  11.00s-12.00s: Static Hold (No Movement) — dust settles around Lin Ye's displaced feet [char_001]\nDIALOGUE:\n  00.00s-02.00s: ambient sound, no dialogue\n  02.00s-04.00s: 【char_002】: 这就是你的全部？\nEXPORT: Silver-white spark explosion, boot furrows in stone, frost-white sword glow, moonlit dust, chiaroscuro contrast\nVISUAL_PROMPT: Frost-white sword shadow strikes warrior, massive spark explosion, warrior slides back three steps on stone altar",
+          "video_url": "shots/episode_1/shot_002_selected.mp4",
+          "image_url": "storyboard/episode_1/frame_002_selected.png",
+          "status": "completed",
+          "tool_used": "kling_o3_i2v",
+          "quality_score": 4.0,
+          "quality_issues": [
+            "slight_motion_blur"
+          ],
+          "versions": [
+            {
+              "version": 1,
+              "video_url": "shots/episode_1/shot_002_v1.mp4",
+              "prompt": "Animate the 2x3 storyboard grid sequence...",
+              "tool_used": "kling_v2.1_master_i2v",
+              "reference_frame": "storyboard/episode_1/frame_002_extracted.png",
+              "quality_score": null,
+              "quality_issues": [],
+              "timestamp": "2026-02-15T01:05:00Z",
+              "selected": false
+            },
+            {
+              "version": 2,
+              "video_url": "shots/episode_1/shot_002_v2.mp4",
+              "prompt": "GOAL: Show the overwhelming power gap as the first sword shadow knocks Lin Ye back three steps.\nSHOT_PLAN:\n  00.00s-01.00s: Static Hold (No Movement) — sword shadow coils, fog churns around altar [char_002]\n  01.00s-03.00s: Crash Zoom In (Head on) — first frost-white sword shadow launches like white serpent at chest [char_002]\n  03.00s-05.00s: Snap Zoom (Face) — Lin Ye raises cracked sword to block, silver-white sparks explode on collision [char_001]\n  05.00s-07.00s: Reverse Pullback (Vacuum) — impact sends Lin Ye sliding back three steps, boots gouge stone [char_001]\n  07.00s-09.00s: Profile Tracking (Handheld Shake) — Lin Ye steadies stance, stone debris scatters [char_001]\n  09.00s-11.00s: Static Floating — Enforcer stands utterly still, contemptuous gaze, dust settles [char_002]\n  11.00s-12.00s: Static Hold (No Movement) — dust settles around Lin Ye's displaced feet [char_001]\nDIALOGUE:\n  00.00s-02.00s: ambient sound, no dialogue\n  02.00s-04.00s: 【char_002】: 这就是你的全部？\nEXPORT: Silver-white spark explosion, boot furrows in stone, frost-white sword glow, moonlit dust, chiaroscuro contrast\nVISUAL_PROMPT: Frost-white sword shadow strikes warrior, massive spark explosion, warrior slides back three steps on stone altar",
+              "tool_used": "kling_o3_i2v",
+              "reference_frame": "storyboard/episode_1/frame_002_extracted.png",
+              "quality_score": 4.0,
+              "quality_issues": [
+                "slight_motion_blur"
+              ],
+              "timestamp": "2026-02-15T07:03:17Z",
+              "selected": true
+            }
+          ]
+        },
+        {
+          "id": "shot_003",
+          "shot_number": 3,
+          "beat_number": 3,
+          "description": "第二剑——近身缠斗、借力反击。林夜架偏剑影旋身反斩，两人近身缠斗兵器交锁。",
+          "dialogue": "00.00s-02.00s: ambient sound, no dialogue\n02.00s-04.00s: 【char_001】: 还没完——",
+          "duration": 12,
+          "storyboard_frame_id": "frame_003",
+          "character_ids": [
+            "char_001",
+            "char_002"
+          ],
+          "scene_id": "scene_001",
+          "reference_frame": "storyboard/episode_1/frame_003_extracted.png",
+          "beat": {
+            "segments": [
+              {
+                "time_range": "00.00s-01.00s",
+                "action": "Static Hold — 第二道剑影侧面逼近",
+                "locked": false
+              },
+              {
+                "time_range": "01.00s-03.00s",
+                "action": "Over-Shoulder Whip — 林夜架偏剑影借力旋身 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "03.00s-05.00s",
+                "action": "Profile Tracking — 反斩切向执法者，首次皱眉 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "05.00s-07.00s",
+                "action": "Snap Zoom — 近身三连斩交锋 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "07.00s-09.00s",
+                "action": "Low Angle Truck Left — 执法者指弹化解每一击 [char_002]",
+                "locked": false
+              },
+              {
+                "time_range": "09.00s-11.00s",
+                "action": "Dutch Angle Close Up — 兵器交锁面对面僵持 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "11.00s-12.00s",
+                "action": "Static Hold — 两人咬牙对视定格 [char_001]",
+                "locked": false
+              }
+            ],
+            "locks": {
+              "character": true,
+              "scene": true,
+              "style": false
+            }
+          },
+          "prompt": "GOAL: Lin Ye counter-attacks and forces close-quarters combat, locking weapons face-to-face for the first time.\nSHOT_PLAN:\n  00.00s-01.00s: Static Hold (No Movement) — second sword shadow slashes from the side, moonlit fog swirls [char_002]\n  01.00s-03.00s: Over-Shoulder Whip — Lin Ye deflects shadow's trajectory, spins using momentum [char_001]\n  03.00s-05.00s: Profile Tracking (Handheld Shake) — backhand slash toward Enforcer, brow furrows for first time [char_001]\n  05.00s-07.00s: Snap Zoom (Face) — three rapid slashes in close-quarters, sparks fly with each clash [char_001]\n  07.00s-09.00s: Low Angle Truck Left (Slider) — Enforcer flicks each slash away with fingers, dust billows [char_002]\n  09.00s-11.00s: Dutch Angle Close Up (Tension) — weapons lock face-to-face, grinding against each other [char_001]\n  11.00s-12.00s: Static Hold (No Movement) — locked weapons, both fighters strain, breath visible in cold air [char_001]\nDIALOGUE:\n  00.00s-02.00s: ambient sound, no dialogue\n  02.00s-04.00s: 【char_001】: 还没完——\nEXPORT: Close-quarters sparks, moonlit blade reflections, dust from rapid movement, breath mist in cold air\nVISUAL_PROMPT: Warriors locked in close-quarters combat at moonlit altar, weapons grinding face-to-face, sparks and dust",
+          "video_url": "shots/episode_1/shot_003_selected.mp4",
+          "image_url": "storyboard/episode_1/frame_003_selected.png",
+          "status": "completed",
+          "tool_used": "kling_o3_i2v",
+          "quality_score": 4.0,
+          "quality_issues": [
+            "action_blur"
+          ],
+          "versions": [
+            {
+              "version": 1,
+              "video_url": "shots/episode_1/shot_003_v1.mp4",
+              "prompt": "Follow the 3x3 storyboard sequence...",
+              "tool_used": "kling_v2.1_master_i2v",
+              "reference_frame": "storyboard/episode_1/frame_003_extracted.png",
+              "quality_score": null,
+              "quality_issues": [],
+              "timestamp": "2026-02-15T01:10:00Z",
+              "selected": false
+            },
+            {
+              "version": 2,
+              "video_url": "shots/episode_1/shot_003_v2.mp4",
+              "prompt": "GOAL: Lin Ye counter-attacks and forces close-quarters combat, locking weapons face-to-face for the first time.\nSHOT_PLAN:\n  00.00s-01.00s: Static Hold (No Movement) — second sword shadow slashes from the side, moonlit fog swirls [char_002]\n  01.00s-03.00s: Over-Shoulder Whip — Lin Ye deflects shadow's trajectory, spins using momentum [char_001]\n  03.00s-05.00s: Profile Tracking (Handheld Shake) — backhand slash toward Enforcer, brow furrows for first time [char_001]\n  05.00s-07.00s: Snap Zoom (Face) — three rapid slashes in close-quarters, sparks fly with each clash [char_001]\n  07.00s-09.00s: Low Angle Truck Left (Slider) — Enforcer flicks each slash away with fingers, dust billows [char_002]\n  09.00s-11.00s: Dutch Angle Close Up (Tension) — weapons lock face-to-face, grinding against each other [char_001]\n  11.00s-12.00s: Static Hold (No Movement) — locked weapons, both fighters strain, breath visible in cold air [char_001]\nDIALOGUE:\n  00.00s-02.00s: ambient sound, no dialogue\n  02.00s-04.00s: 【char_001】: 还没完——\nEXPORT: Close-quarters sparks, moonlit blade reflections, dust from rapid movement, breath mist in cold air\nVISUAL_PROMPT: Warriors locked in close-quarters combat at moonlit altar, weapons grinding face-to-face, sparks and dust",
+              "tool_used": "kling_o3_i2v",
+              "reference_frame": "storyboard/episode_1/frame_003_extracted.png",
+              "quality_score": 4.0,
+              "quality_issues": [
+                "action_blur"
+              ],
+              "timestamp": "2026-02-15T07:03:17Z",
+              "selected": true
+            }
+          ]
+        },
+        {
+          "id": "shot_004",
+          "shot_number": 4,
+          "beat_number": 4,
+          "description": "第三剑——绞杀漩涡围困。三道剑影合并为绞杀漩涡，林夜被卷入被迫单膝跪地。",
+          "dialogue": "00.00s-02.00s: ambient sound, no dialogue\n02.00s-04.00s: 【char_002】: 跪下受死。",
+          "duration": 12,
+          "storyboard_frame_id": "frame_004",
+          "character_ids": [
+            "char_001",
+            "char_002"
+          ],
+          "scene_id": "scene_001",
+          "reference_frame": "storyboard/episode_1/frame_004_extracted.png",
+          "beat": {
+            "segments": [
+              {
+                "time_range": "00.00s-01.00s",
+                "action": "Static Hold — 三道剑影汇聚蓄力",
+                "locked": false
+              },
+              {
+                "time_range": "01.00s-03.00s",
+                "action": "Orbital Spin — 剑影合并为旋转漩涡 [char_002]",
+                "locked": false
+              },
+              {
+                "time_range": "03.00s-05.00s",
+                "action": "Crash Zoom In — 漩涡吞噬林夜，衣衫撕裂 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "05.00s-07.00s",
+                "action": "Tumble Cam — 漩涡内血雾飞溅 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "07.00s-09.00s",
+                "action": "Low Angle Truck Left — 林夜被迫单膝跪地插剑 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "09.00s-11.00s",
+                "action": "Silhouette Reveal — 执法者俯视跪地的林夜 [char_002]",
+                "locked": false
+              },
+              {
+                "time_range": "11.00s-12.00s",
+                "action": "Static Hold — 漩涡旋转，林夜咬牙支撑 [char_001]",
+                "locked": false
+              }
+            ],
+            "locks": {
+              "character": true,
+              "scene": true,
+              "style": false
+            }
+          },
+          "prompt": "GOAL: The sword vortex trap engulfs Lin Ye and forces him to one knee — his lowest point before the turning point.\nSHOT_PLAN:\n  00.00s-01.00s: Static Hold (No Movement) — three sword shadows converge, energy humming, fog churns [char_002]\n  01.00s-03.00s: Orbital Spin — shadows merge into massive rotating vortex of white energy, debris caught [char_002]\n  03.00s-05.00s: Crash Zoom In (Head on) — vortex engulfs Lin Ye, robes shredding, sparks of light [char_001]\n  05.00s-07.00s: Tumble Cam (Chaos) — inside vortex, blood sprays from shoulders and arms, fabric tears [char_001]\n  07.00s-09.00s: Low Angle Truck Left (Slider) — Lin Ye forced to one knee, drives sword into stone to brace [char_001]\n  09.00s-11.00s: Silhouette Reveal (Backlight) — Enforcer towers outside vortex, looking down with authority [char_002]\n  11.00s-12.00s: Static Hold (No Movement) — vortex spins, Lin Ye grits teeth bracing, dust whirls [char_001]\nDIALOGUE:\n  00.00s-02.00s: ambient sound, no dialogue\n  02.00s-04.00s: 【char_002】: 跪下受死。\nEXPORT: Rotating white energy vortex, shredding fabric, blood spray, moonlit dust, dramatic low-angle authority\nVISUAL_PROMPT: Massive sword vortex engulfs warrior forcing him to one knee, enforcer towers above in moonlight",
+          "video_url": "shots/episode_1/shot_004_selected.mp4",
+          "image_url": "storyboard/episode_1/frame_004_selected.png",
+          "status": "completed",
+          "tool_used": "kling_o3_i2v",
+          "quality_score": 4.2,
+          "quality_issues": [],
+          "versions": [
+            {
+              "version": 1,
+              "video_url": "shots/episode_1/shot_004_v1.mp4",
+              "prompt": "Animate the 2x3 storyboard grid...",
+              "tool_used": "kling_v2.1_master_i2v",
+              "reference_frame": "storyboard/episode_1/frame_004_extracted.png",
+              "quality_score": null,
+              "quality_issues": [],
+              "timestamp": "2026-02-15T01:15:00Z",
+              "selected": false
+            },
+            {
+              "version": 2,
+              "video_url": "shots/episode_1/shot_004_v2.mp4",
+              "prompt": "GOAL: The sword vortex trap engulfs Lin Ye and forces him to one knee — his lowest point before the turning point.\nSHOT_PLAN:\n  00.00s-01.00s: Static Hold (No Movement) — three sword shadows converge, energy humming, fog churns [char_002]\n  01.00s-03.00s: Orbital Spin — shadows merge into massive rotating vortex of white energy, debris caught [char_002]\n  03.00s-05.00s: Crash Zoom In (Head on) — vortex engulfs Lin Ye, robes shredding, sparks of light [char_001]\n  05.00s-07.00s: Tumble Cam (Chaos) — inside vortex, blood sprays from shoulders and arms, fabric tears [char_001]\n  07.00s-09.00s: Low Angle Truck Left (Slider) — Lin Ye forced to one knee, drives sword into stone to brace [char_001]\n  09.00s-11.00s: Silhouette Reveal (Backlight) — Enforcer towers outside vortex, looking down with authority [char_002]\n  11.00s-12.00s: Static Hold (No Movement) — vortex spins, Lin Ye grits teeth bracing, dust whirls [char_001]\nDIALOGUE:\n  00.00s-02.00s: ambient sound, no dialogue\n  02.00s-04.00s: 【char_002】: 跪下受死。\nEXPORT: Rotating white energy vortex, shredding fabric, blood spray, moonlit dust, dramatic low-angle authority\nVISUAL_PROMPT: Massive sword vortex engulfs warrior forcing him to one knee, enforcer towers above in moonlight",
+              "tool_used": "kling_o3_i2v",
+              "reference_frame": "storyboard/episode_1/frame_004_extracted.png",
+              "quality_score": 2.4,
+              "quality_issues": [
+                "excessive_blur",
+                "characters_not_visible",
+                "abstract_wash"
+              ],
+              "timestamp": "2026-02-15T07:03:17Z",
+              "selected": false
+            },
+            {
+              "version": 3,
+              "video_url": "shots/episode_1/shot_004_v3.mp4",
+              "prompt": "Static Hold — three sword shadows merge into rotating vortex above altar. Lin Ye kneels on one knee, bleeding, cracked sword planted in ground. Enforcer towers above, arms crossed. Vortex spins in background but characters remain clearly visible in foreground. Moonlit chiaroscuro, dust and debris caught in vortex wind. Camera holds medium-wide framing keeping both figures sharp.",
+              "tool_used": "kling_o3_i2v",
+              "reference_frame": "storyboard/episode_1/frame_004_extracted.png",
+              "quality_score": 4.2,
+              "quality_issues": [],
+              "timestamp": "2026-02-15T07:09:18Z",
+              "selected": true
+            }
+          ]
+        },
+        {
+          "id": "shot_005",
+          "shot_number": 5,
+          "beat_number": 5,
+          "description": "血祭阵法——玉简觉醒。鲜血滴在阵纹上，林夜取出玉简撕开绷带，蓝光蔓延祭坛。",
+          "dialogue": "00.00s-02.00s: ambient sound, no dialogue\n02.00s-04.00s: 【char_001】: 我拿命当筹码——",
+          "duration": 12,
+          "storyboard_frame_id": "frame_005",
+          "character_ids": [
+            "char_001",
+            "char_002"
+          ],
+          "scene_id": "scene_001",
+          "reference_frame": "storyboard/episode_1/frame_005_extracted.png",
+          "beat": {
+            "segments": [
+              {
+                "time_range": "00.00s-01.00s",
+                "action": "Static Hold — 林夜低头，鲜血缓缓滴落",
+                "locked": false
+              },
+              {
+                "time_range": "01.00s-03.00s",
+                "action": "Push In — 鲜血滴落阵纹，光芒初现 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "03.00s-05.00s",
+                "action": "Snap Zoom — 取出玉简，青蓝脉动光 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "05.00s-07.00s",
+                "action": "Dutch Angle Close Up — 撕开腕部绷带，鲜血涌出 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "07.00s-09.00s",
+                "action": "Wide Shot + Fog Drift — 阵纹如血管点亮蔓延 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "09.00s-11.00s",
+                "action": "Reverse Pullback — 蓝光蔓延逼近执法者脚下 [char_002]",
+                "locked": false
+              },
+              {
+                "time_range": "11.00s-12.00s",
+                "action": "Static Hold — 祭坛蓝光脉动，林夜决意 [char_001]",
+                "locked": false
+              }
+            ],
+            "locks": {
+              "character": true,
+              "scene": true,
+              "style": false
+            }
+          },
+          "prompt": "GOAL: Lin Ye activates the blood ritual, sacrificing his blood to awaken the jade talisman and the altar's ancient arrays.\nSHOT_PLAN:\n  00.00s-01.00s: Static Hold (No Movement) — Lin Ye bows head, blood drips slowly from wounds, fog drifts [char_001]\n  01.00s-03.00s: Push In (Killer Intent) — blood drips onto ancient array patterns, faint glow ignites in cracks [char_001]\n  03.00s-05.00s: Snap Zoom (Face) — pulls cracked jade talisman from chest, cyan-blue light pulses [char_001]\n  05.00s-07.00s: Dutch Angle Close Up (Tension) — tears dark red bandage from wrist, blood pours and soaks talisman [char_001]\n  07.00s-09.00s: Wide Shot + Fog Drift — array patterns ignite like blood vessels, blue glow spreads across altar [char_001]\n  09.00s-11.00s: Reverse Pullback (Vacuum) — blue light races through cracks toward Enforcer's feet, dust lifts [char_002]\n  11.00s-12.00s: Static Hold (No Movement) — altar pulses with blue light, Lin Ye's resolved expression [char_001]\nDIALOGUE:\n  00.00s-02.00s: ambient sound, no dialogue\n  02.00s-04.00s: 【char_001】: 我拿命当筹码——\nEXPORT: Cyan-blue pulsing light, blood droplets on stone, array line glow spreading, jade talisman pulse, dramatic close-up\nVISUAL_PROMPT: Warrior activates blood ritual, jade talisman glows cyan-blue, ancient array patterns ignite across altar floor",
+          "video_url": "shots/episode_1/shot_005_selected.mp4",
+          "image_url": "storyboard/episode_1/frame_005_selected.png",
+          "status": "completed",
+          "tool_used": "kling_o3_i2v",
+          "quality_score": 4.8,
+          "quality_issues": [],
+          "versions": [
+            {
+              "version": 1,
+              "video_url": "shots/episode_1/shot_005_v1.mp4",
+              "prompt": "Starting from the top-left through the 2x2 grid...",
+              "tool_used": "kling_v2.1_master_i2v",
+              "reference_frame": "storyboard/episode_1/frame_005_extracted.png",
+              "quality_score": null,
+              "quality_issues": [],
+              "timestamp": "2026-02-15T01:20:00Z",
+              "selected": false
+            },
+            {
+              "version": 2,
+              "video_url": "shots/episode_1/shot_005_v2.mp4",
+              "prompt": "GOAL: Lin Ye activates the blood ritual, sacrificing his blood to awaken the jade talisman and the altar's ancient arrays.\nSHOT_PLAN:\n  00.00s-01.00s: Static Hold (No Movement) — Lin Ye bows head, blood drips slowly from wounds, fog drifts [char_001]\n  01.00s-03.00s: Push In (Killer Intent) — blood drips onto ancient array patterns, faint glow ignites in cracks [char_001]\n  03.00s-05.00s: Snap Zoom (Face) — pulls cracked jade talisman from chest, cyan-blue light pulses [char_001]\n  05.00s-07.00s: Dutch Angle Close Up (Tension) — tears dark red bandage from wrist, blood pours and soaks talisman [char_001]\n  07.00s-09.00s: Wide Shot + Fog Drift — array patterns ignite like blood vessels, blue glow spreads across altar [char_001]\n  09.00s-11.00s: Reverse Pullback (Vacuum) — blue light races through cracks toward Enforcer's feet, dust lifts [char_002]\n  11.00s-12.00s: Static Hold (No Movement) — altar pulses with blue light, Lin Ye's resolved expression [char_001]\nDIALOGUE:\n  00.00s-02.00s: ambient sound, no dialogue\n  02.00s-04.00s: 【char_001】: 我拿命当筹码——\nEXPORT: Cyan-blue pulsing light, blood droplets on stone, array line glow spreading, jade talisman pulse, dramatic close-up\nVISUAL_PROMPT: Warrior activates blood ritual, jade talisman glows cyan-blue, ancient array patterns ignite across altar floor",
+              "tool_used": "kling_o3_i2v",
+              "reference_frame": "storyboard/episode_1/frame_005_extracted.png",
+              "quality_score": 4.8,
+              "quality_issues": [],
+              "timestamp": "2026-02-15T07:03:17Z",
+              "selected": true
+            }
+          ]
+        },
+        {
+          "id": "shot_006",
+          "shot_number": 6,
+          "beat_number": 6,
+          "description": "魂火爆燃——剑化黑蓝尖刺。蓝色魂火喷涌撞碎漩涡，裂剑化为黑蓝尖刺。",
+          "dialogue": "00.00s-02.00s: ambient sound, no dialogue\n02.00s-04.00s: 【char_001】: ——你敢跟吗？",
+          "duration": 12,
+          "storyboard_frame_id": "frame_006",
+          "character_ids": [
+            "char_001",
+            "char_002"
+          ],
+          "scene_id": "scene_001",
+          "reference_frame": "storyboard/episode_1/frame_006_extracted.png",
+          "beat": {
+            "segments": [
+              {
+                "time_range": "00.00s-01.00s",
+                "action": "Static Hold — 阵纹蓝光达到极限",
+                "locked": false
+              },
+              {
+                "time_range": "01.00s-03.00s",
+                "action": "Crash Zoom In — 蓝火从地裂喷涌而出 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "03.00s-05.00s",
+                "action": "Tumble Cam — 魂火撞入漩涡引发爆炸 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "05.00s-07.00s",
+                "action": "Push In — 林夜站起，裂剑蓝火极盛 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "07.00s-09.00s",
+                "action": "Snap Zoom — 剑身压缩为黑蓝尖刺 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "09.00s-11.00s",
+                "action": "Reverse Pullback — 漩涡撕裂，执法者首次后退半步 [char_002]",
+                "locked": false
+              },
+              {
+                "time_range": "11.00s-12.00s",
+                "action": "Static Hold — 蓝火肆虐，两人隔裂口对视 [char_001]",
+                "locked": false
+              }
+            ],
+            "locks": {
+              "character": true,
+              "scene": true,
+              "style": false
+            }
+          },
+          "prompt": "GOAL: Soul-fire erupts, shattering the vortex and transforming the cracked sword into a lethal spike — the Enforcer retreats for the first time.\nSHOT_PLAN:\n  00.00s-01.00s: Static Hold (No Movement) — array blue light reaches maximum intensity, ground cracks widen [char_001]\n  01.00s-03.00s: Crash Zoom In (Head on) — blue soul-fire geysers blast upward from every crack, debris flies [char_001]\n  03.00s-05.00s: Tumble Cam (Chaos) — soul-fire slams into sword vortex, white and blue energy collide [char_001]\n  05.00s-07.00s: Push In (Killer Intent) — Lin Ye rises to feet, cracked sword blazes with soul-fire [char_001]\n  07.00s-09.00s: Snap Zoom (Face) — blade compresses into single pitch-black blue spike, energy crackles [char_001]\n  09.00s-11.00s: Reverse Pullback (Vacuum) — vortex tears open, Enforcer takes half step back for first time [char_002]\n  11.00s-12.00s: Static Hold (No Movement) — blue fire rages between them through torn vortex gap [char_001]\nDIALOGUE:\n  00.00s-02.00s: ambient sound, no dialogue\n  02.00s-04.00s: 【char_001】: ——你敢跟吗？\nEXPORT: Blue soul-fire geysers, white-blue energy collision, pitch-black blue spike, torn vortex, dramatic fire effects\nVISUAL_PROMPT: Blue soul-fire erupts from ground shattering sword vortex, cracked sword compresses to blue spike, enforcer retreats",
+          "video_url": "shots/episode_1/shot_006_selected.mp4",
+          "image_url": "storyboard/episode_1/frame_006_selected.png",
+          "status": "completed",
+          "tool_used": "kling_o3_i2v",
+          "quality_score": 4.0,
+          "quality_issues": [],
+          "versions": [
+            {
+              "version": 1,
+              "video_url": "shots/episode_1/shot_006_v1.mp4",
+              "prompt": "Follow the 3x3 storyboard sequence...",
+              "tool_used": "kling_v2.1_master_i2v",
+              "reference_frame": "storyboard/episode_1/frame_006_extracted.png",
+              "quality_score": null,
+              "quality_issues": [],
+              "timestamp": "2026-02-15T01:25:00Z",
+              "selected": false
+            },
+            {
+              "version": 2,
+              "video_url": "shots/episode_1/shot_006_v2.mp4",
+              "prompt": "GOAL: Soul-fire erupts, shattering the vortex and transforming the cracked sword into a lethal spike — the Enforcer retreats for the first time.\nSHOT_PLAN:\n  00.00s-01.00s: Static Hold (No Movement) — array blue light reaches maximum intensity, ground cracks widen [char_001]\n  01.00s-03.00s: Crash Zoom In (Head on) — blue soul-fire geysers blast upward from every crack, debris flies [char_001]\n  03.00s-05.00s: Tumble Cam (Chaos) — soul-fire slams into sword vortex, white and blue energy collide [char_001]\n  05.00s-07.00s: Push In (Killer Intent) — Lin Ye rises to feet, cracked sword blazes with soul-fire [char_001]\n  07.00s-09.00s: Snap Zoom (Face) — blade compresses into single pitch-black blue spike, energy crackles [char_001]\n  09.00s-11.00s: Reverse Pullback (Vacuum) — vortex tears open, Enforcer takes half step back for first time [char_002]\n  11.00s-12.00s: Static Hold (No Movement) — blue fire rages between them through torn vortex gap [char_001]\nDIALOGUE:\n  00.00s-02.00s: ambient sound, no dialogue\n  02.00s-04.00s: 【char_001】: ——你敢跟吗？\nEXPORT: Blue soul-fire geysers, white-blue energy collision, pitch-black blue spike, torn vortex, dramatic fire effects\nVISUAL_PROMPT: Blue soul-fire erupts from ground shattering sword vortex, cracked sword compresses to blue spike, enforcer retreats",
+              "tool_used": "kling_o3_i2v",
+              "reference_frame": "storyboard/episode_1/frame_006_extracted.png",
+              "quality_score": 4.0,
+              "quality_issues": [],
+              "timestamp": "2026-02-15T07:03:17Z",
+              "selected": true
+            }
+          ]
+        },
+        {
+          "id": "shot_007",
+          "shot_number": 7,
+          "beat_number": 7,
+          "description": "亡命冲锋——穿越剑墙。林夜如箭射出撞入执法者布下的白色剑幕，蓝白光爆炸。",
+          "dialogue": "00.00s-02.00s: ambient sound, no dialogue",
+          "duration": 12,
+          "storyboard_frame_id": "frame_007",
+          "character_ids": [
+            "char_001",
+            "char_002"
+          ],
+          "scene_id": "scene_001",
+          "reference_frame": "storyboard/episode_1/frame_007_extracted.png",
+          "beat": {
+            "segments": [
+              {
+                "time_range": "00.00s-01.00s",
+                "action": "Static Hold — 林夜蓄力，蓝光内敛",
+                "locked": false
+              },
+              {
+                "time_range": "01.00s-03.00s",
+                "action": "Crash Zoom In — 如箭冲出，鲜血飞溅 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "03.00s-05.00s",
+                "action": "Profile Tracking — 执法者双手布下白色剑墙 [char_002]",
+                "locked": false
+              },
+              {
+                "time_range": "05.00s-07.00s",
+                "action": "Tumble Cam — 撞入剑墙，蓝白光大爆炸 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "07.00s-09.00s",
+                "action": "Push In — 剪影穿越爆炸光幕 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "09.00s-11.00s",
+                "action": "Low Angle Truck Left — 一步步穿破碎裂剑墙 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "11.00s-12.00s",
+                "action": "Static Hold — 穿墙而出瞬间定格 [char_001]",
+                "locked": false
+              }
+            ],
+            "locks": {
+              "character": true,
+              "scene": true,
+              "style": false
+            }
+          },
+          "prompt": "GOAL: Lin Ye's desperate all-or-nothing charge through the Enforcer's sword wall — the point of no return.\nSHOT_PLAN:\n  00.00s-01.00s: Static Hold (No Movement) — Lin Ye gathers energy, blue spike glows intensely, dust settles [char_001]\n  01.00s-03.00s: Crash Zoom In (Head on) — launches forward like arrow, blood scatters behind him, debris flies [char_001]\n  03.00s-05.00s: Profile Tracking (Handheld Shake) — Enforcer's face changes, thrusts both hands creating solid sword wall [char_002]\n  05.00s-07.00s: Tumble Cam (Chaos) — Lin Ye slams into white blade wall, blue fire and white light explode [char_001]\n  07.00s-09.00s: Push In (Killer Intent) — silhouette pushes through blinding explosion, smoke trails [char_001]\n  09.00s-11.00s: Low Angle Truck Left (Slider) — breaks through crumbling sword wall step by step, debris rains [char_001]\n  11.00s-12.00s: Static Hold (No Movement) — emerges from wall, freeze frame of breakthrough moment [char_001]\nDIALOGUE:\n  00.00s-02.00s: ambient sound, no dialogue\nEXPORT: Blue-white energy explosion, blood scatter trails, crumbling white blade wall, silhouette in explosion light\nVISUAL_PROMPT: Warrior charges through wall of white sword blades, blue-white explosion on impact, pushes through step by step",
+          "video_url": "shots/episode_1/shot_007_selected.mp4",
+          "image_url": "storyboard/episode_1/frame_007_selected.png",
+          "status": "completed",
+          "tool_used": "kling_o3_i2v",
+          "quality_score": 4.0,
+          "quality_issues": [],
+          "versions": [
+            {
+              "version": 1,
+              "video_url": "shots/episode_1/shot_007_v1.mp4",
+              "prompt": "Follow the 3x3 storyboard panel by panel...",
+              "tool_used": "kling_v2.1_master_i2v",
+              "reference_frame": "storyboard/episode_1/frame_007_extracted.png",
+              "quality_score": null,
+              "quality_issues": [],
+              "timestamp": "2026-02-15T01:30:00Z",
+              "selected": false
+            },
+            {
+              "version": 2,
+              "video_url": "shots/episode_1/shot_007_v2.mp4",
+              "prompt": "GOAL: Lin Ye's desperate all-or-nothing charge through the Enforcer's sword wall — the point of no return.\nSHOT_PLAN:\n  00.00s-01.00s: Static Hold (No Movement) — Lin Ye gathers energy, blue spike glows intensely, dust settles [char_001]\n  01.00s-03.00s: Crash Zoom In (Head on) — launches forward like arrow, blood scatters behind him, debris flies [char_001]\n  03.00s-05.00s: Profile Tracking (Handheld Shake) — Enforcer's face changes, thrusts both hands creating solid sword wall [char_002]\n  05.00s-07.00s: Tumble Cam (Chaos) — Lin Ye slams into white blade wall, blue fire and white light explode [char_001]\n  07.00s-09.00s: Push In (Killer Intent) — silhouette pushes through blinding explosion, smoke trails [char_001]\n  09.00s-11.00s: Low Angle Truck Left (Slider) — breaks through crumbling sword wall step by step, debris rains [char_001]\n  11.00s-12.00s: Static Hold (No Movement) — emerges from wall, freeze frame of breakthrough moment [char_001]\nDIALOGUE:\n  00.00s-02.00s: ambient sound, no dialogue\nEXPORT: Blue-white energy explosion, blood scatter trails, crumbling white blade wall, silhouette in explosion light\nVISUAL_PROMPT: Warrior charges through wall of white sword blades, blue-white explosion on impact, pushes through step by step",
+              "tool_used": "kling_o3_i2v",
+              "reference_frame": "storyboard/episode_1/frame_007_extracted.png",
+              "quality_score": 2.4,
+              "quality_issues": [
+                "excessive_blur",
+                "abstract_energy_washout",
+                "no_visible_character"
+              ],
+              "timestamp": "2026-02-15T07:03:17Z",
+              "selected": false
+            },
+            {
+              "version": 3,
+              "video_url": "shots/episode_1/shot_007_v3.mp4",
+              "prompt": "Lin Ye charges forward like an arrow through a wall of white sword blades, blood scattering from wounds. His dark robes torn, cracked sword glowing blue, he pushes step by step through the barrier of spinning blades. Sparks and blade fragments fly around him. Camera tracks his profile as he advances. Clear figure silhouette maintained against bright sword energy.",
+              "tool_used": "kling_o3_i2v",
+              "reference_frame": "storyboard/episode_1/frame_007_extracted.png",
+              "quality_score": 4.0,
+              "quality_issues": [],
+              "timestamp": "2026-02-15T07:09:18Z",
+              "selected": true
+            }
+          ]
+        },
+        {
+          "id": "shot_008",
+          "shot_number": 8,
+          "beat_number": 8,
+          "description": "一击刺入——眉心印记碎裂。穿墙后面对面，黑蓝尖刺刺入眉心印记。",
+          "dialogue": "00.00s-02.00s: ambient sound, no dialogue\n02.00s-06.00s: 【char_001】: 这一击，不是为了赢。是为了让你记住——凡人，也能逆天。",
+          "duration": 12,
+          "storyboard_frame_id": "frame_008",
+          "character_ids": [
+            "char_001",
+            "char_002"
+          ],
+          "scene_id": "scene_001",
+          "reference_frame": "storyboard/episode_1/frame_008_extracted.png",
+          "beat": {
+            "segments": [
+              {
+                "time_range": "00.00s-01.00s",
+                "action": "Static Hold — 穿墙烟尘未散",
+                "locked": false
+              },
+              {
+                "time_range": "01.00s-03.00s",
+                "action": "Snap Zoom — 穿墙而出面对面 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "03.00s-05.00s",
+                "action": "Dutch Angle Close Up — 四目相对极近距离 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "05.00s-07.00s",
+                "action": "Push In — 黑蓝尖刺精准刺入眉心印记 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "07.00s-09.00s",
+                "action": "Rack Focus — 裂痕从印记中心辐射扩散 [char_002]",
+                "locked": false
+              },
+              {
+                "time_range": "09.00s-11.00s",
+                "action": "Reverse Pullback — 执法者瞳孔放大不可置信 [char_002]",
+                "locked": false
+              },
+              {
+                "time_range": "11.00s-12.00s",
+                "action": "Static Hold — 慢镜定格高潮瞬间 [char_001]",
+                "locked": false
+              }
+            ],
+            "locks": {
+              "character": true,
+              "scene": true,
+              "style": false
+            }
+          },
+          "prompt": "GOAL: The climactic killing strike — Lin Ye pierces the Enforcer's forehead mark, shattering the symbol of divine authority.\nSHOT_PLAN:\n  00.00s-01.00s: Static Hold (No Movement) — smoke and debris from sword wall still clearing [char_001]\n  01.00s-03.00s: Snap Zoom (Face) — breaks through last layer, suddenly face to face at point blank [char_001]\n  03.00s-05.00s: Dutch Angle Close Up (Tension) — eyes lock at extreme close distance, time slows [char_001]\n  05.00s-07.00s: Push In (Killer Intent) — black-blue spike drives precisely into pale gold forehead mark [char_001]\n  07.00s-09.00s: Rack Focus (Fast) — cracks radiate outward from mark center, porcelain shatter sound [char_002]\n  09.00s-11.00s: Reverse Pullback (Vacuum) — Enforcer's eyes go wide with disbelief, blue light bleeds through cracks [char_002]\n  11.00s-12.00s: Static Hold (No Movement) — slow motion climax, both figures frozen in the strike [char_001]\nDIALOGUE:\n  00.00s-02.00s: ambient sound, no dialogue\n  02.00s-06.00s: 【char_001】: 这一击，不是为了赢。是为了让你记住——凡人，也能逆天。\nEXPORT: Extreme close-up, black-blue spike in pale gold mark, radiating cracks, disbelief eyes, slow-motion dramatic peak\nVISUAL_PROMPT: Blue spike pierces enforcer's gold forehead mark at point blank, cracks radiate, slow-motion climax",
+          "video_url": "shots/episode_1/shot_008_selected.mp4",
+          "image_url": "storyboard/episode_1/frame_008_selected.png",
+          "status": "completed",
+          "tool_used": "kling_o3_i2v",
+          "quality_score": 4.4,
+          "quality_issues": [],
+          "versions": [
+            {
+              "version": 1,
+              "video_url": "shots/episode_1/shot_008_v1.mp4",
+              "prompt": "Animate the 2x3 storyboard grid...",
+              "tool_used": "kling_v2.1_master_i2v",
+              "reference_frame": "storyboard/episode_1/frame_008_extracted.png",
+              "quality_score": null,
+              "quality_issues": [],
+              "timestamp": "2026-02-15T01:35:00Z",
+              "selected": false
+            },
+            {
+              "version": 2,
+              "video_url": "shots/episode_1/shot_008_v2.mp4",
+              "prompt": "GOAL: The climactic killing strike — Lin Ye pierces the Enforcer's forehead mark, shattering the symbol of divine authority.\nSHOT_PLAN:\n  00.00s-01.00s: Static Hold (No Movement) — smoke and debris from sword wall still clearing [char_001]\n  01.00s-03.00s: Snap Zoom (Face) — breaks through last layer, suddenly face to face at point blank [char_001]\n  03.00s-05.00s: Dutch Angle Close Up (Tension) — eyes lock at extreme close distance, time slows [char_001]\n  05.00s-07.00s: Push In (Killer Intent) — black-blue spike drives precisely into pale gold forehead mark [char_001]\n  07.00s-09.00s: Rack Focus (Fast) — cracks radiate outward from mark center, porcelain shatter sound [char_002]\n  09.00s-11.00s: Reverse Pullback (Vacuum) — Enforcer's eyes go wide with disbelief, blue light bleeds through cracks [char_002]\n  11.00s-12.00s: Static Hold (No Movement) — slow motion climax, both figures frozen in the strike [char_001]\nDIALOGUE:\n  00.00s-02.00s: ambient sound, no dialogue\n  02.00s-06.00s: 【char_001】: 这一击，不是为了赢。是为了让你记住——凡人，也能逆天。\nEXPORT: Extreme close-up, black-blue spike in pale gold mark, radiating cracks, disbelief eyes, slow-motion dramatic peak\nVISUAL_PROMPT: Blue spike pierces enforcer's gold forehead mark at point blank, cracks radiate, slow-motion climax",
+              "tool_used": "kling_o3_i2v",
+              "reference_frame": "storyboard/episode_1/frame_008_extracted.png",
+              "quality_score": 4.4,
+              "quality_issues": [],
+              "timestamp": "2026-02-15T07:03:17Z",
+              "selected": true
+            }
+          ]
+        },
+        {
+          "id": "shot_009",
+          "shot_number": 9,
+          "beat_number": 9,
+          "description": "执法者跪地——规则崩塌。剑影碎裂如雪，眉心印记碎为金尘，执法者跪地，大雨倾盆。",
+          "dialogue": "00.00s-02.00s: ambient sound, no dialogue",
+          "duration": 12,
+          "storyboard_frame_id": "frame_009",
+          "character_ids": [
+            "char_001",
+            "char_002"
+          ],
+          "scene_id": "scene_001",
+          "reference_frame": "storyboard/episode_1/frame_009_extracted.png",
+          "beat": {
+            "segments": [
+              {
+                "time_range": "00.00s-01.00s",
+                "action": "Static Hold — 印记碎裂余波",
+                "locked": false
+              },
+              {
+                "time_range": "01.00s-03.00s",
+                "action": "Wide Shot + Fog Drift — 剑影碎裂如雪花飘散 [char_002]",
+                "locked": false
+              },
+              {
+                "time_range": "03.00s-05.00s",
+                "action": "Snap Zoom — 眉心印记碎为金尘 [char_002]",
+                "locked": false
+              },
+              {
+                "time_range": "05.00s-07.00s",
+                "action": "Reverse Pullback — 执法者缓缓跪倒 [char_002]",
+                "locked": false
+              },
+              {
+                "time_range": "07.00s-09.00s",
+                "action": "Push In — 金尘飘散如萤火 [char_002]",
+                "locked": false
+              },
+              {
+                "time_range": "09.00s-11.00s",
+                "action": "Wide Shot + Fog Drift — 大雨倾盆而下 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "11.00s-12.00s",
+                "action": "Static Hold — 雨中跪地定格 [char_002]",
+                "locked": false
+              }
+            ],
+            "locks": {
+              "character": true,
+              "scene": true,
+              "style": false
+            }
+          },
+          "prompt": "GOAL: The aftermath — divine authority crumbles as sword shadows shatter and the Enforcer kneels in defeat under torrential rain.\nSHOT_PLAN:\n  00.00s-01.00s: Static Hold (No Movement) — aftershock of mark shattering, dust and light particles [char_002]\n  01.00s-03.00s: Wide Shot + Fog Drift — sword shadows shatter like glass, snow-like fragments scatter [char_002]\n  03.00s-05.00s: Snap Zoom (Face) — forehead mark crumbles into golden dust particles [char_002]\n  05.00s-07.00s: Reverse Pullback (Vacuum) — Enforcer slowly drops to both knees, robes settling [char_002]\n  07.00s-09.00s: Push In (Killer Intent) — golden dust drifts like fireflies, fading into darkness [char_002]\n  09.00s-11.00s: Wide Shot + Fog Drift — torrential rain pours from dark sky, drenching the altar [char_001]\n  11.00s-12.00s: Static Hold (No Movement) — Enforcer kneels in rain, defeated, rain streams down [char_002]\nDIALOGUE:\n  00.00s-02.00s: ambient sound, no dialogue\nEXPORT: Glass-like sword fragments, golden dust particles, torrential rain, dramatic kneeling, fading divine light\nVISUAL_PROMPT: Sword shadows shatter like glass, forehead mark crumbles to golden dust, enforcer kneels in pouring rain",
+          "video_url": "shots/episode_1/shot_009_selected.mp4",
+          "image_url": "storyboard/episode_1/frame_009_selected.png",
+          "status": "completed",
+          "tool_used": "kling_o3_i2v",
+          "quality_score": 3.8,
+          "quality_issues": [
+            "slight_figure_distortion"
+          ],
+          "versions": [
+            {
+              "version": 1,
+              "video_url": "shots/episode_1/shot_009_v1.mp4",
+              "prompt": "Starting from top-left through 2x2 grid...",
+              "tool_used": "kling_v2.1_master_i2v",
+              "reference_frame": "storyboard/episode_1/frame_009_extracted.png",
+              "quality_score": null,
+              "quality_issues": [],
+              "timestamp": "2026-02-15T01:40:00Z",
+              "selected": false
+            },
+            {
+              "version": 2,
+              "video_url": "shots/episode_1/shot_009_v2.mp4",
+              "prompt": "GOAL: The aftermath — divine authority crumbles as sword shadows shatter and the Enforcer kneels in defeat under torrential rain.\nSHOT_PLAN:\n  00.00s-01.00s: Static Hold (No Movement) — aftershock of mark shattering, dust and light particles [char_002]\n  01.00s-03.00s: Wide Shot + Fog Drift — sword shadows shatter like glass, snow-like fragments scatter [char_002]\n  03.00s-05.00s: Snap Zoom (Face) — forehead mark crumbles into golden dust particles [char_002]\n  05.00s-07.00s: Reverse Pullback (Vacuum) — Enforcer slowly drops to both knees, robes settling [char_002]\n  07.00s-09.00s: Push In (Killer Intent) — golden dust drifts like fireflies, fading into darkness [char_002]\n  09.00s-11.00s: Wide Shot + Fog Drift — torrential rain pours from dark sky, drenching the altar [char_001]\n  11.00s-12.00s: Static Hold (No Movement) — Enforcer kneels in rain, defeated, rain streams down [char_002]\nDIALOGUE:\n  00.00s-02.00s: ambient sound, no dialogue\nEXPORT: Glass-like sword fragments, golden dust particles, torrential rain, dramatic kneeling, fading divine light\nVISUAL_PROMPT: Sword shadows shatter like glass, forehead mark crumbles to golden dust, enforcer kneels in pouring rain",
+              "tool_used": "kling_o3_i2v",
+              "reference_frame": "storyboard/episode_1/frame_009_extracted.png",
+              "quality_score": 3.8,
+              "quality_issues": [
+                "slight_figure_distortion"
+              ],
+              "timestamp": "2026-02-15T07:03:17Z",
+              "selected": true
+            }
+          ]
+        },
+        {
+          "id": "shot_010",
+          "shot_number": 10,
+          "beat_number": 10,
+          "description": "雨幕中转身——消失于黑暗。林夜拔剑转身走入雨中，执法者跪地目送。",
+          "dialogue": "00.00s-02.00s: ambient sound, no dialogue",
+          "duration": 12,
+          "storyboard_frame_id": "frame_010",
+          "character_ids": [
+            "char_001",
+            "char_002"
+          ],
+          "scene_id": "scene_001",
+          "reference_frame": "storyboard/episode_1/frame_010_extracted.png",
+          "beat": {
+            "segments": [
+              {
+                "time_range": "00.00s-01.00s",
+                "action": "Static Hold — 雨幕中两人静止",
+                "locked": false
+              },
+              {
+                "time_range": "01.00s-03.00s",
+                "action": "Push In — 林夜缓缓拔出插地的剑 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "03.00s-05.00s",
+                "action": "Profile Tracking — 转身面向雨幕 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "05.00s-09.00s",
+                "action": "Reverse Pullback — 走入暴雨化为剪影 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "09.00s-11.00s",
+                "action": "Wide Shot + Fog Drift — 红色脚印留在湿石上 [char_001]",
+                "locked": false
+              },
+              {
+                "time_range": "11.00s-12.00s",
+                "action": "Static Hold — 画面渐暗 [char_002]",
+                "locked": false
+              }
+            ],
+            "locks": {
+              "character": true,
+              "scene": true,
+              "style": false
+            }
+          },
+          "prompt": "GOAL: The melancholic departure — Lin Ye walks away into the rain as a silhouette, leaving the defeated Enforcer kneeling.\nSHOT_PLAN:\n  00.00s-01.00s: Static Hold (No Movement) — both figures in rain, altar scene, drops cascade [char_001]\n  01.00s-03.00s: Push In (Killer Intent) — Lin Ye slowly withdraws sword from stone, rain streams off blade [char_001]\n  03.00s-05.00s: Profile Tracking (Handheld Shake) — turns slowly to face the rain curtain, robes heavy with water [char_001]\n  05.00s-09.00s: Reverse Pullback (Vacuum) — walks into pouring rain, becoming dark silhouette against silver rain [char_001]\n  09.00s-11.00s: Wide Shot + Fog Drift — red footprints on wet stone, rain washing them slowly away [char_001]\n  11.00s-12.00s: Static Hold (No Movement) — fade to darkness, Enforcer kneels in foreground watching [char_002]\nDIALOGUE:\n  00.00s-02.00s: ambient sound, no dialogue\nEXPORT: Torrential rain, silhouette against rain, red footprints on wet stone, slow melancholic departure, fade to dark\nVISUAL_PROMPT: Warrior walks into pouring rain becoming silhouette, red footprints on wet stone, enforcer kneels watching",
+          "video_url": "shots/episode_1/shot_010_selected.mp4",
+          "image_url": "storyboard/episode_1/frame_010_selected.png",
+          "status": "completed",
+          "tool_used": "kling_o3_i2v",
+          "quality_score": 4.4,
+          "quality_issues": [],
+          "versions": [
+            {
+              "version": 1,
+              "video_url": "shots/episode_1/shot_010_v1.mp4",
+              "prompt": "Single long take: warrior withdraws blade...",
+              "tool_used": "kling_v2.1_master_i2v",
+              "reference_frame": "storyboard/episode_1/frame_010_extracted.png",
+              "quality_score": null,
+              "quality_issues": [],
+              "timestamp": "2026-02-15T01:45:00Z",
+              "selected": false
+            },
+            {
+              "version": 2,
+              "video_url": "shots/episode_1/shot_010_v2.mp4",
+              "prompt": "GOAL: The melancholic departure — Lin Ye walks away into the rain as a silhouette, leaving the defeated Enforcer kneeling.\nSHOT_PLAN:\n  00.00s-01.00s: Static Hold (No Movement) — both figures in rain, altar scene, drops cascade [char_001]\n  01.00s-03.00s: Push In (Killer Intent) — Lin Ye slowly withdraws sword from stone, rain streams off blade [char_001]\n  03.00s-05.00s: Profile Tracking (Handheld Shake) — turns slowly to face the rain curtain, robes heavy with water [char_001]\n  05.00s-09.00s: Reverse Pullback (Vacuum) — walks into pouring rain, becoming dark silhouette against silver rain [char_001]\n  09.00s-11.00s: Wide Shot + Fog Drift — red footprints on wet stone, rain washing them slowly away [char_001]\n  11.00s-12.00s: Static Hold (No Movement) — fade to darkness, Enforcer kneels in foreground watching [char_002]\nDIALOGUE:\n  00.00s-02.00s: ambient sound, no dialogue\nEXPORT: Torrential rain, silhouette against rain, red footprints on wet stone, slow melancholic departure, fade to dark\nVISUAL_PROMPT: Warrior walks into pouring rain becoming silhouette, red footprints on wet stone, enforcer kneels watching",
+              "tool_used": "kling_o3_i2v",
+              "reference_frame": "storyboard/episode_1/frame_010_extracted.png",
+              "quality_score": 4.4,
+              "quality_issues": [],
+              "timestamp": "2026-02-15T07:03:17Z",
+              "selected": true
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

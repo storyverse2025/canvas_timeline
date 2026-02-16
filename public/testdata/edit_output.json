@@ -1,0 +1,37 @@
+{
+  "episodes": [
+    {
+      "episode_number": 1,
+      "merged_url": "output/episode_1/merged_3d.mp4",
+      "subtitles_url": "output/episode_1/subtitles_3d.srt",
+      "bgm_url": "output/episode_1/bgm.wav",
+      "bgm_status": "completed",
+      "final_url": "output/episode_1/final_selected.mp4",
+      "settings": {
+        "enable_transitions": false,
+        "bgm_volume": 0.3,
+        "no_vocals": true,
+        "resolution": "1280x720",
+        "codec": "h264",
+        "crf": 20,
+        "visual_style": "threed"
+      },
+      "versions": [
+        {
+          "version": 1,
+          "video_url": "output/episode_1/final_v1.mp4",
+          "timestamp": "2026-02-15T07:13:32Z",
+          "selected": false,
+          "notes": "2D anime style"
+        },
+        {
+          "version": 2,
+          "video_url": "output/episode_1/final_v2.mp4",
+          "timestamp": "2026-02-15T20:30:00Z",
+          "selected": true,
+          "notes": "3D PBR style, kling_o3 shots, 100s, 10 beats"
+        }
+      ]
+    }
+  ]
+}

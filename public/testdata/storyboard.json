@@ -1,0 +1,149 @@
+{
+  "episodes": [
+    {
+      "episode_number": 1,
+      "frames": [
+        {
+          "id": "frame_001", "frame_number": 1, "beat_number": 1,
+          "summary": "4-panel establishing standoff: Lin Ye and Enforcer face off at moonlit ruined altar. Enforcer raises hand, three sword shadows ignite. Lin Ye grips cracked sword. Tension between two figures.",
+          "shot_type": "extreme_wide",
+          "dialogue": {"character_name": "执法者", "text": "凡人逆命，必死。", "emotion": "contempt"},
+          "character_ids": ["char_001", "char_002"], "scene_id": "scene_001", "prop_ids": [],
+          "prompt": "4-panel grid 3D moonlit standoff with both characters at ruined altar, PBR materials, volumetric lighting",
+          "grid_layout": 4,
+          "image_url": "storyboard/episode_1/frame_001_selected.png",
+          "versions": [
+            {"version": 1, "grid_layout": 4, "image_url": "storyboard/episode_1/frame_001_g4_v1.png", "prompt": "4-panel grid moonlit standoff with both characters at ruined altar", "tool_used": "nano_banana_i2i", "timestamp": "2026-02-15T00:30:00Z", "selected": false},
+            {"version": 2, "grid_layout": 4, "image_url": "storyboard/episode_1/frame_001_g4_v2.png", "prompt": "4-panel grid 3D moonlit standoff with both characters at ruined altar, PBR materials, volumetric lighting", "tool_used": "nano_banana_i2i", "timestamp": "2026-02-15T19:00:00Z", "selected": true}
+          ]
+        },
+        {
+          "id": "frame_002", "frame_number": 2, "beat_number": 2,
+          "summary": "6-panel first sword clash: Sword shadow launches at Lin Ye, he blocks with cracked sword, sparks explode, he's knocked back three steps. Enforcer watches unmoved.",
+          "shot_type": "medium",
+          "dialogue": {"character_name": "执法者", "text": "这就是你的全部？", "emotion": "contempt"},
+          "character_ids": ["char_001", "char_002"], "scene_id": "scene_001", "prop_ids": [],
+          "prompt": "6-panel 3D first sword clash sequence with knockback, PBR materials, volumetric lighting",
+          "grid_layout": 6,
+          "image_url": "storyboard/episode_1/frame_002_selected.png",
+          "versions": [
+            {"version": 1, "grid_layout": 6, "image_url": "storyboard/episode_1/frame_002_g6_v1.png", "prompt": "6-panel first sword clash sequence with knockback", "tool_used": "nano_banana_i2i", "timestamp": "2026-02-15T00:30:05Z", "selected": false},
+            {"version": 2, "grid_layout": 6, "image_url": "storyboard/episode_1/frame_002_g6_v2.png", "prompt": "6-panel 3D first sword clash sequence with knockback, PBR materials, volumetric lighting", "tool_used": "nano_banana_i2i", "timestamp": "2026-02-15T19:00:05Z", "selected": true}
+          ]
+        },
+        {
+          "id": "frame_003", "frame_number": 3, "beat_number": 3,
+          "summary": "9-panel close-quarters combat: Lin Ye deflects second sword, charges in, trades blows with Enforcer at close range. Weapons lock face-to-face.",
+          "shot_type": "medium_close",
+          "dialogue": {"character_name": "林夜", "text": "还没完——", "emotion": "fierce_determination"},
+          "character_ids": ["char_001", "char_002"], "scene_id": "scene_001", "prop_ids": [],
+          "prompt": "9-panel 3D close-quarters melee combat sequence, PBR materials, volumetric lighting",
+          "grid_layout": 9,
+          "image_url": "storyboard/episode_1/frame_003_selected.png",
+          "versions": [
+            {"version": 1, "grid_layout": 9, "image_url": "storyboard/episode_1/frame_003_g9_v1.png", "prompt": "9-panel close-quarters melee combat sequence", "tool_used": "nano_banana_i2i", "timestamp": "2026-02-15T00:30:10Z", "selected": false},
+            {"version": 2, "grid_layout": 9, "image_url": "storyboard/episode_1/frame_003_g9_v2.png", "prompt": "9-panel 3D close-quarters melee combat sequence, PBR materials, volumetric lighting", "tool_used": "nano_banana_i2i", "timestamp": "2026-02-15T19:00:10Z", "selected": true}
+          ]
+        },
+        {
+          "id": "frame_004", "frame_number": 4, "beat_number": 4,
+          "summary": "6-panel vortex trap: Three sword shadows merge into a massive rotating vortex. Lin Ye is engulfed, bleeding, forced to one knee. Enforcer towers above.",
+          "shot_type": "wide",
+          "dialogue": {"character_name": "执法者", "text": "跪下受死。", "emotion": "authoritative"},
+          "character_ids": ["char_001", "char_002"], "scene_id": "scene_001", "prop_ids": [],
+          "prompt": "6-panel 3D vortex trap sequence with kneeling warrior, PBR materials, volumetric lighting",
+          "grid_layout": 6,
+          "image_url": "storyboard/episode_1/frame_004_selected.png",
+          "versions": [
+            {"version": 1, "grid_layout": 6, "image_url": "storyboard/episode_1/frame_004_g6_v1.png", "prompt": "6-panel vortex trap sequence with kneeling warrior", "tool_used": "nano_banana_i2i", "timestamp": "2026-02-15T00:30:15Z", "selected": false},
+            {"version": 2, "grid_layout": 6, "image_url": "storyboard/episode_1/frame_004_g6_v2.png", "prompt": "6-panel 3D vortex trap sequence with kneeling warrior, PBR materials, volumetric lighting", "tool_used": "nano_banana_i2i", "timestamp": "2026-02-15T19:00:15Z", "selected": true}
+          ]
+        },
+        {
+          "id": "frame_005", "frame_number": 5, "beat_number": 5,
+          "summary": "4-panel blood ritual: Blood drips on array patterns, Lin Ye pulls jade talisman, tears wrist bandage, blood activates arrays spreading blue glow across altar.",
+          "shot_type": "close",
+          "dialogue": {"character_name": "林夜", "text": "我拿命当筹码——", "emotion": "quiet_resolve"},
+          "character_ids": ["char_001", "char_002"], "scene_id": "scene_001", "prop_ids": ["prop_001"],
+          "prompt": "4-panel 3D blood ritual and jade talisman activation, PBR materials, volumetric lighting",
+          "grid_layout": 4,
+          "image_url": "storyboard/episode_1/frame_005_selected.png",
+          "versions": [
+            {"version": 1, "grid_layout": 4, "image_url": "storyboard/episode_1/frame_005_g4_v1.png", "prompt": "4-panel blood ritual and jade talisman activation", "tool_used": "nano_banana_i2i", "timestamp": "2026-02-15T00:30:20Z", "selected": false},
+            {"version": 2, "grid_layout": 4, "image_url": "storyboard/episode_1/frame_005_g4_v2.png", "prompt": "4-panel 3D blood ritual and jade talisman activation, PBR materials, volumetric lighting", "tool_used": "nano_banana_i2i", "timestamp": "2026-02-15T19:00:20Z", "selected": true}
+          ]
+        },
+        {
+          "id": "frame_006", "frame_number": 6, "beat_number": 6,
+          "summary": "9-panel soul-fire eruption: Blue fire geysers from altar floor, slamming into vortex. Sword compresses to blue spike. Vortex torn open. Enforcer retreats for first time.",
+          "shot_type": "wide",
+          "dialogue": {"character_name": "林夜", "text": "——你敢跟吗？", "emotion": "ice_cold"},
+          "character_ids": ["char_001", "char_002"], "scene_id": "scene_001", "prop_ids": [],
+          "prompt": "9-panel 3D soul-fire eruption and sword transformation, PBR materials, volumetric lighting",
+          "grid_layout": 9,
+          "image_url": "storyboard/episode_1/frame_006_selected.png",
+          "versions": [
+            {"version": 1, "grid_layout": 9, "image_url": "storyboard/episode_1/frame_006_g9_v1.png", "prompt": "9-panel soul-fire eruption and sword transformation", "tool_used": "nano_banana_i2i", "timestamp": "2026-02-15T00:30:25Z", "selected": false},
+            {"version": 2, "grid_layout": 9, "image_url": "storyboard/episode_1/frame_006_g9_v2.png", "prompt": "9-panel 3D soul-fire eruption and sword transformation, PBR materials, volumetric lighting", "tool_used": "nano_banana_i2i", "timestamp": "2026-02-15T19:00:25Z", "selected": true}
+          ]
+        },
+        {
+          "id": "frame_007", "frame_number": 7, "beat_number": 7,
+          "summary": "9-panel desperate charge: Lin Ye launches like an arrow, blood scattering, smashes into sword wall of white blades. Pushes through explosion step by step.",
+          "shot_type": "medium_wide",
+          "dialogue": null,
+          "character_ids": ["char_001", "char_002"], "scene_id": "scene_001", "prop_ids": [],
+          "prompt": "9-panel 3D desperate charge through sword wall, PBR materials, volumetric lighting",
+          "grid_layout": 9,
+          "image_url": "storyboard/episode_1/frame_007_selected.png",
+          "versions": [
+            {"version": 1, "grid_layout": 9, "image_url": "storyboard/episode_1/frame_007_g9_v1.png", "prompt": "9-panel desperate charge through sword wall", "tool_used": "nano_banana_i2i", "timestamp": "2026-02-15T00:30:30Z", "selected": false},
+            {"version": 2, "grid_layout": 9, "image_url": "storyboard/episode_1/frame_007_g9_v2.png", "prompt": "9-panel 3D desperate charge through sword wall, PBR materials, volumetric lighting", "tool_used": "nano_banana_i2i", "timestamp": "2026-02-15T19:00:30Z", "selected": true}
+          ]
+        },
+        {
+          "id": "frame_008", "frame_number": 8, "beat_number": 8,
+          "summary": "6-panel killing strike: Lin Ye breaks through, face to face with Enforcer. Blue spike pierces forehead mark. Cracks spread. Enforcer's disbelief.",
+          "shot_type": "extreme_close",
+          "dialogue": {"character_name": "林夜", "text": "这一击，不是为了赢。是为了让你记住——凡人，也能逆天。", "emotion": "calm_finality"},
+          "character_ids": ["char_001", "char_002"], "scene_id": "scene_001", "prop_ids": [],
+          "prompt": "6-panel 3D climactic strike at forehead mark, PBR materials, volumetric lighting",
+          "grid_layout": 6,
+          "image_url": "storyboard/episode_1/frame_008_selected.png",
+          "versions": [
+            {"version": 1, "grid_layout": 6, "image_url": "storyboard/episode_1/frame_008_g6_v1.png", "prompt": "6-panel climactic strike at forehead mark", "tool_used": "nano_banana_i2i", "timestamp": "2026-02-15T00:30:35Z", "selected": false},
+            {"version": 2, "grid_layout": 6, "image_url": "storyboard/episode_1/frame_008_g6_v2.png", "prompt": "6-panel 3D climactic strike at forehead mark, PBR materials, volumetric lighting", "tool_used": "nano_banana_i2i", "timestamp": "2026-02-15T19:00:35Z", "selected": true}
+          ]
+        },
+        {
+          "id": "frame_009", "frame_number": 9, "beat_number": 9,
+          "summary": "4-panel aftermath: Sword shadows shatter like glass. Forehead mark crumbles to golden dust. Enforcer drops to both knees. Rain begins falling.",
+          "shot_type": "wide",
+          "dialogue": null,
+          "character_ids": ["char_001", "char_002"], "scene_id": "scene_001", "prop_ids": [],
+          "prompt": "4-panel 3D aftermath with shattering and kneeling in rain, PBR materials, volumetric lighting",
+          "grid_layout": 4,
+          "image_url": "storyboard/episode_1/frame_009_selected.png",
+          "versions": [
+            {"version": 1, "grid_layout": 4, "image_url": "storyboard/episode_1/frame_009_g4_v1.png", "prompt": "4-panel aftermath with shattering and kneeling in rain", "tool_used": "nano_banana_i2i", "timestamp": "2026-02-15T00:30:40Z", "selected": false},
+            {"version": 2, "grid_layout": 4, "image_url": "storyboard/episode_1/frame_009_g4_v2.png", "prompt": "4-panel 3D aftermath with shattering and kneeling in rain, PBR materials, volumetric lighting", "tool_used": "nano_banana_i2i", "timestamp": "2026-02-15T19:00:40Z", "selected": true}
+          ]
+        },
+        {
+          "id": "frame_010", "frame_number": 10, "beat_number": 10,
+          "summary": "Single wide shot departure: Enforcer kneels in foreground. Lin Ye walks away into rain, becoming silhouette, red footprints on wet stone. Fade to darkness.",
+          "shot_type": "wide",
+          "dialogue": null,
+          "character_ids": ["char_001", "char_002"], "scene_id": "scene_001", "prop_ids": [],
+          "prompt": "Single cinematic 3D wide shot of departure in rain, PBR materials, volumetric lighting",
+          "grid_layout": 1,
+          "image_url": "storyboard/episode_1/frame_010_selected.png",
+          "versions": [
+            {"version": 1, "grid_layout": 1, "image_url": "storyboard/episode_1/frame_010_g1_v1.png", "prompt": "Single cinematic wide shot of departure in rain", "tool_used": "nano_banana_i2i", "timestamp": "2026-02-15T00:30:45Z", "selected": false},
+            {"version": 2, "grid_layout": 1, "image_url": "storyboard/episode_1/frame_010_g1_v2.png", "prompt": "Single cinematic 3D wide shot of departure in rain, PBR materials, volumetric lighting", "tool_used": "nano_banana_i2i", "timestamp": "2026-02-15T19:00:45Z", "selected": true}
+          ]
+        }
+      ]
+    }
+  ]
+}
