@@ -1,5 +1,7 @@
 export interface CanvasToTimelineLink {
   id: string;
+  assetId?: string;
+  /** @deprecated use assetId */
   canvasNodeId: string;
   timelineItemId: string;
   confidence: number;

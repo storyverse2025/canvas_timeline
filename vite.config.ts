@@ -1,26 +1,24 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react-swc'
 import path from 'path'
+import { libtvPlugin } from './vite-libtv-plugin'
+import { providersPlugin } from './vite-providers-plugin'
+import { capabilitiesPlugin } from './vite-capabilities-plugin'
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), libtvPlugin(), providersPlugin(), capabilitiesPlugin()],
   server: {
     host: '0.0.0.0',
-    port: 3000,
+    port: 8080,
     proxy: {
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,
       },
       '/anthropic': {
-        target: 'https://api.anthropic.com',
+        target: 'http://localhost:3001',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/anthropic/, ''),
-        headers: {
-          'x-api-key': process.env.ANTHROPIC_API_KEY || '',
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true',
-        },
       },
       // IMPORTANT: /fal-queue and /fal-storage MUST come before /fal
       // to avoid prefix collision (/fal matches /fal-queue/...)

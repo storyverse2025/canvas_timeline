@@ -1,7 +1,9 @@
-import { Component, type ReactNode } from 'react'
+import { Component, useEffect, type ReactNode } from 'react'
 import { ReactFlowProvider } from '@xyflow/react'
 import { Toaster } from '@/components/ui/sonner'
 import { AppShell } from '@/components/layout/AppShell'
+import { migrateStores } from '@/lib/migrate-stores'
+import { initStoryboardTimelineLink } from '@/lib/storyboard-timeline-sync'
 
 interface ErrorBoundaryState {
   hasError: boolean
@@ -22,7 +24,9 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
   handleClearAndReset = () => {
     localStorage.removeItem('canvas-store')
     localStorage.removeItem('timeline-store')
+    localStorage.removeItem('timeline-store-v2')
     localStorage.removeItem('mapping-store')
+    localStorage.removeItem('asset-store')
     localStorage.removeItem('pipeline-context')
     window.location.reload()
   }
@@ -61,12 +65,26 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
   }
 }
 
+function AppWithMigration() {
+  useEffect(() => {
+    // Run once after all persisted stores have rehydrated
+    migrateStores()
+    initStoryboardTimelineLink()
+  }, [])
+
+  return (
+    <>
+      <AppShell />
+      <Toaster position="bottom-right" />
+    </>
+  )
+}
+
 export default function App() {
   return (
     <ErrorBoundary>
       <ReactFlowProvider>
-        <AppShell />
-        <Toaster position="bottom-right" />
+        <AppWithMigration />
       </ReactFlowProvider>
     </ErrorBoundary>
   )

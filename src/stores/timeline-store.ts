@@ -2,10 +2,10 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { persist } from 'zustand/middleware';
 import { v4 as uuid } from 'uuid';
-import type { Shot } from '@/types/timeline';
+import type { Track, TrackType, TimelineItem } from '@/types/timeline';
 
 interface TimelineState {
-  shots: Shot[];
+  tracks: Track[];
   playheadTime: number;
   duration: number;
   zoom: number;
@@ -15,147 +15,180 @@ interface TimelineState {
 }
 
 interface TimelineActions {
-  addShot: (label?: string, duration?: number) => string;
-  removeShot: (shotId: string) => void;
-  updateShot: (shotId: string, data: Partial<Shot>) => void;
-  reorderShots: (fromIndex: number, toIndex: number) => void;
-  resizeShot: (shotId: string, newDuration: number) => void;
-  linkNodeToShot: (shotId: string, nodeId: string) => void;
-  unlinkNodeFromShot: (shotId: string, nodeId: string) => void;
-  getShotById: (id: string) => Shot | undefined;
-  recalculateStartTimes: () => void;
+  // Track management
+  addTrack: (type: TrackType, label?: string) => string;
+  removeTrack: (trackId: string) => void;
+  updateTrack: (trackId: string, data: Partial<Omit<Track, 'id' | 'items'>>) => void;
+  initDefaultTracks: () => void;
+
+  // Item management
+  addItem: (trackId: string, item: Omit<TimelineItem, 'id' | 'trackId' | 'type'>) => string;
+  removeItem: (itemId: string) => void;
+  updateItem: (itemId: string, data: Partial<Omit<TimelineItem, 'id' | 'trackId'>>) => void;
+  moveItem: (itemId: string, newTrackId: string, newStartTime: number) => void;
+  resizeItem: (itemId: string, newDuration: number) => void;
+
+  // Playback
   setPlayheadTime: (time: number) => void;
   setDuration: (duration: number) => void;
   setZoom: (zoom: number) => void;
   setIsPlaying: (playing: boolean) => void;
   toggleSnap: () => void;
   setSnapInterval: (interval: number) => void;
-  setShots: (shots: Shot[]) => void;
+
+  // Getters
+  getTrackById: (id: string) => Track | undefined;
+  getItemById: (id: string) => TimelineItem | undefined;
+  getItemsForAsset: (assetId: string) => TimelineItem[];
+
+  // Full replace (for save/load)
+  setTracks: (tracks: Track[]) => void;
 }
 
-function recalcStartTimes(shots: Shot[]) {
-  let t = 0;
-  for (const shot of shots) {
-    shot.startTime = t;
-    t += shot.duration;
-  }
+const DEFAULT_TRACKS: Omit<Track, 'id'>[] = [
+  { type: 'keyframe', label: '关键帧', items: [] },
+  { type: 'bgm', label: 'BGM', items: [] },
+  { type: 'dialogue', label: '对话', items: [] },
+];
+
+function makeDefaultTracks(): Track[] {
+  return DEFAULT_TRACKS.map((t) => ({ ...t, id: uuid() }));
 }
 
 export const useTimelineStore = create<TimelineState & TimelineActions>()(
   persist(
-  immer((set, get) => ({
-    shots: [],
-    playheadTime: 0,
-    duration: 120,
-    zoom: 1,
-    isPlaying: false,
-    snapEnabled: true,
-    snapInterval: 1,
+    immer((set, get) => ({
+      tracks: [],
+      playheadTime: 0,
+      duration: 120,
+      zoom: 1,
+      isPlaying: false,
+      snapEnabled: true,
+      snapInterval: 1,
 
-    addShot: (label, duration = 10) => {
-      const id = uuid();
-      set((state) => {
-        const clamped = Math.max(5, Math.min(15, duration));
-        state.shots.push({
-          id,
-          label: label || `Shot ${state.shots.length + 1}`,
-          duration: clamped,
-          linkedNodeIds: [],
-          startTime: 0,
-          color: undefined,
+      addTrack: (type, label) => {
+        const id = uuid();
+        set((state) => {
+          const defaultLabel = type === 'keyframe' ? '关键帧'
+            : type === 'bgm' ? 'BGM'
+            : type === 'dialogue' ? '对话'
+            : '视频';
+          state.tracks.push({ id, type, label: label ?? defaultLabel, items: [] });
         });
-        recalcStartTimes(state.shots);
-        state.duration = state.shots.reduce((s, sh) => s + sh.duration, 0);
-      });
-      return id;
-    },
+        return id;
+      },
 
-    removeShot: (shotId) => {
-      set((state) => {
-        state.shots = state.shots.filter((s) => s.id !== shotId);
-        recalcStartTimes(state.shots);
-        state.duration = Math.max(10, state.shots.reduce((s, sh) => s + sh.duration, 0));
-      });
-    },
+      removeTrack: (trackId) => {
+        set((state) => {
+          state.tracks = state.tracks.filter((t) => t.id !== trackId);
+        });
+      },
 
-    updateShot: (shotId, data) => {
-      set((state) => {
-        const shot = state.shots.find((s) => s.id === shotId);
-        if (shot) {
-          Object.assign(shot, data);
-          if (data.duration != null) {
-            shot.duration = Math.max(5, Math.min(15, data.duration));
+      updateTrack: (trackId, data) => {
+        set((state) => {
+          const track = state.tracks.find((t) => t.id === trackId);
+          if (track) Object.assign(track, data);
+        });
+      },
+
+      initDefaultTracks: () => {
+        set((state) => {
+          if (state.tracks.length === 0) {
+            state.tracks = makeDefaultTracks() as typeof state.tracks;
           }
-          recalcStartTimes(state.shots);
-          state.duration = state.shots.reduce((s, sh) => s + sh.duration, 0);
+        });
+      },
+
+      addItem: (trackId, item) => {
+        const id = uuid();
+        set((state) => {
+          const track = state.tracks.find((t) => t.id === trackId);
+          if (track) {
+            const newItem: TimelineItem = {
+              ...item,
+              id,
+              trackId,
+              type: track.type,
+            };
+            track.items.push(newItem);
+            // update total duration
+            const maxEnd = state.tracks
+              .flatMap((t) => t.items)
+              .reduce((m, i) => Math.max(m, i.startTime + i.duration), 0);
+            if (maxEnd > state.duration) state.duration = maxEnd + 10;
+          }
+        });
+        return id;
+      },
+
+      removeItem: (itemId) => {
+        set((state) => {
+          for (const track of state.tracks) {
+            const idx = track.items.findIndex((i) => i.id === itemId);
+            if (idx >= 0) { track.items.splice(idx, 1); break; }
+          }
+        });
+      },
+
+      updateItem: (itemId, data) => {
+        set((state) => {
+          for (const track of state.tracks) {
+            const item = track.items.find((i) => i.id === itemId);
+            if (item) { Object.assign(item, data); break; }
+          }
+        });
+      },
+
+      moveItem: (itemId, newTrackId, newStartTime) => {
+        set((state) => {
+          let movedItem: TimelineItem | undefined;
+          for (const track of state.tracks) {
+            const idx = track.items.findIndex((i) => i.id === itemId);
+            if (idx >= 0) {
+              [movedItem] = track.items.splice(idx, 1);
+              break;
+            }
+          }
+          if (!movedItem) return;
+          const newTrack = state.tracks.find((t) => t.id === newTrackId);
+          if (newTrack) {
+            newTrack.items.push({ ...movedItem, trackId: newTrackId, type: newTrack.type, startTime: newStartTime });
+          }
+        });
+      },
+
+      resizeItem: (itemId, newDuration) => {
+        set((state) => {
+          for (const track of state.tracks) {
+            const item = track.items.find((i) => i.id === itemId);
+            if (item) { item.duration = Math.max(1, newDuration); break; }
+          }
+        });
+      },
+
+      setPlayheadTime: (time) => set({ playheadTime: time }),
+      setDuration: (duration) => set({ duration }),
+      setZoom: (zoom) => set({ zoom: Math.max(0.1, Math.min(10, zoom)) }),
+      setIsPlaying: (playing) => set({ isPlaying: playing }),
+      toggleSnap: () => set((state) => { state.snapEnabled = !state.snapEnabled; }),
+      setSnapInterval: (interval) => set({ snapInterval: interval }),
+
+      getTrackById: (id) => get().tracks.find((t) => t.id === id),
+      getItemById: (id) => {
+        for (const track of get().tracks) {
+          const item = track.items.find((i) => i.id === id);
+          if (item) return item;
         }
-      });
-    },
+        return undefined;
+      },
+      getItemsForAsset: (assetId) =>
+        get().tracks.flatMap((t) => t.items.filter((i) => i.assetId === assetId)),
 
-    reorderShots: (fromIndex, toIndex) => {
-      set((state) => {
-        const [shot] = state.shots.splice(fromIndex, 1);
-        state.shots.splice(toIndex, 0, shot);
-        recalcStartTimes(state.shots);
-      });
-    },
-
-    resizeShot: (shotId, newDuration) => {
-      set((state) => {
-        const shot = state.shots.find((s) => s.id === shotId);
-        if (shot) {
-          shot.duration = Math.max(5, Math.min(15, newDuration));
-          recalcStartTimes(state.shots);
-          state.duration = state.shots.reduce((s, sh) => s + sh.duration, 0);
-        }
-      });
-    },
-
-    linkNodeToShot: (shotId, nodeId) => {
-      set((state) => {
-        const shot = state.shots.find((s) => s.id === shotId);
-        if (shot && !shot.linkedNodeIds.includes(nodeId)) {
-          shot.linkedNodeIds.push(nodeId);
-        }
-      });
-    },
-
-    unlinkNodeFromShot: (shotId, nodeId) => {
-      set((state) => {
-        const shot = state.shots.find((s) => s.id === shotId);
-        if (shot) {
-          shot.linkedNodeIds = shot.linkedNodeIds.filter((id) => id !== nodeId);
-        }
-      });
-    },
-
-    getShotById: (id) => get().shots.find((s) => s.id === id),
-
-    recalculateStartTimes: () => {
-      set((state) => {
-        recalcStartTimes(state.shots);
-        state.duration = Math.max(10, state.shots.reduce((s, sh) => s + sh.duration, 0));
-      });
-    },
-
-    setPlayheadTime: (time) => set({ playheadTime: time }),
-    setDuration: (duration) => set({ duration }),
-    setZoom: (zoom) => set({ zoom: Math.max(0.1, Math.min(10, zoom)) }),
-    setIsPlaying: (playing) => set({ isPlaying: playing }),
-    toggleSnap: () => set((state) => { state.snapEnabled = !state.snapEnabled; }),
-    setSnapInterval: (interval) => set({ snapInterval: interval }),
-
-    setShots: (shots) => {
-      set((state) => {
-        state.shots = shots;
-        recalcStartTimes(state.shots);
-        state.duration = Math.max(10, state.shots.reduce((s, sh) => s + sh.duration, 0));
-      });
-    },
-  })),
-  {
-    name: 'timeline-store',
-    partialize: (state) => ({ shots: state.shots, duration: state.duration }),
-  }
+      setTracks: (tracks) => set({ tracks }),
+    })),
+    {
+      name: 'timeline-store-v2',
+      partialize: (state) => ({ tracks: state.tracks, duration: state.duration }),
+    }
   )
 );

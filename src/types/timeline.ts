@@ -1,5 +1,6 @@
-export type TrackType = 'script' | 'visual' | 'audio';
+export type TrackType = 'keyframe' | 'bgm' | 'dialogue' | 'video';
 
+/** @deprecated Use Track/TrackItem instead */
 export interface Shot {
   id: string;
   label: string;
@@ -10,7 +11,6 @@ export interface Shot {
   data?: Record<string, unknown>;
 }
 
-// Keep for backward compat with version store
 export interface TimelineItem {
   id: string;
   trackId: string;
@@ -20,6 +20,8 @@ export interface TimelineItem {
   label: string;
   color?: string;
   data?: Record<string, unknown>;
+  assetId?: string;
+  /** @deprecated use assetId instead */
   canvasNodeId?: string;
   locked?: boolean;
 }
@@ -41,8 +43,17 @@ export interface TimelineVersion {
   backendVersionId?: string;
 }
 
+export interface Track {
+  id: string;
+  type: TrackType;
+  label: string;
+  muted?: boolean;
+  locked?: boolean;
+  items: TimelineItem[];
+}
+
 export interface TimelineState {
-  shots: Shot[];
+  tracks: Track[];
   playheadTime: number;
   duration: number;
   zoom: number;

@@ -87,3 +87,64 @@
 ::-webkit-scrollbar-thumb:hover {
   background: hsl(220 15% 35%);
 }
+
+/* Generating node shimmer — shown while an AI task is active on the node */
+.bragi-generating::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    100deg,
+    transparent 25%,
+    hsl(220 15% 30% / 0.55) 50%,
+    transparent 75%
+  );
+  background-size: 220% 100%;
+  animation: bragi-shimmer 1.6s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 2;
+}
+.bragi-generating {
+  animation: bragi-border-pulse 1.6s ease-in-out infinite;
+}
+@keyframes bragi-shimmer {
+  0%   { background-position: 220% 0; }
+  100% { background-position: -120% 0; }
+}
+@keyframes bragi-border-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 hsl(264 80% 60% / 0.0); }
+  50%      { box-shadow: 0 0 0 3px hsl(264 80% 60% / 0.35); }
+}
+
+/* ── Canvas handles (source/target dots on node edges) ─────────────── */
+.bragi-handle {
+  width: 12px !important;
+  height: 12px !important;
+  background: hsl(264 80% 60%) !important;
+  border: 2px solid hsl(220 18% 10%) !important;
+  opacity: 0.55;
+  transition: opacity .15s ease, transform .15s ease;
+}
+.react-flow__node:hover .bragi-handle,
+.react-flow__node.selected .bragi-handle {
+  opacity: 1;
+  transform: scale(1.25);
+}
+.react-flow__handle-connecting,
+.react-flow__handle-valid {
+  background: hsl(142 70% 50%) !important;
+  opacity: 1 !important;
+  transform: scale(1.4) !important;
+}
+
+/* Thicker edge with arrow */
+.react-flow__edge-path {
+  stroke: hsl(220 15% 45%);
+  stroke-width: 2;
+}
+.react-flow__edge.selected .react-flow__edge-path,
+.react-flow__edge:hover .react-flow__edge-path {
+  stroke: hsl(264 80% 60%);
+  stroke-width: 2.5;
+}

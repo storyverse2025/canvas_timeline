@@ -1,3 +1,4 @@
+export * from './asset';
 export * from './canvas';
 export * from './timeline';
 export * from './mapping';
