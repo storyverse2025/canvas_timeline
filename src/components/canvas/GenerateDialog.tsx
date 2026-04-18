@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { X, Sparkles, Image as ImageIcon, Video, Link2, Wand2, Loader2 } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { X, Sparkles, Image as ImageIcon, Video, Link2, Wand2, Loader2, Plus } from 'lucide-react'
 import { toast } from 'sonner'
 import { PROVIDERS } from '@/lib/providers/registry'
 import { fetchAvailability, optimizePrompt, type ProviderAvailability } from '@/lib/providers/client'
@@ -13,6 +13,7 @@ export interface GenerateDialogResult {
   kind: MediaKind;
   aspect: string;
   duration: number;
+  refImages: string[];
 }
 
 interface Props {
@@ -28,6 +29,23 @@ const ASPECTS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9']
 export function GenerateDialog({ initialPrompt = '', upstreamImages = [], defaultKind = 'image', onCancel, onSubmit }: Props) {
   const [avail, setAvail] = useState<ProviderAvailability | null>(null)
   const [kind, setKind] = useState<MediaKind>(defaultKind)
+  const [refImages, setRefImages] = useState<string[]>(upstreamImages)
+
+  const addRefFileRef = useRef<HTMLInputElement>(null)
+  const removeRefImage = (idx: number) => {
+    setRefImages((prev) => prev.filter((_, i) => i !== idx))
+  }
+  const addRefFromFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]; if (!f) return
+    const r = new FileReader()
+    r.onload = () => { if (typeof r.result === 'string') setRefImages((prev) => [...prev, r.result as string]) }
+    r.readAsDataURL(f)
+    e.target.value = ''
+  }
+  const addRefFromUrl = () => {
+    const url = window.prompt('输入参考图 URL')
+    if (url?.trim()) setRefImages((prev) => [...prev, url.trim()])
+  }
   const [provider, setProvider] = useState<ProviderId>('doubao')
   const [model, setModel] = useState<string>('')
   const [prompt, setPrompt] = useState(initialPrompt)
@@ -176,33 +194,45 @@ export function GenerateDialog({ initialPrompt = '', upstreamImages = [], defaul
               </select>
             </div>
           )}
-          {upstreamImages.length > 0 && (
-            <div className="text-[10px] text-muted-foreground flex items-center gap-1">
-              <Link2 className="w-3 h-3" /> 已连入 {upstreamImages.length} 张参考图
-            </div>
-          )}
+          <div className="text-[10px] text-muted-foreground flex items-center gap-1">
+              <Link2 className="w-3 h-3" /> 参考图 {refImages.length} 张
+          </div>
         </div>
 
-        {upstreamImages.length > 0 && (
-          <div className="flex gap-1.5 overflow-x-auto pb-1">
-            {upstreamImages.map((u, i) => (
+        <div className="flex gap-1.5 overflow-x-auto pb-1">
+          {refImages.map((u, i) => (
+            <div key={i} className="relative shrink-0 group">
               <img
-                key={i}
                 src={u}
                 alt=""
-                className="h-14 w-14 object-cover rounded border border-border shrink-0"
+                className="h-14 w-14 object-cover rounded border border-border"
                 title={u}
               />
-            ))}
+              <button
+                className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-opacity"
+                onClick={() => removeRefImage(i)}
+                title="移除参考图"
+              >×</button>
+            </div>
+          ))}
+          <div className="shrink-0 h-14 w-14 rounded border border-dashed border-border flex items-center justify-center">
+            <button
+              className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
+              onClick={() => addRefFileRef.current?.click()}
+              title="上传参考图"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
           </div>
-        )}
+          <input ref={addRefFileRef} type="file" accept="image/*" className="hidden" onChange={addRefFromFile} />
+        </div>
 
         <div className="flex justify-end gap-2 pt-1">
           <button className="px-3 py-1.5 text-xs rounded border border-border hover:bg-accent" onClick={onCancel}>取消</button>
           <button
             className={cn('px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-40')}
             disabled={disabled}
-            onClick={() => onSubmit({ provider, model, prompt: prompt.trim(), kind, aspect, duration })}
+            onClick={() => onSubmit({ provider, model, prompt: prompt.trim(), kind, aspect, duration, refImages })}
           >
             <Sparkles className="inline w-3 h-3 mr-1" />
             生成

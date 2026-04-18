@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { X, Sparkles, Loader2 } from 'lucide-react'
+import { useRef, useState } from 'react'
+import { X, Sparkles, Loader2, Plus } from 'lucide-react'
 import { toast } from 'sonner'
 import { useCapabilityDialogStore } from '@/stores/capability-dialog-store'
 import { useCapability } from '@/hooks/useCapability'
@@ -26,6 +26,7 @@ function CapabilityDialog({ state, onClose }: {
     }
     return defaults
   })
+  const [refImages, setRefImages] = useState<string[]>(state.refImages)
   const [running, setRunning] = useState(false)
   const runCap = useCapability()
 
@@ -36,12 +37,24 @@ function CapabilityDialog({ state, onClose }: {
     setParams((prev) => ({ ...prev, [key]: val }))
   }
 
+  const addRefFileRef = useRef<HTMLInputElement>(null)
+  const removeRefImage = (idx: number) => {
+    setRefImages((prev) => prev.filter((_, i) => i !== idx))
+  }
+  const addRefFromFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]; if (!f) return
+    const r = new FileReader()
+    r.onload = () => { if (typeof r.result === 'string') setRefImages((prev) => [...prev, r.result as string]) }
+    r.readAsDataURL(f)
+    e.target.value = ''
+  }
+
   const handleSubmit = async () => {
     setRunning(true)
     try {
       const extraInputs: { kind: 'text' | 'image'; text?: string; url?: string }[] = []
       if (prompt.trim()) extraInputs.push({ kind: 'text', text: prompt.trim() })
-      for (const u of state.refImages) extraInputs.push({ kind: 'image', url: u })
+      for (const u of refImages) extraInputs.push({ kind: 'image', url: u })
       await runCap({
         capabilityId: cap.id,
         nodeId: state.nodeId,
@@ -94,21 +107,35 @@ function CapabilityDialog({ state, onClose }: {
           </div>
         )}
 
-        {state.refImages.length > 0 && (
-          <div>
-            <label className="text-[10px] text-muted-foreground uppercase">参考图 ({state.refImages.length})</label>
-            <div className="flex gap-1.5 overflow-x-auto pb-1 mt-1">
-              {state.refImages.map((u, i) => (
+        <div>
+          <label className="text-[10px] text-muted-foreground uppercase">参考图 ({refImages.length})</label>
+          <div className="flex gap-1.5 overflow-x-auto pb-1 mt-1">
+            {refImages.map((u, i) => (
+              <div key={i} className="relative shrink-0 group">
                 <img
-                  key={i}
                   src={u}
                   alt=""
-                  className="h-14 w-14 object-cover rounded border border-border shrink-0"
+                  className="h-14 w-14 object-cover rounded border border-border"
                 />
-              ))}
+                <button
+                  className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-opacity"
+                  onClick={() => removeRefImage(i)}
+                  title="移除参考图"
+                >×</button>
+              </div>
+            ))}
+            <div className="shrink-0 h-14 w-14 rounded border border-dashed border-border flex items-center justify-center">
+              <button
+                className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
+                onClick={() => addRefFileRef.current?.click()}
+                title="上传参考图"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
             </div>
+            <input ref={addRefFileRef} type="file" accept="image/*" className="hidden" onChange={addRefFromFile} />
           </div>
-        )}
+        </div>
 
         <div className="flex justify-end gap-2 pt-1">
           <button className="px-3 py-1.5 text-xs rounded border border-border hover:bg-accent" onClick={onClose}>

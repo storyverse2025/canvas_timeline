@@ -171,7 +171,7 @@ function GenerateDialogMount() {
           prompt: r.prompt,
           provider: r.provider,
           model: r.model,
-          refImages: dialog.upstreamImages,
+          refImages: r.refImages,
           aspect: r.aspect,
           duration: r.duration,
           targetKind: r.kind,

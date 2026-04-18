@@ -25,7 +25,7 @@ The user has a canvas (for visual elements) and a timeline (for shots/beats).
 The current canvas state is provided in a block prefixed with "## Canvas Context" in the system message.
 When the user mentions "画布" / "canvas" / "根据画布", read from that block.
 You can reference canvas nodes by their short id (the 6-char prefix shown in the context) and use image URLs for image nodes, text content for text nodes.
-If asked for a shot list / 分镜表 / storyboard, respond ONLY with a fenced JSON array in this exact schema, no prose around it:
+IMPORTANT: When the user mentions any of these keywords — 分镜, 表格, storyboard, shot list, 生成分镜, 重新生成 — you MUST respond ONLY with a fenced JSON array, no explanation, no prose. Just output the JSON. Use the canvas context to fill in visual descriptions, character info, and scene details. Schema:
 \`\`\`json
 [
   {
@@ -252,7 +252,7 @@ export function ChatPanel() {
       await processResponse(fullText)
 
       // Auto-detect storyboard JSON → validate → retry on schema failure
-      const STORYBOARD_TRIGGER = /分镜|storyboard|shot.?list|表格|表/i
+      const STORYBOARD_TRIGGER = /分镜|storyboard|shot.?list|表格|生成.*表|重新生成/i
       const hasShotJson = /"shot_number"\s*:/.test(fullText)
       if (STORYBOARD_TRIGGER.test(text) || hasShotJson) {
         let attempt = 0
