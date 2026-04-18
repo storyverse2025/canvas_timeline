@@ -22,3 +22,15 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Claude/memory state
+memory/
+__pycache__/
+*.pyc
+
+# Large binary artifacts
+*.zip
+
+# Embedded git repos
+fal-skills/
+public/samples/libtv-skills/
