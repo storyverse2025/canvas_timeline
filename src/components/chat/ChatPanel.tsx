@@ -32,21 +32,29 @@ If asked for a shot list / 分镜表 / storyboard, respond ONLY with a fenced JS
     "shot_number": "S1",
     "duration": 3.5,
     "visual_description": "...",
-    "reference_image": "<canvas node short id from Canvas Context, or full image URL, or empty>",
+    "visual_anchor": "visual consistency anchor (key visual elements that must stay consistent across shots)",
+    "reference_image": "<canvas node short id or full image URL or empty>",
     "shot_size": "特写|近景|中景|全景|远景",
+    "character1": { "image": "", "description": "角色1外貌/服装描述" },
+    "character2": { "image": "", "description": "角色2外貌/服装描述" },
+    "prop1": { "image": "", "description": "道具1描述" },
+    "prop2": { "image": "", "description": "道具2描述" },
+    "scene": { "image": "", "description": "场景描述" },
     "character_actions": "...",
     "emotion_mood": "...",
     "scene_tags": "室内,夜间",
     "lighting_atmosphere": "...",
     "sound_effects": "...",
-    "dialogue": "...",
-    "storyboard_prompts": "english prompt for static shot image",
-    "motion_prompts": "english prompt for camera/video motion",
-    "bgm": "..."
+    "dialogue": "对白文本",
+    "dialogue_audio": "",
+    "storyboard_prompts": "english prompt for keyframe image",
+    "motion_prompts": "english prompt for beat video motion",
+    "bgm": "BGM description",
+    "bgm_audio": ""
   }
 ]
 \`\`\`
-Required fields: shot_number (string), duration (positive number in seconds). All other fields default to empty string if unknown. If a validator error is fed back, fix ONLY the listed fields and resend the complete JSON array.
+Required fields: shot_number (string), duration (positive number in seconds). Element slots (character1/2, prop1/2, scene) have {image, description} sub-fields. All other fields default to empty string if unknown. If a validator error is fed back, fix ONLY the listed fields and resend the complete JSON array.
 When they ask you to write a script, structure it with numbered beats.
 
 When writing scripts, use this format:

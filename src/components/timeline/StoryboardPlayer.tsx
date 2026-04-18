@@ -65,8 +65,8 @@ export function StoryboardPlayer() {
     )
   }
 
-  const img = active?.row.reference_image || active?.row.aiImageUrl
-  const video = active?.row.aiVideoUrl
+  const img = active?.row.keyframeUrl || active?.row.reference_image
+  const video = active?.row.beatVideoUrl
 
   return (
     <div className="relative w-full h-full bg-black flex items-center justify-center overflow-hidden">

@@ -39,8 +39,8 @@ export function syncStoryboardToTimeline(rows: StoryboardRow[]) {
       data: {
         storyboardRowId: r.id,
         referenceNodeId: r.referenceNodeId,
-        imageUrl: r.reference_image || r.aiImageUrl,
-        videoUrl: r.aiVideoUrl,
+        imageUrl: r.keyframeUrl || r.reference_image,
+        videoUrl: r.beatVideoUrl,
         shotNumber: r.shot_number,
         dialogue: r.dialogue,
       },
@@ -70,9 +70,7 @@ export function initStoryboardTimelineLink() {
       syncStoryboardToTimeline(state.rows)
     }
   })
-  // Initial sync if rows already restored from persistence
   if (prev.length > 0) syncStoryboardToTimeline(prev)
 }
 
-// Keep a no-op export so tree-shaking doesn't drop the module when imported for side-effects.
 export const _ = uuid

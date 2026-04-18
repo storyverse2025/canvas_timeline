@@ -4,6 +4,7 @@ import { Toaster } from '@/components/ui/sonner'
 import { AppShell } from '@/components/layout/AppShell'
 import { migrateStores } from '@/lib/migrate-stores'
 import { initStoryboardTimelineLink } from '@/lib/storyboard-timeline-sync'
+import { initCanvasStoryboardSync } from '@/lib/canvas-storyboard-sync'
 
 interface ErrorBoundaryState {
   hasError: boolean
@@ -70,6 +71,7 @@ function AppWithMigration() {
     // Run once after all persisted stores have rehydrated
     migrateStores()
     initStoryboardTimelineLink()
+    initCanvasStoryboardSync()
   }, [])
 
   return (
