@@ -273,7 +273,7 @@ async function inpaint(req: CapReq): Promise<CapRes> {
     num_images: 1,
   }
   if (maskUrl) body.mask_url = maskUrl
-  const res = await fetch('https://fal.run/fal-ai/flux-pro/v1.1/inpainting', {
+  const res = await fetch('https://fal.run/fal-ai/flux-general/inpainting', {
     method: 'POST',
     headers: { 'Authorization': `Key ${key}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
