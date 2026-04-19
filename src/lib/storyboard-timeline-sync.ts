@@ -4,61 +4,98 @@ import { useStoryboardStore } from '@/stores/storyboard-store'
 import type { StoryboardRow } from '@/types/storyboard'
 import type { Track } from '@/types/timeline'
 
-const STORYBOARD_TRACK_LABEL = '分镜'
+const KF_TRACK_LABEL = '分镜 Keyframe'
+const VIDEO_TRACK_LABEL = '分镜 Video'
 
-/**
- * One-way hard link: storyboard rows → timeline "分镜" track.
- * Replaces the entire track every time so it stays in sync.
- */
-export function syncStoryboardToTimeline(rows: StoryboardRow[]) {
+function ensureTrack(label: string, type: 'keyframe' | 'video'): string {
   const state = useTimelineStore.getState()
   let tracks = state.tracks
   if (tracks.length === 0) {
     state.initDefaultTracks()
     tracks = useTimelineStore.getState().tracks
   }
-
-  let track = tracks.find((t) => t.label === STORYBOARD_TRACK_LABEL)
+  let track = tracks.find((t) => t.label === label)
   if (!track) {
-    const id = state.addTrack('keyframe', STORYBOARD_TRACK_LABEL)
+    const id = state.addTrack(type, label)
     track = useTimelineStore.getState().tracks.find((t) => t.id === id)
-    if (!track) return
   }
-  const trackId = track.id
+  return track!.id
+}
+
+/**
+ * Two-track sync: storyboard rows → keyframe track + video track.
+ * Keyframe track shows all shots (image or fallback).
+ * Video track shows only shots that have a beat video.
+ */
+export function syncStoryboardToTimeline(rows: StoryboardRow[]) {
+  const kfTrackId = ensureTrack(KF_TRACK_LABEL, 'keyframe')
+  const vidTrackId = ensureTrack(VIDEO_TRACK_LABEL, 'video')
 
   let cursor = 0
-  const items = rows.map((r) => {
+  const kfItems: Array<Record<string, unknown>> = []
+  const vidItems: Array<Record<string, unknown>> = []
+
+  for (const r of rows) {
     const dur = Math.max(0.1, Number(r.duration) || 1)
-    const item = {
-      id: `sb-${r.id}`,
-      trackId,
-      type: track!.type,
+    const label = `${r.shot_number ?? ''} ${(r.visual_description ?? '').slice(0, 20)}`.trim()
+    const imageUrl = r.keyframeUrl || r.reference_image
+
+    // Keyframe track — always present
+    kfItems.push({
+      id: `sb-kf-${r.id}`,
+      trackId: kfTrackId,
+      type: 'keyframe',
       startTime: cursor,
       duration: dur,
-      label: `${r.shot_number ?? ''} ${(r.visual_description ?? '').slice(0, 20)}`.trim(),
+      label,
       data: {
         storyboardRowId: r.id,
-        referenceNodeId: r.referenceNodeId,
-        imageUrl: r.keyframeUrl || r.reference_image,
-        videoUrl: r.beatVideoUrl,
+        imageUrl,
         shotNumber: r.shot_number,
         dialogue: r.dialogue,
       },
       color: '#8b5cf6',
+    })
+
+    // Video track — only if beat video exists
+    if (r.beatVideoUrl) {
+      vidItems.push({
+        id: `sb-vid-${r.id}`,
+        trackId: vidTrackId,
+        type: 'video',
+        startTime: cursor,
+        duration: dur,
+        label: `${r.shot_number} video`,
+        data: {
+          storyboardRowId: r.id,
+          videoUrl: r.beatVideoUrl,
+          imageUrl,
+          shotNumber: r.shot_number,
+        },
+        color: '#ec4899',
+      })
     }
+
     cursor += dur
-    return item
-  })
+  }
 
   useTimelineStore.setState((s) => {
-    const t = s.tracks.find((x: Track) => x.id === trackId)
-    if (t) t.items = items
+    const kfTrack = s.tracks.find((x: Track) => x.id === kfTrackId)
+    if (kfTrack) kfTrack.items = kfItems as Track['items']
+    const vidTrack = s.tracks.find((x: Track) => x.id === vidTrackId)
+    if (vidTrack) vidTrack.items = vidItems as Track['items']
     const maxEnd = s.tracks.flatMap((x: Track) => x.items).reduce((m, i) => Math.max(m, i.startTime + i.duration), 0)
     if (maxEnd + 5 > s.duration) s.duration = maxEnd + 10
   })
+
+  // Also remove old single "分镜" track if it exists (migration)
+  const oldTrack = useTimelineStore.getState().tracks.find((t: Track) => t.label === '分镜')
+  if (oldTrack) {
+    useTimelineStore.getState().removeTrack(oldTrack.id)
+  }
 }
 
-/** Subscribe once: whenever storyboard rows change, rebuild the timeline track. */
+/** Subscribe once: whenever storyboard rows change, rebuild the timeline tracks. */
 let _subscribed = false
 export function initStoryboardTimelineLink() {
   if (_subscribed) return

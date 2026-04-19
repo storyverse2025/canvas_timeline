@@ -76,8 +76,8 @@ export function StoryboardPlayer() {
           src={video}
           className="max-w-full max-h-full"
           autoPlay={isPlaying}
-          muted
           loop={false}
+          controls
         />
       ) : img ? (
         <img
