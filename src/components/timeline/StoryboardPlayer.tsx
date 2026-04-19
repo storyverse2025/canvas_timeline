@@ -11,6 +11,8 @@ export function StoryboardPlayer() {
   const setIsPlaying = useTimelineStore((s) => s.setIsPlaying)
 
   const videoRef = useRef<HTMLVideoElement>(null)
+  // Set of row IDs whose video has finished playing — prevents replay on re-render
+  const playedRef = useRef(new Set<string>())
 
   // Precompute cumulative startTime for each row
   const timeline = useMemo(() => {
@@ -23,11 +25,20 @@ export function StoryboardPlayer() {
     })
   }, [rows])
 
+  // Reset played set when playhead goes back to 0 (replay from start)
+  const prevPlayhead = useRef(playhead)
+  if (playhead < prevPlayhead.current - 1) {
+    playedRef.current.clear()
+  }
+  prevPlayhead.current = playhead
+
   const activeIdx = timeline.findIndex((e) => playhead >= e.start && playhead < e.end)
   const active = activeIdx >= 0 ? timeline[activeIdx] : timeline[timeline.length - 1]
-  const activeVideo = active?.row.beatVideoUrl
-  const activeImage = active?.row.keyframeUrl || active?.row.reference_image
   const activeRowId = active?.row.id
+  // Skip video if this row was already played
+  const alreadyPlayed = activeRowId ? playedRef.current.has(activeRowId) : false
+  const activeVideo = !alreadyPlayed ? active?.row.beatVideoUrl : undefined
+  const activeImage = active?.row.keyframeUrl || active?.row.reference_image
 
   // Use refs so callbacks always see latest values without re-triggering effects
   const activeRef = useRef(active)
@@ -108,11 +119,14 @@ export function StoryboardPlayer() {
   const handleEnded = useCallback(() => {
     const cur = activeRef.current
     if (!cur) return
+    // Mark this row as played so it won't replay on re-render
+    playedRef.current.add(cur.row.id)
     videoReadyForRef.current = null
     // Advance to next shot
     const nextTime = cur.end + 0.01
     const totalDur = useTimelineStore.getState().duration
     if (nextTime >= totalDur) {
+      playedRef.current.clear()
       setPlayhead(0)
       setIsPlaying(false)
     } else {
