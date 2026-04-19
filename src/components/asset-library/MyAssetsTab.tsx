@@ -2,6 +2,8 @@ import { useMemo, useRef, useState } from 'react'
 import { Upload } from 'lucide-react'
 import { toast } from 'sonner'
 import { useProjectDB, type ElementRole } from '@/stores/project-db'
+import { useCanvasItemStore } from '@/stores/canvas-item-store'
+import { useCanvasStore } from '@/stores/canvas-store'
 import { AssetCard } from './AssetCard'
 import { CategoryFilter } from './CategoryFilter'
 
@@ -23,15 +25,30 @@ export function MyAssetsTab() {
     const reader = new FileReader()
     reader.onload = () => {
       if (typeof reader.result === 'string') {
+        const dataUrl = reader.result
+        const name = f.name.replace(/\.[^.]+$/, '')
+        // Save to ProjectDB
         addElement({
           kind: 'image',
           role: 'unknown',
-          name: f.name.replace(/\.[^.]+$/, ''),
-          content: reader.result,
+          name,
+          content: dataUrl,
           description: '',
           source: 'manual',
         })
-        toast.success(`已上传: ${f.name}`)
+        // Also create a canvas node so it appears on the canvas
+        const itemId = useCanvasItemStore.getState().addItem({
+          kind: 'image',
+          name,
+          content: dataUrl,
+        })
+        // Place near center of current viewport
+        const nodes = useCanvasStore.getState().nodes
+        const maxY = nodes.length > 0
+          ? Math.max(...nodes.map((n) => n.position.y + ((n.style?.height as number) ?? n.height ?? 160))) + 20
+          : 50
+        useCanvasStore.getState().addItemNode(itemId, 'image', { x: 50, y: maxY }, { width: 200, height: 200 })
+        toast.success(`已上传: ${f.name}（已添加到画布）`)
       }
     }
     reader.readAsDataURL(f)
