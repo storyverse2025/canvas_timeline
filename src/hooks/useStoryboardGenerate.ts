@@ -145,7 +145,10 @@ export function useStoryboardGenerate() {
     const prompt = [
       row.motion_prompts,
       row.visual_description,
+      row.character_actions,
       row.emotion_mood,
+      row.lighting_atmosphere,
+      row.shot_size ? `${row.shot_size} shot` : '',
     ].filter(Boolean).join('. ')
     if (!prompt.trim() && !row.keyframeUrl) { toast.error('缺少运动提示词或 keyframe'); return }
 
@@ -154,9 +157,17 @@ export function useStoryboardGenerate() {
     updateTask(taskId, { status: 'polling' })
 
     try {
-      const refImages: string[] = []
-      if (row.keyframeUrl) refImages.push(row.keyframeUrl)
-      if (row.reference_image) refImages.push(row.reference_image)
+      // Collect all available reference images from the row:
+      // keyframe first (most important), then reference, characters, props, scene
+      const refImages: string[] = [
+        row.keyframeUrl,
+        row.reference_image,
+        row.character1?.image,
+        row.character2?.image,
+        row.prop1?.image,
+        row.prop2?.image,
+        row.scene?.image,
+      ].filter((u): u is string => !!u && u.length > 0)
 
       const result = await runCapability({
         capability: 'text-to-video',
