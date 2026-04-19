@@ -3,22 +3,24 @@ import { useReactFlow } from '@xyflow/react'
 import { useProjectDB, type ElementRole } from '@/stores/project-db'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { useCanvasStore } from '@/stores/canvas-store'
+import { useAssetStore } from '@/stores/asset-store'
 import { AssetCard } from './AssetCard'
 import { CategoryFilter } from './CategoryFilter'
 import type { Element } from '@/stores/project-db'
 
 /**
  * Tab 1: Shows all image elements currently on the canvas.
- * Merges data from both ProjectDB.elements and legacy canvas-item-store.
+ * Merges data from ProjectDB, legacy canvas-item-store, AND asset-store.
  */
 export function CanvasAssetsTab() {
   const [filter, setFilter] = useState<ElementRole | 'all'>('all')
   const dbElements = useProjectDB((s) => s.elements)
   const dbNodes = useProjectDB((s) => s.canvasNodes)
 
-  // Also read from legacy stores for backward compat
+  // Legacy stores for backward compat
   const legacyItems = useCanvasItemStore((s) => s.items)
   const legacyNodes = useCanvasStore((s) => s.nodes)
+  const legacyAssets = useAssetStore((s) => s.assets)
 
   const rf = useReactFlow()
 
@@ -26,7 +28,7 @@ export function CanvasAssetsTab() {
     const result: (Element & { canvasNodeId?: string })[] = []
     const seen = new Set<string>()
 
-    // From ProjectDB
+    // From ProjectDB elements that have canvas nodes
     for (const node of Object.values(dbNodes)) {
       const el = dbElements[node.elementId]
       if (el && el.kind === 'image' && !seen.has(el.id)) {
@@ -35,31 +37,56 @@ export function CanvasAssetsTab() {
       }
     }
 
-    // From legacy canvas-item-store (items that are on canvas but not in ProjectDB)
+    // From legacy canvas nodes — both itemId and assetId types
+    const assetMap = new Map(legacyAssets.map((a) => [a.id, a]))
+
     for (const legacyNode of legacyNodes) {
-      const itemId = legacyNode.data?.itemId
-      if (!itemId) continue
-      const item = legacyItems[itemId]
-      if (!item || item.kind !== 'image' || !item.content) continue
-      if (seen.has(itemId)) continue
-      seen.add(itemId)
-      result.push({
-        id: itemId,
-        kind: 'image',
-        role: guessRole(item.name),
-        name: item.name,
-        content: item.content,
-        description: '',
-        source: 'manual',
-        createdAt: item.createdAt,
-        updatedAt: item.createdAt,
-        canvasNodeId: legacyNode.id,
-      })
+      // Asset-type nodes (character/scene/prop/keyframe from asset-store)
+      const assetId = legacyNode.data?.assetId as string | undefined
+      if (assetId && !seen.has(assetId)) {
+        const asset = assetMap.get(assetId)
+        if (asset) {
+          seen.add(assetId)
+          result.push({
+            id: assetId,
+            kind: 'image',
+            role: mapAssetType(asset.type),
+            name: asset.name,
+            content: asset.imageUrl ?? '',
+            description: asset.description ?? '',
+            source: 'imported',
+            createdAt: asset.createdAt,
+            updatedAt: asset.createdAt,
+            canvasNodeId: legacyNode.id,
+          })
+        }
+      }
+
+      // Item-type nodes (free-form image/text from canvas-item-store)
+      const itemId = legacyNode.data?.itemId as string | undefined
+      if (itemId && !seen.has(itemId)) {
+        const item = legacyItems[itemId]
+        if (item && item.kind === 'image' && item.content) {
+          seen.add(itemId)
+          result.push({
+            id: itemId,
+            kind: 'image',
+            role: guessRole(item.name),
+            name: item.name,
+            content: item.content,
+            description: item.prompt ?? '',
+            source: item.provider ? 'generated' : 'manual',
+            createdAt: item.createdAt,
+            updatedAt: item.createdAt,
+            canvasNodeId: legacyNode.id,
+          })
+        }
+      }
     }
 
     if (filter !== 'all') return result.filter((e) => e.role === filter)
     return result
-  }, [dbElements, dbNodes, legacyItems, legacyNodes, filter])
+  }, [dbElements, dbNodes, legacyItems, legacyNodes, legacyAssets, filter])
 
   const handleLocate = (canvasNodeId: string) => {
     const node = useCanvasStore.getState().nodes.find((n) => n.id === canvasNodeId)
@@ -81,7 +108,7 @@ export function CanvasAssetsTab() {
       <CategoryFilter value={filter} onChange={setFilter} />
       {elements.length === 0 ? (
         <div className="flex-1 flex items-center justify-center text-xs text-muted-foreground p-4 text-center">
-          画布上没有{filter === 'all' ? '' : `${filter === 'character' ? '角色' : filter === 'scene' ? '场景' : '道具'}`}图片
+          画布上没有{filter === 'all' ? '' : FILTER_LABELS[filter] ?? ''}图片
         </div>
       ) : (
         <div className="flex-1 overflow-auto p-2">
@@ -101,11 +128,28 @@ export function CanvasAssetsTab() {
   )
 }
 
+const FILTER_LABELS: Record<string, string> = {
+  character: '角色', prop: '道具', scene: '场景', keyframe: 'KF',
+}
+
+/** Map asset-store type to ElementRole */
+function mapAssetType(type: string): ElementRole {
+  switch (type) {
+    case 'character': return 'character'
+    case 'scene': return 'scene'
+    case 'prop': return 'prop'
+    case 'keyframe': return 'keyframe'
+    default: return 'unknown'
+  }
+}
+
+/** Heuristic guess from node name */
 function guessRole(name: string): ElementRole {
   const n = name.toLowerCase()
-  if (/角色|character|人物|主角/.test(n)) return 'character'
-  if (/道具|prop|物品/.test(n)) return 'prop'
-  if (/场景|scene|背景/.test(n)) return 'scene'
-  if (/keyframe|kf-|分镜/.test(n)) return 'keyframe'
+  if (/角色|character|人物|主角|配角|英雄|导师|反派|盟友|hero|villain|mentor|ally/i.test(n)) return 'character'
+  if (/道具|prop|物品|武器|工具|item|weapon/i.test(n)) return 'prop'
+  if (/场景|scene|背景|环境|地点|location|forest|city|room|森林|城市|房间/i.test(n)) return 'scene'
+  if (/keyframe|kf-|分镜|关键帧/i.test(n)) return 'keyframe'
+  if (/video|视频|bv-/i.test(n)) return 'beat-video'
   return 'unknown'
 }
