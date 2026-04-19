@@ -17,6 +17,7 @@ import { buildCanvasContext } from '@/lib/canvas-context'
 import { parseAndValidateStoryboard } from '@/lib/storyboard-parser'
 import { useStoryboardStore } from '@/stores/storyboard-store'
 import { ensureElements, buildElementContext, type ElementInventory } from '@/lib/canvas-elements'
+import { useProjectDB } from '@/stores/project-db'
 import type { ClaudeMessage } from '@/lib/claude-client'
 
 const CHAT_SYSTEM_PROMPT = `You are StoryVerse AI, a creative assistant for animated video production.
@@ -220,7 +221,12 @@ export function ChatPanel() {
       let elementInventory: ElementInventory | null = null
       if (isStoryboardRequest) {
         try {
-          elementInventory = await ensureElements((msg) => addMessage('system', msg))
+          const { artDirection } = useProjectDB.getState()
+          elementInventory = await ensureElements((msg) => addMessage('system', msg), {
+            scriptText: text,
+            stylePreset: artDirection.stylePreset,
+            customStyle: artDirection.customStyle,
+          })
         } catch (e) {
           addMessage('system', `元素分析失败: ${(e as Error).message}，继续生成…`)
         }
