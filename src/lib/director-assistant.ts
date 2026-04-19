@@ -100,10 +100,18 @@ function setStep(state: PipelineState, stageIdx: number, stepIdx: number, status
 async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<string> {
   const canvasCtx = buildCanvasContext()
   const items = useCanvasItemStore.getState().items
-  const scriptText = Object.values(items)
+  const canvasText = Object.values(items)
     .filter((it) => it.kind === 'text' && it.content)
     .map((it) => `[${it.name}]: ${it.content}`)
     .join('\n\n')
+
+  // Use ProjectDB script if available (set by Director UI), else fall back to canvas text
+  const { useProjectDB } = await import('@/stores/project-db')
+  const db = useProjectDB.getState()
+  const scriptText = db.script.text || canvasText
+  const artDir = db.artDirection
+  const artDirectionNote = `\n美术风格：${artDir.stylePreset}${artDir.customStyle ? ` (${artDir.customStyle})` : ''}，画面比例：${artDir.defaultAspectRatio}`
+
   const storyboardRows = useStoryboardStore.getState().rows
   const existingStoryboard = storyboardRows.length > 0
     ? `\n\n现有分镜表（${storyboardRows.length}行）：\n${storyboardRows.map((r) => `${r.shot_number}: ${r.visual_description}`).join('\n')}`
@@ -130,7 +138,11 @@ ${existingStoryboard}
 
   // Step 2: 视觉锚定提取
   setStep(state, 0, 1, 'running'); onUpdate(state)
-  const inv = await ensureElements(() => {})
+  const inv = await ensureElements(() => {}, {
+    scriptText,
+    stylePreset: artDir.stylePreset,
+    customStyle: artDir.customStyle,
+  })
   const elementCtx = buildElementContext(inv)
   const visualAnchor = await aiCall(
     `基于剧本分析和已有画布元素，提取视觉锚点：
@@ -151,8 +163,10 @@ ${elementCtx}
   // Step 3: 全局视觉策略
   setStep(state, 0, 2, 'running'); onUpdate(state)
   const visualStrategy = await aiCall(
-    `作为视觉总监，制定全局视觉策略：
-- 整体色彩方案（每幕的色调变化）
+    `作为视觉总监，制定全局视觉策略。用户指定的美术方向：${artDirectionNote}
+
+请基于此美术方向制定：
+- 整体色彩方案（每幕的色调变化，须符合 ${artDir.stylePreset} 风格）
 - 镜头语言风格（手持/稳定/斯坦尼康）
 - 光影基调（自然光/人工光/混合）
 - 构图规则（三分法/中心/对称）

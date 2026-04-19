@@ -107,12 +107,19 @@ function guessRoleFromName(name: string): ElementRole {
   return 'unknown'
 }
 
+export interface EnsureElementsOptions {
+  scriptText?: string
+  stylePreset?: string
+  customStyle?: string
+}
+
 /**
  * Check what essential elements are missing and auto-generate them.
- * Returns the final inventory after generation.
+ * Uses script text and art direction to generate contextually accurate images.
  */
 export async function ensureElements(
   onStatus: (msg: string) => void,
+  opts?: EnsureElementsOptions,
 ): Promise<ElementInventory> {
   onStatus('正在分析画布元素…')
   const inventory = await classifyCanvasElements()
@@ -120,7 +127,6 @@ export async function ensureElements(
   const missing: string[] = []
   if (inventory.characters.length === 0) missing.push('角色')
   if (inventory.scenes.length === 0) missing.push('场景')
-  // Props are optional — don't auto-generate
 
   if (missing.length === 0) {
     onStatus(`画布元素齐全：${inventory.characters.length} 角色, ${inventory.props.length} 道具, ${inventory.scenes.length} 场景`)
@@ -129,33 +135,76 @@ export async function ensureElements(
 
   onStatus(`缺少 ${missing.join('、')}，正在自动生成…`)
 
-  // Gather text context from text nodes for prompt
+  // Build context from script text, canvas text nodes, and art direction
+  const scriptText = opts?.scriptText ?? ''
   const items = useCanvasItemStore.getState().items
-  const textContent = Object.values(items)
+  const canvasText = Object.values(items)
     .filter((it) => it.kind === 'text' && it.content)
     .map((it) => it.content)
     .join('\n')
-    .slice(0, 1000)
+    .slice(0, 500)
+  const contextHint = scriptText || canvasText || '一个创意短片'
 
-  const contextHint = textContent || '一个创意短片'
+  // Art direction style suffix
+  const styleMap: Record<string, string> = {
+    cinematic: 'cinematic film style, dramatic lighting',
+    anime: 'anime style, cel-shaded, vibrant colors, Japanese animation',
+    realistic: 'photorealistic, detailed, 8k photograph',
+    watercolor: 'watercolor painting style, soft edges',
+    'pixel-art': '8-bit pixel art, retro game style',
+    '3d-render': '3D CGI render, Pixar quality',
+    comic: 'comic book illustration, ink and color',
+    'oil-painting': 'oil painting, impressionist brushstrokes',
+    gothic: 'gothic dark art, dramatic shadows',
+    cyberpunk: 'cyberpunk neon aesthetic, futuristic',
+  }
+  const styleSuffix = opts?.customStyle
+    ? `, ${opts.customStyle} style`
+    : opts?.stylePreset
+      ? `, ${styleMap[opts.stylePreset] ?? opts.stylePreset}`
+      : ''
+
+  // Step 1: Use AI to extract character/scene descriptions from script
+  let charDesc = ''
+  let sceneDesc = ''
+  try {
+    const extraction = await runCapability({
+      capability: 'element-extraction',
+      inputs: [{ kind: 'text', text:
+        `从以下剧本中提取主角和主场景的视觉描述，用于生成图片：
+剧本：${contextHint.slice(0, 800)}
+
+输出格式（英文描述，用于AI绘图）：
+CHARACTER: <detailed appearance, clothing, age, gender, expression>
+SCENE: <detailed environment, lighting, atmosphere, time of day>` }],
+    })
+    const text = extraction.outputs[0]?.text ?? ''
+    const charMatch = text.match(/CHARACTER:\s*(.+?)(?:\n|SCENE:|$)/is)
+    const sceneMatch = text.match(/SCENE:\s*(.+?)$/is)
+    charDesc = charMatch?.[1]?.trim() ?? ''
+    sceneDesc = sceneMatch?.[1]?.trim() ?? ''
+  } catch { /* fallback to generic prompts */ }
 
   // Generate missing characters
   if (inventory.characters.length === 0) {
     onStatus('正在生成角色…')
     try {
+      const prompt = charDesc
+        ? `Character design sheet, full body, front view: ${charDesc}${styleSuffix}. White background, clean design`
+        : `Character design sheet, full body, front view, character for: ${contextHint.slice(0, 200)}${styleSuffix}. Professional concept art, white background`
       const r = await runCapability({
         capability: 'text-to-image',
-        inputs: [{ kind: 'text', text: `Character design sheet, full body, front view, detailed character for: ${contextHint}. Professional concept art, white background, clean design` }],
+        inputs: [{ kind: 'text', text: prompt }],
         params: { aspect: '1:1' },
       })
       if (r.outputs[0]?.url) {
         const itemId = useCanvasItemStore.getState().addItem({
-          kind: 'image', name: '角色1', content: r.outputs[0].url,
+          kind: 'image', name: '角色1', content: r.outputs[0].url, prompt,
         })
         const nodeId = useCanvasStore.getState().addItemNode(itemId, 'image', { x: 50, y: 50 }, { width: 200, height: 200 })
         inventory.characters.push({
           nodeId, itemId, name: '角色1',
-          imageUrl: r.outputs[0].url, role: 'character', description: '自动生成的角色',
+          imageUrl: r.outputs[0].url, role: 'character', description: charDesc || '自动生成的角色',
         })
       }
     } catch (e) {
@@ -163,23 +212,26 @@ export async function ensureElements(
     }
   }
 
-  // Generate missing scene
+  // Generate missing scene (with same style as character)
   if (inventory.scenes.length === 0) {
     onStatus('正在生成场景…')
     try {
+      const prompt = sceneDesc
+        ? `Cinematic wide establishing shot: ${sceneDesc}${styleSuffix}. Detailed environment, 16:9`
+        : `Cinematic wide establishing shot for: ${contextHint.slice(0, 200)}${styleSuffix}. Professional matte painting, dramatic lighting, 16:9`
       const r = await runCapability({
         capability: 'text-to-image',
-        inputs: [{ kind: 'text', text: `Cinematic wide establishing shot, detailed environment for: ${contextHint}. Professional matte painting, dramatic lighting, 16:9` }],
+        inputs: [{ kind: 'text', text: prompt }],
         params: { aspect: '16:9' },
       })
       if (r.outputs[0]?.url) {
         const itemId = useCanvasItemStore.getState().addItem({
-          kind: 'image', name: '场景', content: r.outputs[0].url,
+          kind: 'image', name: '场景', content: r.outputs[0].url, prompt,
         })
         const nodeId = useCanvasStore.getState().addItemNode(itemId, 'image', { x: 50, y: 300 }, { width: 320, height: 180 })
         inventory.scenes.push({
           nodeId, itemId, name: '场景',
-          imageUrl: r.outputs[0].url, role: 'scene', description: '自动生成的场景',
+          imageUrl: r.outputs[0].url, role: 'scene', description: sceneDesc || '自动生成的场景',
         })
       }
     } catch (e) {
