@@ -431,7 +431,7 @@ async function poseEdit(req: CapReq): Promise<CapRes> {
 
 /** Only absolute http(s) or data: URLs are valid for remote APIs. */
 function filterValidRefs(urls: string[]): string[] {
-  return urls.filter((u) => /^https?:\/\//i.test(u) || u.startsWith('data:'))
+  return urls.filter((u) => u && u.length > 10 && (/^https?:\/\//i.test(u) || u.startsWith('data:')))
 }
 
 async function textToVideo(req: CapReq): Promise<CapRes> {
@@ -447,8 +447,10 @@ async function textToVideo(req: CapReq): Promise<CapRes> {
   const contentParts: Array<Record<string, unknown>> = [
     { type: 'text', text: `${text} ${promptTail}`.trim() },
   ]
-  for (const u of refs) {
-    contentParts.push({ type: 'image_url', image_url: { url: u } })
+  // Seedance 2.0 requires role: "first_frame" for image references
+  // and only supports one reference image
+  if (refs.length > 0) {
+    contentParts.push({ type: 'image_url', image_url: { url: refs[0] }, role: 'first_frame' })
   }
   const createRes = await fetch('https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks', {
     method: 'POST', headers,

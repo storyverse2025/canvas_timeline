@@ -94,8 +94,10 @@ async function runDoubaoVideo(req: Req): Promise<{ url: string; kind: 'video' }>
   const contentParts: Array<Record<string, unknown>> = [
     { type: 'text', text: `${req.prompt} ${promptTail}`.trim() },
   ]
-  for (const u of req.refImages ?? []) {
-    contentParts.push({ type: 'image_url', image_url: { url: u } })
+  // Seedance 2.0 requires role: "first_frame" for image references
+  const validRefs = (req.refImages ?? []).filter((u) => u && /^https?:\/\//i.test(u))
+  if (validRefs.length > 0) {
+    contentParts.push({ type: 'image_url', image_url: { url: validRefs[0] }, role: 'first_frame' })
   }
 
   const createRes = await fetch('https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks', {
