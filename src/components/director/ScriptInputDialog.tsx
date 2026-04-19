@@ -18,7 +18,7 @@ export function ScriptInputDialog({ onClose }: Props) {
   const updateScript = useProjectDB((s) => s.updateScript)
   const [text, setText] = useState(script.text)
   const [showArt, setShowArt] = useState(false)
-  const [running, setRunning] = useState(false)
+  const [phase, setPhase] = useState<'input' | 'running' | 'done' | 'error'>('input')
   const [pipelineState, setPipelineState] = useState<PipelineState | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -38,7 +38,7 @@ export function ScriptInputDialog({ onClose }: Props) {
 
   const handleOptimize = async () => {
     if (!text.trim()) { toast.error('请输入或上传剧本'); return }
-    setRunning(true)
+    setPhase('running')
     updateScript({ text: text.trim() })
 
     try {
@@ -53,19 +53,16 @@ export function ScriptInputDialog({ onClose }: Props) {
         useStoryboardStore.getState().replaceAll(result.rows)
         updateScript({ optimizedText: storyboardJson })
         toast.success(`分镜表已生成：${result.rows.length} 行`)
-        // Switch to table view after a short delay
-        setTimeout(() => {
-          useViewStore.getState().setActiveTab('table')
-        }, 1500)
+        setPhase('done')
       } else {
         toast.error('分镜 JSON 解析失败', {
           description: (result.errors ?? []).slice(0, 3).join('; '),
         })
+        setPhase('error')
       }
     } catch (e) {
       toast.error('导演助手失败', { description: String((e as Error).message).slice(0, 200) })
-    } finally {
-      setRunning(false)
+      setPhase('error')
     }
   }
 
@@ -87,7 +84,7 @@ export function ScriptInputDialog({ onClose }: Props) {
         {/* Scrollable body */}
         <div className="flex-1 overflow-auto p-4 flex flex-col gap-4">
           {/* Script input */}
-          {!running && (
+          {phase === 'input' && (
             <>
               <div>
                 <div className="flex items-center justify-between mb-1">
@@ -129,18 +126,34 @@ export function ScriptInputDialog({ onClose }: Props) {
 
         {/* Footer */}
         <div className="flex justify-end gap-2 px-4 py-3 border-t border-border shrink-0">
-          <button className="px-3 py-1.5 text-xs rounded border border-border hover:bg-accent" onClick={onClose}>
-            {running ? '关闭' : '取消'}
-          </button>
-          {!running && (
-            <button
-              className="px-4 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-40 inline-flex items-center gap-1.5"
-              disabled={!text.trim()}
-              onClick={handleOptimize}
-            >
-              <Clapperboard className="w-3 h-3" />
-              立即优化
-            </button>
+          {phase === 'done' ? (
+            <>
+              <button className="px-3 py-1.5 text-xs rounded border border-border hover:bg-accent" onClick={() => { useViewStore.getState().setActiveTab('table'); onClose() }}>
+                查看分镜表
+              </button>
+              <button className="px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:opacity-90" onClick={() => setPhase('input')}>
+                重新优化
+              </button>
+            </>
+          ) : phase === 'error' ? (
+            <>
+              <button className="px-3 py-1.5 text-xs rounded border border-border hover:bg-accent" onClick={onClose}>关闭</button>
+              <button className="px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:opacity-90" onClick={() => setPhase('input')}>重试</button>
+            </>
+          ) : phase === 'running' ? (
+            <button className="px-3 py-1.5 text-xs rounded border border-border hover:bg-accent" onClick={onClose}>后台运行</button>
+          ) : (
+            <>
+              <button className="px-3 py-1.5 text-xs rounded border border-border hover:bg-accent" onClick={onClose}>取消</button>
+              <button
+                className="px-4 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-40 inline-flex items-center gap-1.5"
+                disabled={!text.trim()}
+                onClick={handleOptimize}
+              >
+                <Clapperboard className="w-3 h-3" />
+                立即优化
+              </button>
+            </>
           )}
         </div>
       </div>
