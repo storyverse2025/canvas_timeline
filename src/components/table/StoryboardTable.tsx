@@ -192,8 +192,10 @@ export function StoryboardTable() {
 
   const totalDuration = rows.reduce((sum, r) => sum + (Number(r.duration) || 0), 0)
 
-  const busyFor = (rowId: string) =>
-    Object.values(tasks).some((t) => t.itemId === rowId && (t.status === 'pending' || t.status === 'polling'))
+  const busyForKf = (rowId: string) =>
+    Object.values(tasks).some((t) => t.itemId === rowId && t.nodeId.startsWith('sb-kf-') && (t.status === 'pending' || t.status === 'polling'))
+  const busyForBv = (rowId: string) =>
+    Object.values(tasks).some((t) => t.itemId === rowId && t.nodeId.startsWith('sb-bv-') && (t.status === 'pending' || t.status === 'polling'))
 
   const jumpToTimeline = (rowIdx: number) => {
     const start = rows.slice(0, rowIdx).reduce((s, r) => s + (Number(r.duration) || 0), 0)
@@ -241,7 +243,8 @@ export function StoryboardTable() {
             </thead>
             <tbody>
               {rows.map((r, idx) => {
-                const busy = busyFor(r.id)
+                const kfBusy = busyForKf(r.id)
+                const bvBusy = busyForBv(r.id)
                 return (
                   <tr
                     key={r.id}
@@ -272,7 +275,7 @@ export function StoryboardTable() {
                     </td>
                     {/* 参考 / Keyframe */}
                     <td className="px-2 py-2 border-b border-zinc-900">
-                      <MediaCell kind="image" url={r.keyframeUrl || r.reference_image} busy={busy}
+                      <MediaCell kind="image" url={r.keyframeUrl || r.reference_image} busy={kfBusy}
                         onChange={(v) => updateRow(r.id, { reference_image: v, keyframeUrl: v })}
                         onGenerate={() => generateKeyframe(r)} />
                     </td>
@@ -347,7 +350,7 @@ export function StoryboardTable() {
                     </td>
                     {/* Beat Video */}
                     <td className="px-2 py-2 border-b border-zinc-900">
-                      <MediaCell kind="video" url={r.beatVideoUrl}
+                      <MediaCell kind="video" url={r.beatVideoUrl} busy={bvBusy}
                         onChange={(v) => updateRow(r.id, { beatVideoUrl: v })}
                         onGenerate={() => generateBeatVideo(r)} />
                     </td>
