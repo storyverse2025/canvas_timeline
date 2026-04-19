@@ -5,6 +5,7 @@ import { AppShell } from '@/components/layout/AppShell'
 import { migrateStores } from '@/lib/migrate-stores'
 import { initStoryboardTimelineLink } from '@/lib/storyboard-timeline-sync'
 import { initCanvasStoryboardSync } from '@/lib/canvas-storyboard-sync'
+import { useProjectDB } from '@/stores/project-db'
 
 interface ErrorBoundaryState {
   hasError: boolean
@@ -72,6 +73,12 @@ function AppWithMigration() {
     migrateStores()
     initStoryboardTimelineLink()
     initCanvasStoryboardSync()
+    // Initialize ProjectDB: force a write to localStorage so it's visible in DevTools.
+    // Zustand persist only writes on set(), not on getState(), so we trigger a no-op update.
+    const db = useProjectDB.getState()
+    if (Object.keys(db.elements).length === 0 && db.artDirection.updatedAt === 0) {
+      db.updateArtDirection({}) // triggers set() → persist writes to localStorage
+    }
   }, [])
 
   return (
