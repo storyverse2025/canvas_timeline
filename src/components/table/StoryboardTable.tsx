@@ -8,6 +8,7 @@ import { useStoryboardGenerate } from '@/hooks/useStoryboardGenerate'
 import { useLibtvTasksStore } from '@/stores/libtv-tasks-store'
 import { TableContextMenu, type TableMenuState } from './TableContextMenu'
 import { BatchToolbar } from '@/components/batch/BatchToolbar'
+import { useShotEditorStore } from '@/stores/shot-editor-store'
 import type { StoryboardRow, ElementSlot } from '@/types/storyboard'
 
 interface Col {
@@ -250,8 +251,9 @@ export function StoryboardTable() {
                 return (
                   <tr
                     key={r.id}
-                    className="hover:bg-zinc-900/60 align-top"
+                    className="hover:bg-zinc-900/60 align-top cursor-pointer"
                     onContextMenu={(e) => handleRowContextMenu(e, r.id)}
+                    onDoubleClick={() => useShotEditorStore.getState().openEditor(r.id)}
                   >
                     {/* # */}
                     <td className="px-2 py-2 text-zinc-500 border-b border-zinc-900">
