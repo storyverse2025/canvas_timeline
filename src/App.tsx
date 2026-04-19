@@ -5,6 +5,7 @@ import { AppShell } from '@/components/layout/AppShell'
 import { migrateStores } from '@/lib/migrate-stores'
 import { initStoryboardTimelineLink } from '@/lib/storyboard-timeline-sync'
 import { initCanvasStoryboardSync } from '@/lib/canvas-storyboard-sync'
+import { useProjectDB } from '@/stores/project-db'
 
 interface ErrorBoundaryState {
   hasError: boolean
@@ -72,6 +73,8 @@ function AppWithMigration() {
     migrateStores()
     initStoryboardTimelineLink()
     initCanvasStoryboardSync()
+    // Initialize ProjectDB so it persists to localStorage immediately
+    useProjectDB.getState()
   }, [])
 
   return (
