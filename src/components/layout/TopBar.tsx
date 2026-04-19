@@ -109,6 +109,7 @@ export function TopBar() {
   }, [])
 
   return (
+    <>
     <header className="h-12 border-b border-border bg-card/80 backdrop-blur flex items-center px-4 gap-3 shrink-0">
       {/* Logo */}
       <div className="flex items-center gap-2 shrink-0">
@@ -166,7 +167,8 @@ export function TopBar() {
         Clear
       </Button>
 
-      {directorOpen && <ScriptInputDialog onClose={() => setDirectorOpen(false)} />}
     </header>
+    {directorOpen && <ScriptInputDialog onClose={() => setDirectorOpen(false)} />}
+    </>
   )
 }
