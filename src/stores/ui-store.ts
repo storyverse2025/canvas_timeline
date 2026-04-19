@@ -4,7 +4,7 @@ interface UiState {
   inspectorOpen: boolean;
   chatOpen: boolean;
   previewOpen: boolean;
-  rightPanelTab: 'inspector' | 'chat';
+  rightPanelTab: 'inspector' | 'chat' | 'assets';
   timelineHeight: number;
 }
 
@@ -12,7 +12,7 @@ interface UiActions {
   toggleInspector: () => void;
   toggleChat: () => void;
   togglePreview: () => void;
-  setRightPanelTab: (tab: 'inspector' | 'chat') => void;
+  setRightPanelTab: (tab: 'inspector' | 'chat' | 'assets') => void;
   setTimelineHeight: (height: number) => void;
 }
 

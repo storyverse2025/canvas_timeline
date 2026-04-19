@@ -6,6 +6,7 @@ import { getCapability } from '@/lib/capabilities/registry'
 import { useLibtvTasksStore } from '@/stores/libtv-tasks-store'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { useCanvasStore } from '@/stores/canvas-store'
+import { useProjectDB } from '@/stores/project-db'
 import type { CapabilityInput } from '@/lib/capabilities/types'
 
 export interface RunCapabilityArgs {
@@ -95,9 +96,28 @@ export function useCapability() {
       }
 
       updateTask(taskId, { status: 'done', resultUrl: output.url ?? '', resultKind: (output.kind === 'video' ? 'video' : 'image') as 'image' | 'video' })
+      // Log to generation history
+      useProjectDB.getState().addHistoryEntry({
+        capability: args.capabilityId,
+        prompt: inputs.filter((i) => i.kind === 'text').map((i) => i.text ?? '').join(' '),
+        inputs,
+        params: args.params ?? {},
+        resultUrl: output.url,
+        resultKind: output.kind as 'image' | 'video' | 'audio' | 'text',
+        status: 'done',
+      })
       toast.success(`${cap.label} 完成`)
     } catch (e) {
       updateTask(taskId, { status: 'failed', error: String((e as Error).message ?? e) })
+      useProjectDB.getState().addHistoryEntry({
+        capability: args.capabilityId,
+        prompt: '',
+        inputs: [],
+        params: args.params ?? {},
+        resultKind: cap.outputKind as 'image' | 'video' | 'audio' | 'text',
+        status: 'failed',
+        error: String((e as Error).message ?? e),
+      })
       toast.error(`${cap.label} 失败`, { description: String((e as Error).message).slice(0, 240) })
     }
   }, [startTask, updateTask])
