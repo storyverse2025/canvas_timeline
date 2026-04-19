@@ -58,32 +58,31 @@ async function fetchAsBuffer(url: string): Promise<ArrayBuffer> {
   return res.arrayBuffer()
 }
 
-/** Package selected items into a zip and trigger download. */
+/** Package selected items into a zip and trigger download via server. */
 export async function exportAsZip(
   items: ExportItem[],
   onProgress?: (done: number, total: number) => void,
 ): Promise<void> {
   if (items.length === 0) throw new Error('没有可导出的内容')
 
-  const zip = new JSZip()
-  let done = 0
+  // Send URLs to server for packaging — avoids CORS and insecure blob issues
+  const res = await fetch('/capabilities/export-zip', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      items: items.map((i) => ({ url: i.url, filename: i.filename })),
+    }),
+  })
 
-  for (const item of items) {
-    try {
-      const buf = await fetchAsBuffer(item.url)
-      zip.file(item.filename, buf)
-    } catch {
-      // Skip failed downloads
-    }
-    done++
-    onProgress?.(done, items.length)
+  if (!res.ok) {
+    const err = await res.text().catch(() => 'export failed')
+    throw new Error(err)
   }
 
-  const blob = await zip.generateAsync({ type: 'blob' })
-  const url = URL.createObjectURL(blob)
+  const data = await res.json() as { url: string }
+  // Download the server-generated zip file
   const a = document.createElement('a')
-  a.href = url
+  a.href = data.url
   a.download = `storyverse-export-${Date.now()}.zip`
   a.click()
-  URL.revokeObjectURL(url)
 }

@@ -794,6 +794,52 @@ export function capabilitiesPlugin(): Plugin {
         }
       })
 
+      // Export zip endpoint — downloads all URLs server-side, packages as zip, saves to public/uploads
+      server.middlewares.use('/capabilities/export-zip', async (req, res) => {
+        if (req.method !== 'POST') { sendJson(res, 405, { error: 'POST only' }); return }
+        try {
+          const chunks: Buffer[] = []
+          for await (const c of req) chunks.push(c as Buffer)
+          const { items } = JSON.parse(Buffer.concat(chunks).toString('utf8')) as {
+            items: { url: string; filename: string }[]
+          }
+          if (!items?.length) { sendJson(res, 400, { error: 'no items' }); return }
+
+          const JSZip = (await import('jszip')).default
+          const zip = new JSZip()
+
+          for (const item of items) {
+            try {
+              let buf: Buffer
+              if (item.url.startsWith('data:')) {
+                const m = item.url.match(/^data:[^;]+;base64,(.+)$/)
+                buf = m ? Buffer.from(m[1], 'base64') : Buffer.from('')
+              } else if (item.url.startsWith('/')) {
+                // Local file
+                const { readFileSync } = await import('fs')
+                buf = readFileSync(join(process.cwd(), 'public', item.url))
+              } else {
+                const r = await fetch(item.url)
+                if (!r.ok) continue
+                buf = Buffer.from(await r.arrayBuffer())
+              }
+              zip.file(item.filename, buf)
+            } catch {
+              // Skip failed downloads
+            }
+          }
+
+          const zipBuf = await zip.generateAsync({ type: 'nodebuffer' })
+          const uploadsDir = join(process.cwd(), 'public', 'uploads')
+          mkdirSync(uploadsDir, { recursive: true })
+          const zipName = `export-${randomUUID().slice(0, 8)}.zip`
+          writeFileSync(join(uploadsDir, zipName), zipBuf)
+          sendJson(res, 200, { url: `/uploads/${zipName}` })
+        } catch (e) {
+          sendJson(res, 500, { error: String((e as Error).message ?? e) })
+        }
+      })
+
       // Proxy download endpoint — fetches external URLs server-side to bypass CORS
       server.middlewares.use('/capabilities/proxy-download', async (req, res) => {
         if (req.method !== 'POST') { sendJson(res, 405, { error: 'POST only' }); return }
