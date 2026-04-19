@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Loader2, Sparkles } from 'lucide-react'
 import { toast } from 'sonner'
 import { runCapability } from '@/lib/capabilities/client'
-import { useStoryboardStore } from '@/stores/storyboard-store'
+import { applyEditResult } from './apply-edit-result'
 
 interface Props { rowId: string; imageUrl: string }
 
@@ -10,7 +10,6 @@ export function AssociationPanel({ rowId, imageUrl }: Props) {
   const [prompt, setPrompt] = useState('')
   const [running, setRunning] = useState(false)
   const [results, setResults] = useState<string[]>([])
-  const updateRow = useStoryboardStore((s) => s.updateRow)
 
   const handleGenerate = async () => {
     if (!imageUrl) return
@@ -40,9 +39,9 @@ export function AssociationPanel({ rowId, imageUrl }: Props) {
     }
   }
 
-  const applyResult = (url: string) => {
-    updateRow(rowId, { keyframeUrl: url, reference_image: url })
-    toast.success('已应用到分镜')
+  const handleApply = (url: string) => {
+    applyEditResult(rowId, url, '联想')
+    toast.success('已应用到分镜 + 画布已添加节点')
   }
 
   return (
@@ -70,7 +69,7 @@ export function AssociationPanel({ rowId, imageUrl }: Props) {
               <img src={url} alt="" className="w-full rounded border border-border" />
               <button
                 className="absolute inset-0 flex items-center justify-center bg-black/60 text-white text-[10px] opacity-0 group-hover:opacity-100 transition-opacity rounded"
-                onClick={() => applyResult(url)}
+                onClick={() => handleApply(url)}
               >
                 应用
               </button>

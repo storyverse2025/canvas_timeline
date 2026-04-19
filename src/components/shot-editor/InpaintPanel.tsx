@@ -2,7 +2,7 @@ import { useRef, useState, useEffect } from 'react'
 import { Loader2, Paintbrush, Eraser } from 'lucide-react'
 import { toast } from 'sonner'
 import { runCapability } from '@/lib/capabilities/client'
-import { useStoryboardStore } from '@/stores/storyboard-store'
+import { applyEditResult } from './apply-edit-result'
 
 interface Props { rowId: string; imageUrl: string }
 
@@ -13,7 +13,6 @@ export function InpaintPanel({ rowId, imageUrl }: Props) {
   const [prompt, setPrompt] = useState('')
   const [running, setRunning] = useState(false)
   const [resultUrl, setResultUrl] = useState<string | null>(null)
-  const updateRow = useStoryboardStore((s) => s.updateRow)
 
   // Initialize canvas with the image
   useEffect(() => {
@@ -84,11 +83,11 @@ export function InpaintPanel({ rowId, imageUrl }: Props) {
     }
   }
 
-  const applyResult = () => {
+  const handleApply = () => {
     if (!resultUrl) return
-    updateRow(rowId, { keyframeUrl: resultUrl, reference_image: resultUrl })
+    applyEditResult(rowId, resultUrl, '标记修图')
     setResultUrl(null)
-    toast.success('已应用到分镜')
+    toast.success('已应用到分镜 + 画布已添加节点')
   }
 
   return (
@@ -135,7 +134,7 @@ export function InpaintPanel({ rowId, imageUrl }: Props) {
       {resultUrl && (
         <div className="mt-2 space-y-2">
           <img src={resultUrl} alt="result" className="w-full rounded border border-border" />
-          <button className="w-full py-1.5 text-xs rounded bg-emerald-600 text-white hover:opacity-90" onClick={applyResult}>
+          <button className="w-full py-1.5 text-xs rounded bg-emerald-600 text-white hover:opacity-90" onClick={handleApply}>
             应用到分镜
           </button>
         </div>
