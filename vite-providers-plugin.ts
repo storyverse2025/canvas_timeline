@@ -105,7 +105,7 @@ async function runDoubaoVideo(req: Req): Promise<{ url: string; kind: 'video' }>
     resolution: '480p',
     ratio: req.aspect ?? '16:9',
     duration: Math.max(4, Math.min(15, Math.round(req.duration ?? 5))),
-    generate_audio: false,
+    generate_audio: true,
   }
   const createRes = await fetch('https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks', {
     method: 'POST',

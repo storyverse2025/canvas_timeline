@@ -463,7 +463,7 @@ async function textToVideo(req: CapReq): Promise<CapRes> {
     resolution,
     ratio: aspect,
     duration: Math.max(4, Math.min(15, duration)),
-    generate_audio: false,
+    generate_audio: true,
   }
   const createRes = await fetch('https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks', {
     method: 'POST', headers,
