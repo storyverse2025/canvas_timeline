@@ -431,7 +431,7 @@ async function poseEdit(req: CapReq): Promise<CapRes> {
 
 /** Only absolute http(s) or data: URLs are valid for remote APIs. */
 function filterValidRefs(urls: string[]): string[] {
-  return urls.filter((u) => /^https?:\/\//i.test(u) || u.startsWith('data:'))
+  return urls.filter((u) => u && u.length > 10 && (/^https?:\/\//i.test(u) || u.startsWith('data:')))
 }
 
 async function textToVideo(req: CapReq): Promise<CapRes> {
@@ -440,19 +440,34 @@ async function textToVideo(req: CapReq): Promise<CapRes> {
   if (!text && !refs.length) throw new Error('需要输入文本或参考图')
   const duration = Number(req.params?.duration ?? 5)
   const aspect = (req.params?.aspect as string) || '16:9'
+  const resolution = (req.params?.resolution as string) || '480p'
   const key = process.env.ARK_API_KEY
   if (!key) throw new Error('ARK_API_KEY not set')
   const headers = { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' }
-  const promptTail = `--ratio ${aspect} --duration ${duration}`
   const contentParts: Array<Record<string, unknown>> = [
-    { type: 'text', text: `${text} ${promptTail}`.trim() },
+    { type: 'text', text: text || 'cinematic video' },
   ]
-  for (const u of refs) {
-    contentParts.push({ type: 'image_url', image_url: { url: u } })
+  // Seedance 2.0: multi-image reference (up to 9) with role: "reference_image"
+  // Single image with role: "first_frame" for first-frame mode
+  if (refs.length === 1) {
+    contentParts.push({ type: 'image_url', image_url: { url: refs[0] }, role: 'first_frame' })
+  } else if (refs.length > 1) {
+    for (const u of refs.slice(0, 9)) {
+      contentParts.push({ type: 'image_url', image_url: { url: u }, role: 'reference_image' })
+    }
+  }
+  // Use new request body parameters (not --flags in prompt)
+  const body: Record<string, unknown> = {
+    model: 'doubao-seedance-2-0-fast-260128',
+    content: contentParts,
+    resolution,
+    ratio: aspect,
+    duration: Math.max(4, Math.min(15, duration)),
+    generate_audio: true,
   }
   const createRes = await fetch('https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks', {
     method: 'POST', headers,
-    body: JSON.stringify({ model: 'doubao-seedance-2-0-fast-260128', content: contentParts }),
+    body: JSON.stringify(body),
   })
   if (!createRes.ok) throw new Error(`Doubao create ${createRes.status}: ${await createRes.text()}`)
   const taskId = ((await createRes.json()) as { id?: string }).id
@@ -774,6 +789,74 @@ export function capabilitiesPlugin(): Plugin {
           writeFileSync(join(uploadsDir, filename), fileData)
           const url = `/uploads/${filename}`
           sendJson(res, 200, { url })
+        } catch (e) {
+          sendJson(res, 500, { error: String((e as Error).message ?? e) })
+        }
+      })
+
+      // Export zip endpoint — downloads all URLs server-side, packages as zip, saves to public/uploads
+      server.middlewares.use('/capabilities/export-zip', async (req, res) => {
+        if (req.method !== 'POST') { sendJson(res, 405, { error: 'POST only' }); return }
+        try {
+          const chunks: Buffer[] = []
+          for await (const c of req) chunks.push(c as Buffer)
+          const { items } = JSON.parse(Buffer.concat(chunks).toString('utf8')) as {
+            items: { url: string; filename: string }[]
+          }
+          if (!items?.length) { sendJson(res, 400, { error: 'no items' }); return }
+
+          const JSZip = (await import('jszip')).default
+          const zip = new JSZip()
+
+          for (const item of items) {
+            try {
+              let buf: Buffer
+              if (item.url.startsWith('data:')) {
+                const m = item.url.match(/^data:[^;]+;base64,(.+)$/)
+                buf = m ? Buffer.from(m[1], 'base64') : Buffer.from('')
+              } else if (item.url.startsWith('/')) {
+                // Local file
+                const { readFileSync } = await import('fs')
+                buf = readFileSync(join(process.cwd(), 'public', item.url))
+              } else {
+                const r = await fetch(item.url)
+                if (!r.ok) continue
+                buf = Buffer.from(await r.arrayBuffer())
+              }
+              zip.file(item.filename, buf)
+            } catch {
+              // Skip failed downloads
+            }
+          }
+
+          const zipBuf = await zip.generateAsync({ type: 'nodebuffer' })
+          const uploadsDir = join(process.cwd(), 'public', 'uploads')
+          mkdirSync(uploadsDir, { recursive: true })
+          const zipName = `export-${randomUUID().slice(0, 8)}.zip`
+          writeFileSync(join(uploadsDir, zipName), zipBuf)
+          sendJson(res, 200, { url: `/uploads/${zipName}` })
+        } catch (e) {
+          sendJson(res, 500, { error: String((e as Error).message ?? e) })
+        }
+      })
+
+      // Proxy download endpoint — fetches external URLs server-side to bypass CORS
+      server.middlewares.use('/capabilities/proxy-download', async (req, res) => {
+        if (req.method !== 'POST') { sendJson(res, 405, { error: 'POST only' }); return }
+        try {
+          const chunks: Buffer[] = []
+          for await (const c of req) chunks.push(c as Buffer)
+          const { url } = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { url: string }
+          if (!url || !/^https?:\/\//i.test(url)) { sendJson(res, 400, { error: 'invalid URL' }); return }
+
+          const upstream = await fetch(url)
+          if (!upstream.ok) { sendJson(res, 502, { error: `upstream ${upstream.status}` }); return }
+
+          const contentType = upstream.headers.get('content-type') || 'application/octet-stream'
+          res.statusCode = 200
+          res.setHeader('Content-Type', contentType)
+          const buf = Buffer.from(await upstream.arrayBuffer())
+          res.end(buf)
         } catch (e) {
           sendJson(res, 500, { error: String((e as Error).message ?? e) })
         }
