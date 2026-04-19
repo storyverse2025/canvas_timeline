@@ -1,0 +1,79 @@
+import JSZip from 'jszip'
+import type { StoryboardRow } from '@/types/storyboard'
+
+export interface ExportItem {
+  shotNumber: string
+  type: 'keyframe' | 'beat-video'
+  url: string
+  filename: string
+}
+
+/** Collect exportable media URLs from storyboard rows. */
+export function collectExportItems(rows: StoryboardRow[], includeKeyframes: boolean, includeVideos: boolean): ExportItem[] {
+  const items: ExportItem[] = []
+  for (const r of rows) {
+    if (includeKeyframes && (r.keyframeUrl || r.reference_image)) {
+      const url = r.keyframeUrl || r.reference_image
+      const ext = url.includes('.mp4') ? 'mp4' : url.includes('.webp') ? 'webp' : 'jpg'
+      items.push({
+        shotNumber: r.shot_number,
+        type: 'keyframe',
+        url,
+        filename: `${r.shot_number}_keyframe.${ext}`,
+      })
+    }
+    if (includeVideos && r.beatVideoUrl) {
+      items.push({
+        shotNumber: r.shot_number,
+        type: 'beat-video',
+        url: r.beatVideoUrl,
+        filename: `${r.shot_number}_beat_video.mp4`,
+      })
+    }
+  }
+  return items
+}
+
+/** Fetch a URL and return as ArrayBuffer. Handles both http and data: URLs. */
+async function fetchAsBuffer(url: string): Promise<ArrayBuffer> {
+  if (url.startsWith('data:')) {
+    const base64 = url.split(',')[1]
+    const binary = atob(base64)
+    const bytes = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+    return bytes.buffer
+  }
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`fetch failed: ${res.status}`)
+  return res.arrayBuffer()
+}
+
+/** Package selected items into a zip and trigger download. */
+export async function exportAsZip(
+  items: ExportItem[],
+  onProgress?: (done: number, total: number) => void,
+): Promise<void> {
+  if (items.length === 0) throw new Error('没有可导出的内容')
+
+  const zip = new JSZip()
+  let done = 0
+
+  for (const item of items) {
+    try {
+      const buf = await fetchAsBuffer(item.url)
+      zip.file(item.filename, buf)
+    } catch {
+      // Skip failed downloads
+    }
+    done++
+    onProgress?.(done, items.length)
+  }
+
+  const blob = await zip.generateAsync({ type: 'blob' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `storyverse-export-${Date.now()}.zip`
+  a.click()
+  URL.revokeObjectURL(url)
+}

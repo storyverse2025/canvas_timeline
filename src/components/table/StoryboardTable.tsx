@@ -7,6 +7,7 @@ import { useViewStore } from '@/stores/view-store'
 import { useStoryboardGenerate } from '@/hooks/useStoryboardGenerate'
 import { useLibtvTasksStore } from '@/stores/libtv-tasks-store'
 import { TableContextMenu, type TableMenuState } from './TableContextMenu'
+import { BatchToolbar } from '@/components/batch/BatchToolbar'
 import type { StoryboardRow, ElementSlot } from '@/types/storyboard'
 
 interface Col {
@@ -210,12 +211,13 @@ export function StoryboardTable() {
 
   return (
     <div className="h-full flex flex-col bg-[#121212] text-zinc-100">
-      <div className="flex items-center justify-between px-4 py-2 border-b border-zinc-800 shrink-0">
-        <div className="text-sm font-medium">
-          分镜表 · Storyboard ({rows.length}) · 总时长 {totalDuration.toFixed(1)}s
+      <div className="flex items-center justify-between px-4 py-2 border-b border-zinc-800 shrink-0 gap-2">
+        <div className="text-sm font-medium shrink-0">
+          分镜表 ({rows.length}) · {totalDuration.toFixed(1)}s
         </div>
+        {rows.length > 0 && <BatchToolbar />}
         <button
-          className="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-800 text-zinc-300"
+          className="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-800 text-zinc-300 shrink-0"
           onClick={() => { if (confirm('清空分镜表？')) clear() }}
           disabled={rows.length === 0}
         >清空</button>
