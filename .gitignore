@@ -34,3 +34,6 @@ __pycache__/
 # Embedded git repos
 fal-skills/
 public/samples/libtv-skills/
+
+# User uploads (served as static files)
+public/uploads/

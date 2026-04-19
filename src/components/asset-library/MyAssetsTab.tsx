@@ -4,9 +4,31 @@ import { toast } from 'sonner'
 import { useProjectDB, type ElementRole } from '@/stores/project-db'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { useCanvasStore } from '@/stores/canvas-store'
-import { useViewStore } from '@/stores/view-store'
 import { AssetCard } from './AssetCard'
 import { CategoryFilter } from './CategoryFilter'
+
+/** Upload a file to the server, returns a URL path like /uploads/xxx.png */
+async function uploadFile(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = async () => {
+      try {
+        const res = await fetch('/uploads/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dataUrl: reader.result, filename: file.name }),
+        })
+        const data = await res.json() as { url?: string; error?: string }
+        if (!res.ok || !data.url) throw new Error(data.error ?? 'upload failed')
+        resolve(data.url)
+      } catch (e) {
+        reject(e)
+      }
+    }
+    reader.onerror = () => reject(new Error('file read failed'))
+    reader.readAsDataURL(file)
+  })
+}
 
 export function MyAssetsTab() {
   const [filter, setFilter] = useState<ElementRole | 'all'>('all')
@@ -20,41 +42,42 @@ export function MyAssetsTab() {
     return all.filter((e) => e.role === filter).sort((a, b) => b.createdAt - a.createdAt)
   }, [elements, filter])
 
-  const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]
     if (!f) return
-    const reader = new FileReader()
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        const dataUrl = reader.result
-        const name = f.name.replace(/\.[^.]+$/, '')
-        // Save to ProjectDB
-        addElement({
-          kind: 'image',
-          role: 'unknown',
-          name,
-          content: dataUrl,
-          description: '',
-          source: 'manual',
-        })
-        // Also create a canvas node so it appears on the canvas
-        const itemId = useCanvasItemStore.getState().addItem({
-          kind: 'image',
-          name,
-          content: dataUrl,
-        })
-        // Place near center of current viewport
-        const nodes = useCanvasStore.getState().nodes
-        const maxY = nodes.length > 0
-          ? Math.max(...nodes.map((n) => n.position.y + ((n.style?.height as number) ?? n.height ?? 160))) + 20
-          : 50
-        const nodeId = useCanvasStore.getState().addItemNode(itemId, 'image', { x: 50, y: maxY }, { width: 200, height: 200 })
-        console.log('[AssetLibrary] Created canvas node:', nodeId, 'at y:', maxY, 'total nodes:', useCanvasStore.getState().nodes.length)
-        toast.success(`已上传 ${f.name} → 画布已添加节点，请切到画布查看`)
-      }
-    }
-    reader.readAsDataURL(f)
     e.target.value = ''
+
+    toast.info(`正在上传 ${f.name}…`)
+    try {
+      const url = await uploadFile(f)
+      const name = f.name.replace(/\.[^.]+$/, '')
+
+      // Save to ProjectDB (stores URL path, not base64 — no localStorage bloat)
+      addElement({
+        kind: 'image',
+        role: 'unknown',
+        name,
+        content: url,
+        description: '',
+        source: 'manual',
+      })
+
+      // Create canvas node
+      const itemId = useCanvasItemStore.getState().addItem({
+        kind: 'image',
+        name,
+        content: url,
+      })
+      const nodes = useCanvasStore.getState().nodes
+      const maxY = nodes.length > 0
+        ? Math.max(...nodes.map((n) => n.position.y + ((n.style?.height as number) ?? n.height ?? 160))) + 20
+        : 50
+      useCanvasStore.getState().addItemNode(itemId, 'image', { x: 50, y: maxY }, { width: 200, height: 200 })
+
+      toast.success(`已上传 ${f.name} → 画布已添加节点`)
+    } catch (err) {
+      toast.error(`上传失败: ${(err as Error).message}`)
+    }
   }
 
   return (
