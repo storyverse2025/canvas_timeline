@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import { useProjectDB, type ElementRole } from '@/stores/project-db'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { useCanvasStore } from '@/stores/canvas-store'
+import { useViewStore } from '@/stores/view-store'
 import { AssetCard } from './AssetCard'
 import { CategoryFilter } from './CategoryFilter'
 
@@ -47,8 +48,9 @@ export function MyAssetsTab() {
         const maxY = nodes.length > 0
           ? Math.max(...nodes.map((n) => n.position.y + ((n.style?.height as number) ?? n.height ?? 160))) + 20
           : 50
-        useCanvasStore.getState().addItemNode(itemId, 'image', { x: 50, y: maxY }, { width: 200, height: 200 })
-        toast.success(`已上传: ${f.name}（已添加到画布）`)
+        const nodeId = useCanvasStore.getState().addItemNode(itemId, 'image', { x: 50, y: maxY }, { width: 200, height: 200 })
+        console.log('[AssetLibrary] Created canvas node:', nodeId, 'at y:', maxY, 'total nodes:', useCanvasStore.getState().nodes.length)
+        toast.success(`已上传 ${f.name} → 画布已添加节点，请切到画布查看`)
       }
     }
     reader.readAsDataURL(f)
