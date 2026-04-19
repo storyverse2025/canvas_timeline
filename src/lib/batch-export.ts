@@ -34,7 +34,7 @@ export function collectExportItems(rows: StoryboardRow[], includeKeyframes: bool
   return items
 }
 
-/** Fetch a URL and return as ArrayBuffer. Handles both http and data: URLs. */
+/** Fetch a URL and return as ArrayBuffer. Uses server proxy for cross-origin URLs. */
 async function fetchAsBuffer(url: string): Promise<ArrayBuffer> {
   if (url.startsWith('data:')) {
     const base64 = url.split(',')[1]
@@ -42,6 +42,16 @@ async function fetchAsBuffer(url: string): Promise<ArrayBuffer> {
     const bytes = new Uint8Array(binary.length)
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
     return bytes.buffer
+  }
+  // For external URLs, proxy through our server to avoid CORS
+  if (/^https?:\/\//i.test(url) && !url.startsWith(window.location.origin)) {
+    const res = await fetch('/capabilities/proxy-download', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    })
+    if (!res.ok) throw new Error(`proxy download failed: ${res.status}`)
+    return res.arrayBuffer()
   }
   const res = await fetch(url)
   if (!res.ok) throw new Error(`fetch failed: ${res.status}`)

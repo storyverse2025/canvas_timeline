@@ -793,6 +793,28 @@ export function capabilitiesPlugin(): Plugin {
           sendJson(res, 500, { error: String((e as Error).message ?? e) })
         }
       })
+
+      // Proxy download endpoint — fetches external URLs server-side to bypass CORS
+      server.middlewares.use('/capabilities/proxy-download', async (req, res) => {
+        if (req.method !== 'POST') { sendJson(res, 405, { error: 'POST only' }); return }
+        try {
+          const chunks: Buffer[] = []
+          for await (const c of req) chunks.push(c as Buffer)
+          const { url } = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { url: string }
+          if (!url || !/^https?:\/\//i.test(url)) { sendJson(res, 400, { error: 'invalid URL' }); return }
+
+          const upstream = await fetch(url)
+          if (!upstream.ok) { sendJson(res, 502, { error: `upstream ${upstream.status}` }); return }
+
+          const contentType = upstream.headers.get('content-type') || 'application/octet-stream'
+          res.statusCode = 200
+          res.setHeader('Content-Type', contentType)
+          const buf = Buffer.from(await upstream.arrayBuffer())
+          res.end(buf)
+        } catch (e) {
+          sendJson(res, 500, { error: String((e as Error).message ?? e) })
+        }
+      })
     },
   }
 }
