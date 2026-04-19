@@ -72,7 +72,7 @@ export function ScriptInputDialog({ onClose }: Props) {
   return (
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onMouseDown={onClose}>
       <div
-        className="w-[600px] max-w-full max-h-[90vh] bg-card border border-border rounded-lg shadow-xl flex flex-col overflow-hidden"
+        className="w-[600px] max-w-full max-h-[80vh] bg-card border border-border rounded-lg shadow-xl flex flex-col overflow-hidden"
         onMouseDown={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -101,7 +101,7 @@ export function ScriptInputDialog({ onClose }: Props) {
                   <input ref={fileRef} type="file" accept=".txt,.md,.doc,.docx" className="hidden" onChange={handleUpload} />
                 </div>
                 <textarea
-                  className="w-full min-h-[200px] text-xs bg-background border border-border rounded px-3 py-2 outline-none resize-y"
+                  className="w-full min-h-[120px] text-xs bg-background border border-border rounded px-3 py-2 outline-none resize-y"
                   value={text}
                   onChange={(e) => setText(e.target.value)}
                   placeholder="在此输入或粘贴剧本内容…&#10;&#10;例：&#10;第一幕：黎明时分，山间小屋。&#10;主角醒来，发现窗外下着大雪…"
