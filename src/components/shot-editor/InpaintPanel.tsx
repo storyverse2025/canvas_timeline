@@ -8,24 +8,26 @@ interface Props { rowId: string; imageUrl: string }
 
 export function InpaintPanel({ rowId, imageUrl }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const imgRef = useRef<HTMLImageElement | null>(null)
   const [brushSize, setBrushSize] = useState(20)
   const [painting, setPainting] = useState(false)
   const [prompt, setPrompt] = useState('')
   const [running, setRunning] = useState(false)
   const [resultUrl, setResultUrl] = useState<string | null>(null)
 
-  // Initialize canvas with the image
+  // Load image to get dimensions for canvas
   useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas || !imageUrl) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
+    if (!imageUrl) return
     const img = new Image()
     img.crossOrigin = 'anonymous'
     img.onload = () => {
+      imgRef.current = img
+      const canvas = canvasRef.current
+      if (!canvas) return
       canvas.width = img.width
       canvas.height = img.height
-      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      const ctx = canvas.getContext('2d')
+      if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height)
     }
     img.src = imageUrl
   }, [imageUrl])
@@ -43,6 +45,7 @@ export function InpaintPanel({ rowId, imageUrl }: Props) {
     const ctx = canvasRef.current?.getContext('2d')
     if (!ctx) return
     const { x, y } = getPos(e)
+    // Draw visible red for user feedback
     ctx.fillStyle = 'rgba(255, 0, 0, 0.5)'
     ctx.beginPath()
     ctx.arc(x, y, brushSize, 0, Math.PI * 2)
@@ -57,16 +60,59 @@ export function InpaintPanel({ rowId, imageUrl }: Props) {
     ctx.clearRect(0, 0, canvas.width, canvas.height)
   }
 
+  /** Convert the red paint overlay to a proper B/W mask (white = inpaint area, black = keep) */
+  const generateMaskDataUrl = (): string => {
+    const srcCanvas = canvasRef.current
+    if (!srcCanvas) return ''
+
+    const maskCanvas = document.createElement('canvas')
+    maskCanvas.width = srcCanvas.width
+    maskCanvas.height = srcCanvas.height
+    const ctx = maskCanvas.getContext('2d')!
+
+    // Start with black (keep everything)
+    ctx.fillStyle = '#000000'
+    ctx.fillRect(0, 0, maskCanvas.width, maskCanvas.height)
+
+    // Read the source canvas pixels — anywhere with red paint → white
+    const srcCtx = srcCanvas.getContext('2d')!
+    const srcData = srcCtx.getImageData(0, 0, srcCanvas.width, srcCanvas.height)
+    const maskData = ctx.getImageData(0, 0, maskCanvas.width, maskCanvas.height)
+
+    for (let i = 0; i < srcData.data.length; i += 4) {
+      const r = srcData.data[i]
+      const a = srcData.data[i + 3]
+      // If any non-transparent pixel exists (our red paint), mark as white
+      if (a > 10) {
+        maskData.data[i] = 255     // R
+        maskData.data[i + 1] = 255 // G
+        maskData.data[i + 2] = 255 // B
+        maskData.data[i + 3] = 255 // A
+      }
+    }
+    ctx.putImageData(maskData, 0, 0)
+    return maskCanvas.toDataURL('image/png')
+  }
+
   const handleInpaint = async () => {
-    const canvas = canvasRef.current
-    if (!canvas || !imageUrl) return
+    if (!canvasRef.current || !imageUrl) return
+    const maskDataUrl = generateMaskDataUrl()
+
+    // Check if user actually painted anything
+    const srcCtx = canvasRef.current.getContext('2d')!
+    const srcData = srcCtx.getImageData(0, 0, canvasRef.current.width, canvasRef.current.height)
+    const hasPaint = srcData.data.some((_, i) => i % 4 === 3 && srcData.data[i] > 10)
+    if (!hasPaint) {
+      toast.error('请先在图片上涂画要修改的区域')
+      return
+    }
+
     setRunning(true)
     try {
-      const maskDataUrl = canvas.toDataURL('image/png')
       const r = await runCapability({
         capability: 'inpaint',
         inputs: [
-          { kind: 'text', text: prompt.trim() || 'fill naturally' },
+          { kind: 'text', text: prompt.trim() || 'fill the masked area naturally' },
           { kind: 'image', url: imageUrl },
         ],
         params: { mask_url: maskDataUrl },
@@ -92,7 +138,7 @@ export function InpaintPanel({ rowId, imageUrl }: Props) {
 
   return (
     <div className="flex flex-col gap-2">
-      <label className="text-[10px] text-muted-foreground uppercase">在图片上涂画要修改的区域</label>
+      <label className="text-[10px] text-muted-foreground uppercase">在图片上涂画要修改的区域（红色）</label>
 
       <div className="relative border border-border rounded overflow-hidden bg-black">
         {imageUrl && <img src={imageUrl} alt="" className="w-full" />}
@@ -119,7 +165,7 @@ export function InpaintPanel({ rowId, imageUrl }: Props) {
         className="w-full min-h-[50px] text-xs bg-background border border-border rounded px-2 py-1.5 outline-none resize-y"
         value={prompt}
         onChange={(e) => setPrompt(e.target.value)}
-        placeholder="描述要填充的内容（可选）"
+        placeholder="描述要填充的内容（例：换成蓝天白云）"
       />
 
       <button

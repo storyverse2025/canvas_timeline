@@ -272,13 +272,19 @@ async function inpaint(req: CapReq): Promise<CapRes> {
     image_url: imageDataUrl,
     num_images: 1,
   }
-  if (maskUrl) body.mask_url = maskUrl
+  if (!maskUrl) throw new Error('需要标记区域（mask_url 缺失）')
+  body.mask_url = maskUrl
+  console.log(`[inpaint] image: ${imageDataUrl.slice(0, 50)}... mask: ${maskUrl.slice(0, 50)}... prompt: ${text}`)
   const res = await fetch('https://fal.run/fal-ai/flux-general/inpainting', {
     method: 'POST',
     headers: { 'Authorization': `Key ${key}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  if (!res.ok) throw new Error(`FAL inpaint ${res.status}: ${await res.text()}`)
+  if (!res.ok) {
+    const errText = await res.text()
+    console.error(`[inpaint] FAL error ${res.status}:`, errText.slice(0, 500))
+    throw new Error(`FAL inpaint ${res.status}: ${errText}`)
+  }
   const data = (await res.json()) as { images?: { url: string }[] }
   const url = data.images?.[0]?.url
   if (!url) throw new Error('FAL: no inpaint result')
