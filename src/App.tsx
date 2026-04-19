@@ -73,8 +73,12 @@ function AppWithMigration() {
     migrateStores()
     initStoryboardTimelineLink()
     initCanvasStoryboardSync()
-    // Initialize ProjectDB so it persists to localStorage immediately
-    useProjectDB.getState()
+    // Initialize ProjectDB: force a write to localStorage so it's visible in DevTools.
+    // Zustand persist only writes on set(), not on getState(), so we trigger a no-op update.
+    const db = useProjectDB.getState()
+    if (Object.keys(db.elements).length === 0 && db.artDirection.updatedAt === 0) {
+      db.updateArtDirection({}) // triggers set() → persist writes to localStorage
+    }
   }, [])
 
   return (
