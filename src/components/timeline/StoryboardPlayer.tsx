@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useCallback } from 'react'
 import { useTimelineStore } from '@/stores/timeline-store'
 import { useStoryboardStore } from '@/stores/storyboard-store'
 
@@ -11,7 +11,6 @@ export function StoryboardPlayer() {
   const setIsPlaying = useTimelineStore((s) => s.setIsPlaying)
 
   const videoRef = useRef<HTMLVideoElement>(null)
-  const [videoReady, setVideoReady] = useState(false)
 
   // Precompute cumulative startTime for each row
   const timeline = useMemo(() => {
@@ -28,57 +27,48 @@ export function StoryboardPlayer() {
   const active = activeIdx >= 0 ? timeline[activeIdx] : timeline[timeline.length - 1]
   const activeVideo = active?.row.beatVideoUrl
   const activeImage = active?.row.keyframeUrl || active?.row.reference_image
+  const activeRowId = active?.row.id
 
-  // Track which row we're on to detect transitions
-  const prevRowIdRef = useRef<string | null>(null)
-  const shotChanged = active?.row.id !== prevRowIdRef.current
-  if (shotChanged) {
-    prevRowIdRef.current = active?.row.id ?? null
-  }
+  // Use refs so callbacks always see latest values without re-triggering effects
+  const activeRef = useRef(active)
+  activeRef.current = active
+  const isPlayingRef = useRef(isPlaying)
+  isPlayingRef.current = isPlaying
 
-  // Reset videoReady when shot changes
-  useEffect(() => {
-    if (shotChanged) setVideoReady(false)
-  }, [active?.row.id])
+  // Track video ready state per row — reset when row changes
+  const videoReadyForRef = useRef<string | null>(null)
+  const isVideoReady = videoReadyForRef.current === activeRowId && !!activeVideo
 
-  // Playback logic:
-  // - For image-only shots: advance playhead by wall-clock (RAF)
-  // - For video shots: let the video element drive timing
+  // ─── Playback tick (RAF) for image-only shots ──────────────────
   const rafRef = useRef<number | null>(null)
   const lastTs = useRef<number | null>(null)
 
+  const stopRaf = () => {
+    if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
+    rafRef.current = null
+    lastTs.current = null
+  }
+
   useEffect(() => {
-    if (!isPlaying) {
-      if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
-      rafRef.current = null
-      lastTs.current = null
-      return
-    }
+    if (!isPlaying) { stopRaf(); return }
 
-    // If current shot has video, don't use RAF — video drives playhead
-    if (activeVideo && videoReady) {
-      if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
-      rafRef.current = null
-      lastTs.current = null
-      return
-    }
+    // If video is ready and playing, video drives playhead — skip RAF
+    if (activeVideo && isVideoReady) { stopRaf(); return }
 
-    // Image-only shots or video still loading: use RAF
     const tick = (ts: number) => {
       if (lastTs.current == null) lastTs.current = ts
       const dt = (ts - lastTs.current) / 1000
       lastTs.current = ts
-      const { playheadTime, duration: d, isPlaying: playing } = useTimelineStore.getState()
-      if (!playing) return
+      if (!isPlayingRef.current) return
 
-      // Don't advance past current shot if it has a video that's still loading
-      const curActive = timeline.find((e) => playheadTime >= e.start && playheadTime < e.end)
-      if (curActive?.row.beatVideoUrl && !videoReady) {
-        // Wait for video to load — keep RAF going but don't advance
+      const cur = activeRef.current
+      // If current shot has video waiting to load, pause playhead
+      if (cur?.row.beatVideoUrl && videoReadyForRef.current !== cur.row.id) {
         rafRef.current = requestAnimationFrame(tick)
         return
       }
 
+      const { playheadTime, duration: d } = useTimelineStore.getState()
       const next = playheadTime + dt
       if (next >= d) {
         setPlayhead(0)
@@ -89,44 +79,56 @@ export function StoryboardPlayer() {
       rafRef.current = requestAnimationFrame(tick)
     }
     rafRef.current = requestAnimationFrame(tick)
-    return () => {
-      if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
-      rafRef.current = null
-      lastTs.current = null
-    }
-  }, [isPlaying, activeVideo, videoReady, timeline, setPlayhead, setIsPlaying])
+    return stopRaf
+  }, [isPlaying, activeVideo, isVideoReady, setPlayhead, setIsPlaying])
 
-  // Video event handlers — sync playhead from video currentTime
-  const handleVideoCanPlay = () => {
-    setVideoReady(true)
-    if (isPlaying && videoRef.current) {
+  // ─── Video event handlers ─────────────────────────────────────
+  const handleCanPlay = useCallback(() => {
+    const cur = activeRef.current
+    if (!cur) return
+    videoReadyForRef.current = cur.row.id
+    // Force re-render to switch from RAF to video-driven mode
+    setPlayhead(useTimelineStore.getState().playheadTime)
+    if (isPlayingRef.current && videoRef.current) {
       videoRef.current.play().catch(() => {})
     }
-  }
+  }, [setPlayhead])
 
-  const handleVideoTimeUpdate = () => {
-    if (!videoRef.current || !active || !isPlaying) return
-    const videoTime = videoRef.current.currentTime
-    const newPlayhead = active.start + videoTime
-    setPlayhead(Math.min(newPlayhead, active.end))
-  }
+  const handleTimeUpdate = useCallback(() => {
+    if (!videoRef.current || !isPlayingRef.current) return
+    const cur = activeRef.current
+    if (!cur) return
+    const newPlayhead = cur.start + videoRef.current.currentTime
+    // Only update if still within this shot's range
+    if (newPlayhead >= cur.start && newPlayhead <= cur.end + 0.1) {
+      setPlayhead(newPlayhead)
+    }
+  }, [setPlayhead])
 
-  const handleVideoEnded = () => {
-    if (!active) return
-    // Move playhead to end of this shot → triggers next shot
-    setPlayhead(active.end + 0.01)
-    setVideoReady(false)
-  }
+  const handleEnded = useCallback(() => {
+    const cur = activeRef.current
+    if (!cur) return
+    videoReadyForRef.current = null
+    // Advance to next shot
+    const nextTime = cur.end + 0.01
+    const totalDur = useTimelineStore.getState().duration
+    if (nextTime >= totalDur) {
+      setPlayhead(0)
+      setIsPlaying(false)
+    } else {
+      setPlayhead(nextTime)
+    }
+  }, [setPlayhead, setIsPlaying])
 
-  // Auto-play/pause video when isPlaying changes
+  // Auto-play video when it becomes ready and we're playing
   useEffect(() => {
     if (!videoRef.current || !activeVideo) return
-    if (isPlaying && videoReady) {
+    if (isPlaying && isVideoReady) {
       videoRef.current.play().catch(() => {})
-    } else {
+    } else if (!isPlaying) {
       videoRef.current.pause()
     }
-  }, [isPlaying, videoReady, activeVideo])
+  }, [isPlaying, isVideoReady, activeVideo])
 
   if (rows.length === 0) {
     return (
@@ -141,18 +143,18 @@ export function StoryboardPlayer() {
       {activeVideo ? (
         <video
           ref={videoRef}
-          key={active?.row.id}
+          key={activeRowId}
           src={activeVideo}
           className="max-w-full max-h-full"
           loop={false}
           controls
-          onCanPlay={handleVideoCanPlay}
-          onTimeUpdate={handleVideoTimeUpdate}
-          onEnded={handleVideoEnded}
+          onCanPlay={handleCanPlay}
+          onTimeUpdate={handleTimeUpdate}
+          onEnded={handleEnded}
         />
       ) : activeImage ? (
         <img
-          key={active?.row.id}
+          key={activeRowId}
           src={activeImage}
           alt={active?.row.shot_number}
           className="max-w-full max-h-full object-contain animate-[fadeIn_0.4s_ease]"
@@ -163,8 +165,8 @@ export function StoryboardPlayer() {
         </div>
       )}
 
-      {/* Loading indicator for video */}
-      {activeVideo && !videoReady && (
+      {/* Loading indicator */}
+      {activeVideo && !isVideoReady && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/80">
           <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" />
         </div>
