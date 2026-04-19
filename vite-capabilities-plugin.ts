@@ -440,21 +440,34 @@ async function textToVideo(req: CapReq): Promise<CapRes> {
   if (!text && !refs.length) throw new Error('需要输入文本或参考图')
   const duration = Number(req.params?.duration ?? 5)
   const aspect = (req.params?.aspect as string) || '16:9'
+  const resolution = (req.params?.resolution as string) || '480p'
   const key = process.env.ARK_API_KEY
   if (!key) throw new Error('ARK_API_KEY not set')
   const headers = { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' }
-  const promptTail = `--ratio ${aspect} --duration ${duration}`
   const contentParts: Array<Record<string, unknown>> = [
-    { type: 'text', text: `${text} ${promptTail}`.trim() },
+    { type: 'text', text: text || 'cinematic video' },
   ]
-  // Seedance 2.0 requires role: "first_frame" for image references
-  // and only supports one reference image
-  if (refs.length > 0) {
+  // Seedance 2.0: multi-image reference (up to 9) with role: "reference_image"
+  // Single image with role: "first_frame" for first-frame mode
+  if (refs.length === 1) {
     contentParts.push({ type: 'image_url', image_url: { url: refs[0] }, role: 'first_frame' })
+  } else if (refs.length > 1) {
+    for (const u of refs.slice(0, 9)) {
+      contentParts.push({ type: 'image_url', image_url: { url: u }, role: 'reference_image' })
+    }
+  }
+  // Use new request body parameters (not --flags in prompt)
+  const body: Record<string, unknown> = {
+    model: 'doubao-seedance-2-0-fast-260128',
+    content: contentParts,
+    resolution,
+    ratio: aspect,
+    duration: Math.max(4, Math.min(15, duration)),
+    generate_audio: false,
   }
   const createRes = await fetch('https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks', {
     method: 'POST', headers,
-    body: JSON.stringify({ model: 'doubao-seedance-2-0-fast-260128', content: contentParts }),
+    body: JSON.stringify(body),
   })
   if (!createRes.ok) throw new Error(`Doubao create ${createRes.status}: ${await createRes.text()}`)
   const taskId = ((await createRes.json()) as { id?: string }).id

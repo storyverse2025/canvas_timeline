@@ -86,24 +86,31 @@ async function runDoubaoVideo(req: Req): Promise<{ url: string; kind: 'video' }>
   if (!key) throw new Error('ARK_API_KEY not set')
   const headers = { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' }
 
-  // Create async task. Ark follows OpenAI-like convention for video tasks.
-  const promptTail = [
-    `--ratio ${req.aspect ?? '16:9'}`,
-    req.duration ? `--duration ${Math.round(req.duration)}` : '',
-  ].filter(Boolean).join(' ')
+  // Create async task using Seedance 2.0 API format
   const contentParts: Array<Record<string, unknown>> = [
-    { type: 'text', text: `${req.prompt} ${promptTail}`.trim() },
+    { type: 'text', text: req.prompt },
   ]
-  // Seedance 2.0 requires role: "first_frame" for image references
-  const validRefs = (req.refImages ?? []).filter((u) => u && /^https?:\/\//i.test(u))
-  if (validRefs.length > 0) {
+  const validRefs = (req.refImages ?? []).filter((u) => u && u.length > 10 && /^https?:\/\//i.test(u))
+  if (validRefs.length === 1) {
     contentParts.push({ type: 'image_url', image_url: { url: validRefs[0] }, role: 'first_frame' })
+  } else if (validRefs.length > 1) {
+    for (const u of validRefs.slice(0, 9)) {
+      contentParts.push({ type: 'image_url', image_url: { url: u }, role: 'reference_image' })
+    }
   }
 
+  const body: Record<string, unknown> = {
+    model: req.model,
+    content: contentParts,
+    resolution: '480p',
+    ratio: req.aspect ?? '16:9',
+    duration: Math.max(4, Math.min(15, Math.round(req.duration ?? 5))),
+    generate_audio: false,
+  }
   const createRes = await fetch('https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks', {
     method: 'POST',
     headers,
-    body: JSON.stringify({ model: req.model, content: contentParts }),
+    body: JSON.stringify(body),
   })
   if (!createRes.ok) throw new Error(`Doubao video create ${createRes.status}: ${await createRes.text()}`)
   const createData = (await createRes.json()) as { id?: string }
