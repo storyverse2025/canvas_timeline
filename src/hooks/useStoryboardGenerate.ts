@@ -10,7 +10,9 @@ import type { StoryboardRow } from '@/types/storyboard'
 
 /**
  * Find or create a canvas node for an element slot (character, prop, scene).
- * Returns the nodeId. If a node already exists with that nodeId, reuse it.
+ * Reuses existing nodes: checks slotNodeId first, then searches by image content.
+ * This ensures the same character/scene image creates only ONE canvas node
+ * that multiple keyframes can connect to.
  */
 function ensureElementNode(
   slotImage: string,
@@ -20,12 +22,28 @@ function ensureElementNode(
   baseX: number,
   baseY: number,
 ): string {
+  // 1. Check if the slot already references an existing node
   if (slotNodeId) {
     const existing = useCanvasStore.getState().nodes.find((n) => n.id === slotNodeId)
     if (existing) return slotNodeId
   }
   if (!slotImage && !slotDesc) return ''
 
+  // 2. Search for an existing canvas node with the same image content (dedup)
+  if (slotImage) {
+    const items = useCanvasItemStore.getState().items
+    const nodes = useCanvasStore.getState().nodes
+    for (const node of nodes) {
+      const itemId = node.data?.itemId as string | undefined
+      if (!itemId) continue
+      const item = items[itemId]
+      if (item?.kind === 'image' && item.content === slotImage) {
+        return node.id // reuse existing node
+      }
+    }
+  }
+
+  // 3. No existing node found — create a new one
   const kind = slotImage ? 'image' : 'text'
   const itemId = useCanvasItemStore.getState().addItem({
     kind,
