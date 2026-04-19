@@ -44,7 +44,11 @@ export function BatchProgressOverlay({ batch, onClose }: Props) {
           })}
         </div>
 
-        {!batch.isRunning && (
+        {batch.isRunning ? (
+          <button className="w-full py-1.5 text-xs rounded border border-border hover:bg-accent" onClick={onClose}>
+            后台运行
+          </button>
+        ) : (
           <button className="w-full py-1.5 text-xs rounded bg-primary text-primary-foreground hover:opacity-90" onClick={onClose}>
             完成
           </button>
