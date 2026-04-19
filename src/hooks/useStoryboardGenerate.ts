@@ -127,6 +127,7 @@ export function useStoryboardGenerate() {
 
       updateRow(row.id, {
         keyframeUrl: url,
+        reference_image: url,
         keyframeNodeId: kfNodeId,
         status: 'done',
         ...updatedSlots,

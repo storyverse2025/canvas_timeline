@@ -22,7 +22,7 @@ const COLUMNS: Col[] = [
   { key: 'duration',            label: '时长(秒)',      width: 'w-20',  type: 'number' },
   { key: 'visual_description',  label: '画面描述',      width: 'w-56',  type: 'multiline' },
   { key: 'visual_anchor',       label: '视觉锚点',      width: 'w-40',  type: 'multiline' },
-  { key: 'reference_image',     label: '参考',          width: 'w-28',  type: 'media-image' },
+  { key: 'reference_image',     label: '参考/KF',       width: 'w-28',  type: 'media-image' },
   { key: 'shot_size',           label: '景别',          width: 'w-24',  type: 'text' },
   { key: 'character1',          label: '角色1',         width: 'w-40',  type: 'element' },
   { key: 'character2',          label: '角色2',         width: 'w-40',  type: 'element' },
@@ -39,7 +39,6 @@ const COLUMNS: Col[] = [
   { key: 'motion_prompts',      label: '视频运动提示词', width: 'w-56',  type: 'multiline' },
   { key: 'bgm',                 label: 'BGM',           width: 'w-28',  type: 'text' },
   { key: 'bgm_audio',           label: 'BGM 音频',      width: 'w-28',  type: 'media-audio' },
-  { key: 'keyframe',            label: 'Keyframe',      width: 'w-28',  type: 'media-image' },
   { key: 'beat_video',          label: 'Beat Video',    width: 'w-28',  type: 'media-video' },
 ]
 
@@ -139,10 +138,16 @@ function AudioCell({ url, onChange }: { url?: string; onChange: (v: string) => v
   )
 }
 
-function ElementCell({ slot, onChange }: {
-  slot: ElementSlot
+function ElementCell({ slot: rawSlot, onChange }: {
+  slot: ElementSlot | Record<string, unknown>
   onChange: (patch: Partial<ElementSlot>) => void
 }) {
+  // Normalize: slot might be a plain object from Zod defaults or persisted data
+  const slot: ElementSlot = {
+    image: String((rawSlot as ElementSlot)?.image ?? ''),
+    description: String((rawSlot as ElementSlot)?.description ?? ''),
+    nodeId: String((rawSlot as ElementSlot)?.nodeId ?? ''),
+  }
   const fileRef = useRef<HTMLInputElement>(null)
   return (
     <div className="flex flex-col gap-1">
@@ -167,7 +172,7 @@ function ElementCell({ slot, onChange }: {
       </div>
       <input
         className="w-full bg-transparent outline-none text-[10px] text-zinc-300 focus:bg-zinc-800 px-1 py-0.5 rounded"
-        value={slot.description ?? ''}
+        value={slot.description}
         onChange={(e) => onChange({ description: e.target.value })}
         placeholder="描述…"
       />
@@ -265,10 +270,11 @@ export function StoryboardTable() {
                     <td className="px-2 py-2 border-b border-zinc-900">
                       <TextCell multiline value={r.visual_anchor} onChange={(v) => updateRow(r.id, { visual_anchor: v })} />
                     </td>
-                    {/* 参考 */}
+                    {/* 参考 / Keyframe */}
                     <td className="px-2 py-2 border-b border-zinc-900">
-                      <MediaCell kind="image" url={r.reference_image} busy={busy}
-                        onChange={(v) => updateRow(r.id, { reference_image: v })} />
+                      <MediaCell kind="image" url={r.keyframeUrl || r.reference_image} busy={busy}
+                        onChange={(v) => updateRow(r.id, { reference_image: v, keyframeUrl: v })}
+                        onGenerate={() => generateKeyframe(r)} />
                     </td>
                     {/* 景别 */}
                     <td className="px-2 py-2 border-b border-zinc-900">
@@ -338,12 +344,6 @@ export function StoryboardTable() {
                     {/* BGM 音频 */}
                     <td className="px-2 py-2 border-b border-zinc-900">
                       <AudioCell url={r.bgm_audio} onChange={(v) => updateRow(r.id, { bgm_audio: v })} />
-                    </td>
-                    {/* Keyframe */}
-                    <td className="px-2 py-2 border-b border-zinc-900">
-                      <MediaCell kind="image" url={r.keyframeUrl} busy={busy}
-                        onChange={(v) => updateRow(r.id, { keyframeUrl: v })}
-                        onGenerate={() => generateKeyframe(r)} />
                     </td>
                     {/* Beat Video */}
                     <td className="px-2 py-2 border-b border-zinc-900">

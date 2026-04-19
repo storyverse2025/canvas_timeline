@@ -16,6 +16,7 @@ import { detectIntent, executeIntent } from '@/lib/chat-intent'
 import { buildCanvasContext } from '@/lib/canvas-context'
 import { parseAndValidateStoryboard } from '@/lib/storyboard-parser'
 import { useStoryboardStore } from '@/stores/storyboard-store'
+import { ensureElements, buildElementContext, type ElementInventory } from '@/lib/canvas-elements'
 import type { ClaudeMessage } from '@/lib/claude-client'
 
 const CHAT_SYSTEM_PROMPT = `You are StoryVerse AI, a creative assistant for animated video production.
@@ -35,11 +36,11 @@ IMPORTANT: When the user mentions any of these keywords — 分镜, 表格, stor
     "visual_anchor": "visual consistency anchor (key visual elements that must stay consistent across shots)",
     "reference_image": "<canvas node short id or full image URL or empty>",
     "shot_size": "特写|近景|中景|全景|远景",
-    "character1": { "image": "", "description": "角色1外貌/服装描述" },
-    "character2": { "image": "", "description": "角色2外貌/服装描述" },
-    "prop1": { "image": "", "description": "道具1描述" },
-    "prop2": { "image": "", "description": "道具2描述" },
-    "scene": { "image": "", "description": "场景描述" },
+    "character1": { "image": "<canvas node short id or empty>", "description": "角色1外貌/服装描述" },
+    "character2": { "image": "<canvas node short id or empty>", "description": "角色2外貌/服装描述" },
+    "prop1": { "image": "<canvas node short id or empty>", "description": "道具1描述" },
+    "prop2": { "image": "<canvas node short id or empty>", "description": "道具2描述" },
+    "scene": { "image": "<canvas node short id or empty>", "description": "场景描述" },
     "character_actions": "...",
     "emotion_mood": "...",
     "scene_tags": "室内,夜间",
@@ -214,6 +215,17 @@ export function ChatPanel() {
         return // skip Claude call
       }
 
+      // Pre-process: if this is a storyboard request, classify canvas elements first
+      const isStoryboardRequest = /分镜|storyboard|shot.?list|表格|生成.*表|重新生成/i.test(text)
+      let elementInventory: ElementInventory | null = null
+      if (isStoryboardRequest) {
+        try {
+          elementInventory = await ensureElements((msg) => addMessage('system', msg))
+        } catch (e) {
+          addMessage('system', `元素分析失败: ${(e as Error).message}，继续生成…`)
+        }
+      }
+
       // Build conversation history for Claude
       const currentMessages = useChatStore.getState().messages
       const claudeMessages: ClaudeMessage[] = currentMessages
@@ -226,7 +238,8 @@ export function ChatPanel() {
       let fullThinking = ''
 
       const canvasCtx = buildCanvasContext()
-      const systemWithCtx = `${CHAT_SYSTEM_PROMPT}\n\n## Canvas Context\n${canvasCtx}`
+      const elementCtx = elementInventory ? `\n\n## 已识别的画布元素\n${buildElementContext(elementInventory)}\n\nIMPORTANT: 在生成分镜表时，请将上面识别的角色、道具、场景填入每行的 character1/character2、prop1/prop2、scene 字段中。image 填入对应的图片URL，description 填入描述。` : ''
+      const systemWithCtx = `${CHAT_SYSTEM_PROMPT}\n\n## Canvas Context\n${canvasCtx}${elementCtx}`
 
       for await (const event of streamClaude(claudeMessages, { system: systemWithCtx })) {
         switch (event.type) {
