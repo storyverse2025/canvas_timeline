@@ -1,5 +1,5 @@
-import { useCallback } from 'react'
-import { Save, FolderOpen, Wand2, Eye, EyeOff, LayoutGrid, Table2, Film, Trash } from 'lucide-react'
+import { useCallback, useState } from 'react'
+import { Save, FolderOpen, Wand2, Eye, EyeOff, LayoutGrid, Table2, Film, Trash, Clapperboard } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useUiStore } from '@/stores/ui-store'
@@ -9,6 +9,7 @@ import { useTimelineStore } from '@/stores/timeline-store'
 import { useMappingStore } from '@/stores/mapping-store'
 import { useAssetStore } from '@/stores/asset-store'
 import { useChatStore } from '@/stores/chat-store'
+import { ScriptInputDialog } from '@/components/director/ScriptInputDialog'
 
 const TABS = [
   { id: 'canvas', label: '画布', Icon: LayoutGrid },
@@ -17,6 +18,7 @@ const TABS = [
 ] as const
 
 export function TopBar() {
+  const [directorOpen, setDirectorOpen] = useState(false)
   const previewOpen = useUiStore((s) => s.previewOpen)
   const togglePreview = useUiStore((s) => s.togglePreview)
   const activeTab = useViewStore((s) => s.activeTab)
@@ -139,6 +141,11 @@ export function TopBar() {
 
       <div className="flex-1" />
 
+      <Button variant="ghost" size="sm" onClick={() => setDirectorOpen(true)} className="gap-1.5 text-primary">
+        <Clapperboard className="w-4 h-4" />
+        导演助手
+      </Button>
+
       <Button variant="ghost" size="sm" onClick={togglePreview} className="gap-1.5">
         {previewOpen ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
         Preview
@@ -158,6 +165,8 @@ export function TopBar() {
         <Trash className="w-4 h-4" />
         Clear
       </Button>
+
+      {directorOpen && <ScriptInputDialog onClose={() => setDirectorOpen(false)} />}
     </header>
   )
 }
