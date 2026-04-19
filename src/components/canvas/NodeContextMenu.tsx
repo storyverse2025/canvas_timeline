@@ -5,7 +5,7 @@ import {
   Scissors, ZoomIn, Expand, CropIcon, Sparkles,
   Eye, Clapperboard, ArrowUpRight, Layers, Move3d,
   SplitSquareHorizontal, PaintBucket, Volume2,
-  AudioLines, TextCursorInput, Music,
+  AudioLines, TextCursorInput, Music, FolderPlus,
 } from 'lucide-react'
 import { useCanvasStore } from '@/stores/canvas-store'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
@@ -13,6 +13,7 @@ import { useGenerateDialogStore } from '@/stores/generate-dialog-store'
 import { useCapabilityDialogStore } from '@/stores/capability-dialog-store'
 import { gatherUpstream } from '@/lib/canvas-graph'
 import { getCapabilitiesForNodeType } from '@/lib/capabilities/registry'
+import { CreateAssetDialog } from '@/components/asset-library/CreateAssetDialog'
 import type { CapabilitySpec } from '@/lib/capabilities/types'
 import { cn } from '@/lib/utils'
 
@@ -72,6 +73,7 @@ export function NodeContextMenu({ menu, onClose }: Props) {
   const addItem = useCanvasItemStore((s) => s.addItem)
   const openGenerateDialog = useGenerateDialogStore((s) => s.open)
   const openCapDialog = useCapabilityDialogStore((s) => s.open)
+  const [createAssetOpen, setCreateAssetOpen] = useState(false)
 
   useEffect(() => {
     if (!menu) return
@@ -221,8 +223,17 @@ export function NodeContextMenu({ menu, onClose }: Props) {
       })}
 
       <div className="my-1 border-t border-border" />
+      <MenuItem icon={FolderPlus} label="创建资产" onClick={() => { setCreateAssetOpen(true); onClose() }} />
       <MenuItem icon={Copy} label="复制节点" onClick={duplicate} />
       <MenuItem icon={Trash2} label="删除节点" onClick={remove} danger />
+      {createAssetOpen && item && (
+        <CreateAssetDialog
+          itemName={item.name}
+          itemContent={item.content}
+          itemKind={item.kind}
+          onClose={() => setCreateAssetOpen(false)}
+        />
+      )}
     </div>
   )
 }

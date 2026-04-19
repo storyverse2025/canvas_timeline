@@ -1,5 +1,8 @@
 import type { Plugin } from 'vite'
 import type { IncomingMessage, ServerResponse } from 'http'
+import { writeFileSync, mkdirSync } from 'fs'
+import { join } from 'path'
+import { randomUUID } from 'crypto'
 
 interface CapInput { kind: string; url?: string; text?: string }
 interface CapReq {
@@ -732,6 +735,48 @@ export function capabilitiesPlugin(): Plugin {
 
       server.middlewares.use('/capabilities/list', (_req, res) => {
         sendJson(res, 200, Object.keys(handlers))
+      })
+
+      // File upload endpoint — saves to public/uploads/, returns URL path
+      server.middlewares.use('/uploads/save', async (req, res) => {
+        if (req.method !== 'POST') { sendJson(res, 405, { error: 'POST only' }); return }
+        try {
+          const chunks: Buffer[] = []
+          for await (const c of req) chunks.push(c as Buffer)
+          const body = Buffer.concat(chunks)
+
+          // Parse multipart or raw binary
+          const contentType = req.headers['content-type'] ?? ''
+          let fileData: Buffer
+          let ext = '.png'
+
+          if (contentType.includes('application/json')) {
+            // JSON with base64 data URL
+            const json = JSON.parse(body.toString('utf8')) as { dataUrl: string; filename?: string }
+            const m = json.dataUrl.match(/^data:([^;]+);base64,(.+)$/)
+            if (!m) { sendJson(res, 400, { error: 'invalid data URL' }); return }
+            fileData = Buffer.from(m[2], 'base64')
+            const mime = m[1]
+            if (mime.includes('jpeg') || mime.includes('jpg')) ext = '.jpg'
+            else if (mime.includes('png')) ext = '.png'
+            else if (mime.includes('webp')) ext = '.webp'
+            else if (mime.includes('mp4')) ext = '.mp4'
+            else if (mime.includes('webm')) ext = '.webm'
+            else if (mime.includes('mp3') || mime.includes('mpeg')) ext = '.mp3'
+            else if (mime.includes('wav')) ext = '.wav'
+          } else {
+            fileData = body
+          }
+
+          const uploadsDir = join(process.cwd(), 'public', 'uploads')
+          mkdirSync(uploadsDir, { recursive: true })
+          const filename = `${randomUUID()}${ext}`
+          writeFileSync(join(uploadsDir, filename), fileData)
+          const url = `/uploads/${filename}`
+          sendJson(res, 200, { url })
+        } catch (e) {
+          sendJson(res, 500, { error: String((e as Error).message ?? e) })
+        }
       })
     },
   }
