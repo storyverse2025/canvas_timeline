@@ -219,16 +219,19 @@ async function smartEdit(req: CapReq): Promise<CapRes> {
   const text = getText(req.inputs)
   const images = getImages(req.inputs)
   if (!images.length) throw new Error('需要输入图片')
+  // Resolve image to data URL so OpenAI can read it
+  const imageDataUrl = await resolveImageToDataUrl(images[0])
   const key = process.env.OPENAI_API_KEY
   if (!key) throw new Error('OPENAI_API_KEY not set')
   const res = await fetch('https://api.openai.com/v1/images/edits', {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${key}` },
-    body: await buildEditFormData(images[0], text || 'enhance this image'),
+    body: await buildEditFormData(imageDataUrl, text || 'enhance this image'),
   })
   if (!res.ok) {
+    // Fallback to text-to-image with reference
     const fallbackPrompt = `${text || 'enhance'}, based on the reference image`
-    return textToImage({ ...req, inputs: [{ kind: 'text', text: fallbackPrompt }, { kind: 'image', url: images[0] }] })
+    return textToImage({ ...req, inputs: [{ kind: 'text', text: fallbackPrompt }, { kind: 'image', url: imageDataUrl }] })
   }
   const data = (await res.json()) as { data?: { url?: string }[] }
   const url = data.data?.[0]?.url
@@ -260,20 +263,28 @@ async function inpaint(req: CapReq): Promise<CapRes> {
   const images = getImages(req.inputs)
   if (!images.length) throw new Error('需要输入图片')
   const maskUrl = req.params?.mask_url as string | undefined
+  // Resolve image to data URL (FAL accepts data URLs)
+  const imageDataUrl = await resolveImageToDataUrl(images[0])
   const key = process.env.FAL_KEY
   if (!key) throw new Error('FAL_KEY not set')
   const body: Record<string, unknown> = {
     prompt: text || 'fill the masked area naturally',
-    image_url: images[0],
+    image_url: imageDataUrl,
     num_images: 1,
   }
-  if (maskUrl) body.mask_url = maskUrl
-  const res = await fetch('https://fal.run/fal-ai/flux-pro/v1.1/inpainting', {
+  if (!maskUrl) throw new Error('需要标记区域（mask_url 缺失）')
+  body.mask_url = maskUrl
+  console.log(`[inpaint] image: ${imageDataUrl.slice(0, 50)}... mask: ${maskUrl.slice(0, 50)}... prompt: ${text}`)
+  const res = await fetch('https://fal.run/fal-ai/flux-general/inpainting', {
     method: 'POST',
     headers: { 'Authorization': `Key ${key}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  if (!res.ok) throw new Error(`FAL inpaint ${res.status}: ${await res.text()}`)
+  if (!res.ok) {
+    const errText = await res.text()
+    console.error(`[inpaint] FAL error ${res.status}:`, errText.slice(0, 500))
+    throw new Error(`FAL inpaint ${res.status}: ${errText}`)
+  }
   const data = (await res.json()) as { images?: { url: string }[] }
   const url = data.images?.[0]?.url
   if (!url) throw new Error('FAL: no inpaint result')
@@ -432,6 +443,26 @@ async function poseEdit(req: CapReq): Promise<CapRes> {
 /** Only absolute http(s) or data: URLs are valid for remote APIs. */
 function filterValidRefs(urls: string[]): string[] {
   return urls.filter((u) => u && u.length > 10 && (/^https?:\/\//i.test(u) || u.startsWith('data:')))
+}
+
+/** Convert a local /uploads/ path to a file:// readable buffer, or fetch remote URL as base64 data URL */
+async function resolveImageToDataUrl(imageUrl: string): Promise<string> {
+  if (imageUrl.startsWith('data:')) return imageUrl
+  if (imageUrl.startsWith('/')) {
+    // Local file — read from disk
+    const { readFileSync } = await import('fs')
+    const { join } = await import('path')
+    const buf = readFileSync(join(process.cwd(), 'public', imageUrl))
+    const ext = imageUrl.split('.').pop()?.toLowerCase() ?? 'png'
+    const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'webp' ? 'image/webp' : 'image/png'
+    return `data:${mime};base64,${buf.toString('base64')}`
+  }
+  // Remote URL — fetch and convert
+  const r = await fetch(imageUrl)
+  if (!r.ok) throw new Error(`fetch image failed: ${r.status}`)
+  const buf = Buffer.from(await r.arrayBuffer())
+  const contentType = r.headers.get('content-type') || 'image/png'
+  return `data:${contentType};base64,${buf.toString('base64')}`
 }
 
 async function textToVideo(req: CapReq): Promise<CapRes> {
