@@ -221,9 +221,9 @@ export function ChatPanel() {
       let elementInventory: ElementInventory | null = null
       if (isStoryboardRequest) {
         try {
-          const { artDirection } = useProjectDB.getState()
+          const { artDirection, script } = useProjectDB.getState()
           elementInventory = await ensureElements((msg) => addMessage('system', msg), {
-            scriptText: text,
+            scriptText: script.text || text,
             stylePreset: artDirection.stylePreset,
             customStyle: artDirection.customStyle,
           })
