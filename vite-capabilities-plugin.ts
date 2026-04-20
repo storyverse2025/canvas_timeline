@@ -191,18 +191,18 @@ async function consistencyCheck(req: CapReq): Promise<CapRes> {
 }
 
 // ─── Image capabilities ─────────────────────────────────────────────
-async function textToImage(req: CapReq): Promise<CapRes> {
-  const text = getText(req.inputs)
-  const refs = getImages(req.inputs)
-  const aspect = (req.params?.aspect as string) || '16:9'
+async function runFluxImage(prompt: string, aspect: string, numImages: number, refImage?: string): Promise<string[]> {
   const key = process.env.FAL_KEY
   if (!key) throw new Error('FAL_KEY not set')
-  const body: Record<string, unknown> = {
-    prompt: text || 'a beautiful scene',
-    image_size: aspect === '1:1' ? 'square_hd' : 'landscape_16_9',
-    num_images: 1,
+  const sizeMap: Record<string, string> = {
+    '1:1': 'square_hd', '9:16': 'portrait_hd', '16:9': 'landscape_hd', '4:3': 'landscape_4_3',
   }
-  if (refs.length > 0) body.image_url = refs[0]
+  const body: Record<string, unknown> = {
+    prompt,
+    image_size: sizeMap[aspect] ?? 'landscape_hd',
+    num_images: numImages,
+  }
+  if (refImage) body.image_url = refImage
   const res = await fetch('https://fal.run/fal-ai/flux-pro/v1.1', {
     method: 'POST',
     headers: { 'Authorization': `Key ${key}`, 'Content-Type': 'application/json' },
@@ -210,9 +210,37 @@ async function textToImage(req: CapReq): Promise<CapRes> {
   })
   if (!res.ok) throw new Error(`FAL ${res.status}: ${await res.text()}`)
   const data = (await res.json()) as { images?: { url: string }[] }
-  const url = data.images?.[0]?.url
-  if (!url) throw new Error('FAL: no image')
-  return { outputs: [{ kind: 'image', url }] }
+  const urls = data.images?.map((i) => i.url) ?? []
+  if (urls.length === 0) throw new Error('FAL: no images in response')
+  return urls
+}
+
+async function resolvePrompt(prompt: string, enhance: boolean, kind: 'image' | 'video'): Promise<string> {
+  if (!enhance || !prompt.trim()) return prompt
+  return geminiText(
+    `You are a professional ${kind} generation prompt engineer. Expand the user's prompt with vivid details: composition, lighting, style, mood, and technical quality descriptors. Output only the enhanced English prompt, 80-150 words, no commentary.`,
+    prompt,
+  )
+}
+
+async function textToImage(req: CapReq): Promise<CapRes> {
+  const text = getText(req.inputs)
+  const refs = getImages(req.inputs)
+  const aspect = (req.params?.aspect as string) || '16:9'
+  const enhance = req.params?.enhance_prompt === 'true' || req.params?.enhance_prompt === true
+  const prompt = await resolvePrompt(text || 'a beautiful scene', enhance, 'image')
+  const urls = await runFluxImage(prompt, aspect, 1, refs[0])
+  return { outputs: urls.map((url) => ({ kind: 'image' as const, url })) }
+}
+
+async function batchImage(req: CapReq): Promise<CapRes> {
+  const text = getText(req.inputs)
+  const refs = getImages(req.inputs)
+  const aspect = (req.params?.aspect as string) || '16:9'
+  const enhance = req.params?.enhance_prompt === 'true' || req.params?.enhance_prompt === true
+  const prompt = await resolvePrompt(text || 'a beautiful scene', enhance, 'image')
+  const urls = await runFluxImage(prompt, aspect, 4, refs[0])
+  return { outputs: urls.map((url) => ({ kind: 'image' as const, url })) }
 }
 
 async function smartEdit(req: CapReq): Promise<CapRes> {
@@ -574,9 +602,12 @@ async function submitSeedanceTask(opts: {
 }
 
 async function textToVideo(req: CapReq): Promise<CapRes> {
-  const text = getText(req.inputs)
+  const rawText = getText(req.inputs)
   const images = filterValidRefs(getImages(req.inputs))
-  if (!text && !images.length) throw new Error('需要输入文本或参考图')
+  if (!rawText && !images.length) throw new Error('需要输入文本或参考图')
+
+  const enhance = req.params?.enhance_prompt === 'true' || req.params?.enhance_prompt === true
+  const text = await resolvePrompt(rawText, enhance, 'video')
 
   const mode = (req.params?.mode as 'first-last' | 'reference' | undefined)
   const type = detectVideoType({ images, videos: [], audios: [], mode })
@@ -687,18 +718,25 @@ async function lipSync(req: CapReq): Promise<CapRes> {
 async function motionImitation(req: CapReq): Promise<CapRes> {
   const videos = getVideos(req.inputs)
   const images = getImages(req.inputs)
-  if (!videos.length) throw new Error('需要输入参考视频')
+  if (!videos.length) throw new Error('需要输入参考视频（含动作）')
   if (!images.length) throw new Error('需要输入目标人物图')
   const key = process.env.FAL_KEY
   if (!key) throw new Error('FAL_KEY not set')
-  const res = await fetch('https://fal.run/fal-ai/animate-anyone', {
+  const mode = (req.params?.mode as string) || 'std'
+  // animate-anyone-pro for high quality mode
+  const endpoint = mode === 'pro' ? 'fal-ai/animate-anyone-pro' : 'fal-ai/animate-anyone'
+  const body: Record<string, unknown> = {
+    reference_image_url: images[0],
+    motion_video_url: videos[0],
+  }
+  const res = await fetch(`https://fal.run/${endpoint}`, {
     method: 'POST',
     headers: { 'Authorization': `Key ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ reference_image_url: images[0], motion_video_url: videos[0] }),
+    body: JSON.stringify(body),
   })
   if (!res.ok) throw new Error(`FAL motion ${res.status}: ${await res.text()}`)
-  const data = (await res.json()) as { video?: { url: string } }
-  const url = data.video?.url
+  const data = (await res.json()) as { video?: { url: string }; output?: { video?: { url: string } } }
+  const url = data.video?.url ?? data.output?.video?.url
   if (!url) throw new Error('FAL: no motion result')
   return { outputs: [{ kind: 'video', url }] }
 }
@@ -842,6 +880,7 @@ const handlers: Record<string, (req: CapReq) => Promise<CapRes>> = {
   'shot-extraction': shotExtraction,
   'consistency-check': consistencyCheck,
   'text-to-image': textToImage,
+  'batch-image': batchImage,
   'smart-edit': smartEdit,
   'inpaint': inpaint,
   'upscale-image': upscaleImage,

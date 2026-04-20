@@ -58,43 +58,47 @@ export function useCapability() {
         params: args.params,
       })
 
-      const output = result.outputs[0]
-      if (!output) throw new Error('no output')
+      if (!result.outputs.length) throw new Error('no output')
 
-      // Create a new downstream node with the result
+      // Create a new downstream node for each output (batch-image returns multiple)
       const srcNode = useCanvasStore.getState().nodes.find((n) => n.id === args.nodeId)
       const pos = srcNode?.position ?? { x: 0, y: 0 }
       const srcW = (srcNode?.style?.width as number) ?? srcNode?.width ?? 280
+      const nodeGap = 20
 
-      if (output.kind === 'text') {
-        const newItemId = useCanvasItemStore.getState().addItem({
-          kind: 'text',
-          name: cap.label,
-          content: output.text ?? '',
-        })
-        const newNodeId = useCanvasStore.getState().addItemNode(
-          newItemId, 'text',
-          { x: pos.x + srcW + 60, y: pos.y },
-          { width: 300, height: 200 },
-        )
-        useCanvasStore.getState().addEdge(args.nodeId, newNodeId)
-      } else {
-        const newItemId = useCanvasItemStore.getState().addItem({
-          kind: 'image',
-          name: cap.label,
-          content: output.url ?? '',
-        })
-        const size = output.kind === 'video'
-          ? { width: 360, height: 200 }
-          : { width: 280, height: 200 }
-        const newNodeId = useCanvasStore.getState().addItemNode(
-          newItemId, 'image',
-          { x: pos.x + srcW + 60, y: pos.y },
-          size,
-        )
-        useCanvasStore.getState().addEdge(args.nodeId, newNodeId)
+      for (let i = 0; i < result.outputs.length; i++) {
+        const output = result.outputs[i]
+        if (output.kind === 'text') {
+          const newItemId = useCanvasItemStore.getState().addItem({
+            kind: 'text',
+            name: cap.label,
+            content: output.text ?? '',
+          })
+          const newNodeId = useCanvasStore.getState().addItemNode(
+            newItemId, 'text',
+            { x: pos.x + srcW + 60, y: pos.y + i * (200 + nodeGap) },
+            { width: 300, height: 200 },
+          )
+          useCanvasStore.getState().addEdge(args.nodeId, newNodeId)
+        } else {
+          const newItemId = useCanvasItemStore.getState().addItem({
+            kind: 'image',
+            name: result.outputs.length > 1 ? `${cap.label} ${i + 1}` : cap.label,
+            content: output.url ?? '',
+          })
+          const size = output.kind === 'video'
+            ? { width: 360, height: 200 }
+            : { width: 280, height: 200 }
+          const newNodeId = useCanvasStore.getState().addItemNode(
+            newItemId, 'image',
+            { x: pos.x + srcW + 60 + i * (280 + nodeGap), y: pos.y },
+            size,
+          )
+          useCanvasStore.getState().addEdge(args.nodeId, newNodeId)
+        }
       }
 
+      const output = result.outputs[0]
       updateTask(taskId, { status: 'done', resultUrl: output.url ?? '', resultKind: (output.kind === 'video' ? 'video' : 'image') as 'image' | 'video' })
       // Log to generation history
       useProjectDB.getState().addHistoryEntry({
