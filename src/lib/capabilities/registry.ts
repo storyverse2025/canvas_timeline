@@ -56,6 +56,15 @@ export const CAPABILITIES: CapabilitySpec[] = [
     outputKind: 'text',
     nodeTypes: ['image', 'text'],
   },
+  {
+    id: 'storyboard-qc',
+    category: 'agent',
+    label: '分镜质量检查',
+    description: '用 Gemini Vision 自动检查关键帧图片是否符合分镜描述（角色、场景、情绪）',
+    inputKinds: ['image', 'text'],
+    outputKind: 'text',
+    nodeTypes: ['image', 'text'],
+  },
 
   // ─── 图片能力 ──────────────────────────────────────────────────────
   {
