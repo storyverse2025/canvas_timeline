@@ -6,8 +6,8 @@ describe('dispatch coverage', () => {
     'script-rewrite', 'script-breakdown', 'element-extraction', 'shot-extraction', 'consistency-check',
     'text-to-image', 'smart-edit', 'inpaint', 'upscale-image', 'outpaint',
     'crop-image', 'shot-association', 'multi-angle', 'angle-adjust', 'pose-edit',
-    'text-to-video', 'first-last-frame', 'multi-ref-video', 'upscale-video', 'lip-sync',
-    'motion-imitation', 'video-split', 'video-style-transfer',
+    'text-to-video', 'first-last-frame', 'multi-ref-video', 'universal-video',
+    'upscale-video', 'lip-sync', 'motion-imitation', 'video-split', 'video-style-transfer',
     'preset-voice', 'voice-clone', 'polyphonic', 'sound-effects',
   ]
 
@@ -23,9 +23,9 @@ describe('dispatch coverage', () => {
     }
   })
 
-  it('handler count matches capability count (27)', () => {
-    expect(expectedHandlers.length).toBe(27)
-    expect(CAPABILITIES.length).toBe(27)
+  it('handler count matches capability count (28)', () => {
+    expect(expectedHandlers.length).toBe(28)
+    expect(CAPABILITIES.length).toBe(28)
   })
 })
 

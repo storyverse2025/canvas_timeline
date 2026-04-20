@@ -236,6 +236,26 @@ export const CAPABILITIES: CapabilitySpec[] = [
     ],
   },
   {
+    id: 'universal-video',
+    category: 'video',
+    label: '全能参考生视频',
+    description: '图片+视频+音频组合生成视频',
+    inputKinds: ['image', 'video', 'audio', 'text'],
+    outputKind: 'video',
+    nodeTypes: ['image'],
+    params: [
+      { key: 'duration', label: '时长(秒)', type: 'select', default: '5', options: [
+        { value: '5', label: '5s' }, { value: '8', label: '8s' }, { value: '10', label: '10s' }, { value: '15', label: '15s' },
+      ]},
+      { key: 'resolution', label: '分辨率', type: 'select', default: '480p', options: [
+        { value: '480p', label: '480p' }, { value: '720p', label: '720p' },
+      ]},
+      { key: 'aspect', label: '比例', type: 'select', default: '16:9', options: [
+        { value: '16:9', label: '16:9' }, { value: '9:16', label: '9:16' }, { value: '1:1', label: '1:1' },
+      ]},
+    ],
+  },
+  {
     id: 'upscale-video',
     category: 'video',
     label: '视频超分',
