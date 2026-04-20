@@ -190,6 +190,33 @@ async function consistencyCheck(req: CapReq): Promise<CapRes> {
   return { outputs: [{ kind: 'text', text: result }] }
 }
 
+async function storyboardQC(req: CapReq): Promise<CapRes> {
+  const text = getText(req.inputs)
+  const images = getImages(req.inputs)
+  if (!images.length) throw new Error('需要至少 1 张关键帧图片')
+  const sys = `你是专业的分镜质量检查员。请检查提供的关键帧图片是否符合分镜描述。
+从以下维度评估：
+1. 角色：图中人物是否匹配描述的角色特征（外貌、服装、表情）
+2. 场景：背景、道具、环境是否符合描述
+3. 情绪：画面情绪基调是否与描述一致
+4. 构图：镜头角度、景别是否符合要求
+
+输出格式（JSON）：
+{
+  "passed": true/false,
+  "score": 0-100,
+  "issues": ["问题1", "问题2"],
+  "suggestions": ["建议1", "建议2"]
+}`
+  const results: string[] = []
+  for (let i = 0; i < images.length; i++) {
+    const desc = text || `第${i + 1}帧`
+    const r = await geminiVision(sys, `分镜描述：${desc}`, images[i])
+    results.push(`【第${i + 1}帧】\n${r}`)
+  }
+  return { outputs: [{ kind: 'text', text: results.join('\n\n---\n\n') }] }
+}
+
 // ─── Image capabilities ─────────────────────────────────────────────
 async function runFluxImage(prompt: string, aspect: string, numImages: number, refImage?: string): Promise<string[]> {
   const key = process.env.FAL_KEY
@@ -880,6 +907,7 @@ const handlers: Record<string, (req: CapReq) => Promise<CapRes>> = {
   'element-extraction': elementExtraction,
   'shot-extraction': shotExtraction,
   'consistency-check': consistencyCheck,
+  'storyboard-qc': storyboardQC,
   'text-to-image': textToImage,
   'batch-image': batchImage,
   'smart-edit': smartEdit,
@@ -925,6 +953,33 @@ export function capabilitiesPlugin(): Plugin {
 
       server.middlewares.use('/capabilities/list', (_req, res) => {
         sendJson(res, 200, Object.keys(handlers))
+      })
+
+      // Model discovery: returns image + video models with metadata
+      server.middlewares.use('/capabilities/models', (_req, res) => {
+        // Inline PROVIDERS data to avoid @/ alias issues in Node
+        const modelList = {
+          image: [
+            { id: 'fal-ai/flux-pro/v1.1', label: 'FLUX Pro v1.1', provider: 'fal', costPer: 0.05, supportsRef: false },
+            { id: 'fal-ai/flux-pro/v1.1-ultra', label: 'FLUX Pro Ultra', provider: 'fal', costPer: 0.08, supportsRef: false },
+            { id: 'fal-ai/flux/dev', label: 'FLUX Dev', provider: 'fal', costPer: 0.025, supportsRef: false },
+            { id: 'doubao-seedream-5-0-260128', label: 'Seedream 5.0', provider: 'doubao', costPer: 0.04, supportsRef: true },
+            { id: 'doubao-seedream-4-5-251128', label: 'Seedream 4.5', provider: 'doubao', costPer: 0.02, supportsRef: true },
+            { id: 'dall-e-3', label: 'DALL·E 3', provider: 'openai', costPer: 0.04, supportsRef: false },
+            { id: 'gpt-image-1', label: 'GPT Image 1', provider: 'openai', costPer: 0.04, supportsRef: false },
+          ],
+          video: [
+            { id: 'doubao-seedance-2-0-fast-260128', label: 'Seedance 2.0 Fast', provider: 'doubao', costPer: 0.35, supportsAudio: true, supportsRef: true, durations: [5, 10] },
+            { id: 'doubao-seedance-2-0-260128', label: 'Seedance 2.0', provider: 'doubao', costPer: 0.70, supportsAudio: true, supportsRef: true, durations: [5, 10] },
+            { id: 'doubao-seedance-1-5-pro-251215', label: 'Seedance 1.5 Pro', provider: 'doubao', costPer: 0.50, supportsAudio: true, supportsRef: true, durations: [5, 10] },
+            { id: 'fal-ai/kling-video/v1.5/pro/text-to-video', label: 'Kling v1.5 Pro', provider: 'fal', costPer: 0.45, supportsAudio: false, supportsRef: false, durations: [5, 10] },
+            { id: 'fal-ai/kling-video/v1/standard/text-to-video', label: 'Kling v1 Standard', provider: 'fal', costPer: 0.20, supportsAudio: false, supportsRef: false, durations: [5, 10] },
+            { id: 'fal-ai/minimax/video-01/text-to-video', label: 'MiniMax Hailuo', provider: 'fal', costPer: 0.30, supportsAudio: false, supportsRef: false, durations: [6] },
+            { id: 'fal-ai/wan-t2v', label: 'Wan2.6 文生视频', provider: 'fal', costPer: 0.10, supportsAudio: false, supportsRef: false, durations: [5] },
+            { id: 'fal-ai/hunyuan-video', label: 'HunyuanVideo', provider: 'fal', costPer: 0.25, supportsAudio: false, supportsRef: false, durations: [5] },
+          ],
+        }
+        sendJson(res, 200, modelList)
       })
 
       // File upload endpoint — saves to public/uploads/, returns URL path

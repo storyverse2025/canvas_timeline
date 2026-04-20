@@ -3,7 +3,7 @@ import { CAPABILITIES, getCapability } from '../registry'
 
 describe('dispatch coverage', () => {
   const expectedHandlers = [
-    'script-rewrite', 'script-breakdown', 'element-extraction', 'shot-extraction', 'consistency-check',
+    'script-rewrite', 'script-breakdown', 'element-extraction', 'shot-extraction', 'consistency-check', 'storyboard-qc',
     'text-to-image', 'batch-image', 'smart-edit', 'inpaint', 'upscale-image', 'outpaint',
     'crop-image', 'shot-association', 'multi-angle', 'angle-adjust', 'pose-edit',
     'text-to-video', 'first-last-frame', 'multi-ref-video', 'universal-video',
@@ -23,9 +23,9 @@ describe('dispatch coverage', () => {
     }
   })
 
-  it('handler count matches capability count (29)', () => {
-    expect(expectedHandlers.length).toBe(29)
-    expect(CAPABILITIES.length).toBe(29)
+  it('handler count matches capability count (30)', () => {
+    expect(expectedHandlers.length).toBe(30)
+    expect(CAPABILITIES.length).toBe(30)
   })
 })
 

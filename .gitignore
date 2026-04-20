@@ -37,3 +37,6 @@ public/samples/libtv-skills/
 
 # User uploads (served as static files)
 public/uploads/
+.env
+.env.local
+.gstack/
