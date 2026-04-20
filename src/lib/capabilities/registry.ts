@@ -71,6 +71,27 @@ export const CAPABILITIES: CapabilitySpec[] = [
         { value: '16:9', label: '16:9' }, { value: '9:16', label: '9:16' },
         { value: '1:1', label: '1:1' }, { value: '4:3', label: '4:3' },
       ]},
+      { key: 'enhance_prompt', label: '增强提示词', type: 'select', default: 'false', options: [
+        { value: 'false', label: '关' }, { value: 'true', label: '开' },
+      ]},
+    ],
+  },
+  {
+    id: 'batch-image',
+    category: 'image',
+    label: '批量生图(x4)',
+    description: '一次生成4张图片变体，使用 FLUX 模型',
+    inputKinds: ['text', 'image'],
+    outputKind: 'image',
+    nodeTypes: ['text', 'image'],
+    params: [
+      { key: 'aspect', label: '比例', type: 'select', default: '16:9', options: [
+        { value: '16:9', label: '16:9' }, { value: '9:16', label: '9:16' },
+        { value: '1:1', label: '1:1' }, { value: '4:3', label: '4:3' },
+      ]},
+      { key: 'enhance_prompt', label: '增强提示词', type: 'select', default: 'false', options: [
+        { value: 'false', label: '关' }, { value: 'true', label: '开' },
+      ]},
     ],
   },
   {
@@ -205,6 +226,9 @@ export const CAPABILITIES: CapabilitySpec[] = [
       { key: 'aspect', label: '比例', type: 'select', default: '16:9', options: [
         { value: '16:9', label: '16:9' }, { value: '9:16', label: '9:16' }, { value: '1:1', label: '1:1' },
       ]},
+      { key: 'enhance_prompt', label: '增强提示词', type: 'select', default: 'false', options: [
+        { value: 'false', label: '关' }, { value: 'true', label: '开' },
+      ]},
     ],
   },
   {
@@ -282,10 +306,15 @@ export const CAPABILITIES: CapabilitySpec[] = [
     id: 'motion-imitation',
     category: 'video',
     label: '动作模仿',
-    description: '让目标人物模仿参考视频中的动作',
+    description: '让目标人物模仿参考视频中的动作（需要参考视频 + 目标人物图）',
     inputKinds: ['video', 'image'],
     outputKind: 'video',
     nodeTypes: ['image'],
+    params: [
+      { key: 'mode', label: '质量模式', type: 'select', default: 'std', options: [
+        { value: 'std', label: '标准' }, { value: 'pro', label: '高质量' },
+      ]},
+    ],
   },
   {
     id: 'video-split',
