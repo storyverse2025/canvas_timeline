@@ -723,20 +723,21 @@ async function motionImitation(req: CapReq): Promise<CapRes> {
   const key = process.env.FAL_KEY
   if (!key) throw new Error('FAL_KEY not set')
   const mode = (req.params?.mode as string) || 'std'
-  // animate-anyone-pro for high quality mode
-  const endpoint = mode === 'pro' ? 'fal-ai/animate-anyone-pro' : 'fal-ai/animate-anyone'
-  const body: Record<string, unknown> = {
-    reference_image_url: images[0],
-    motion_video_url: videos[0],
-  }
+  // std: animate-anyone (pose-driven), pro: dreamactor/v2 (ByteDance, higher quality)
+  const endpoint = mode === 'pro'
+    ? 'fal-ai/bytedance/dreamactor/v2'
+    : 'fal-ai/animate-anyone'
+  const body: Record<string, unknown> = mode === 'pro'
+    ? { reference_image: images[0], driving_video: videos[0] }
+    : { reference_image_url: images[0], motion_video_url: videos[0] }
   const res = await fetch(`https://fal.run/${endpoint}`, {
     method: 'POST',
     headers: { 'Authorization': `Key ${key}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
   if (!res.ok) throw new Error(`FAL motion ${res.status}: ${await res.text()}`)
-  const data = (await res.json()) as { video?: { url: string }; output?: { video?: { url: string } } }
-  const url = data.video?.url ?? data.output?.video?.url
+  const data = (await res.json()) as { video?: { url: string }; output?: { video?: { url: string }; video_url?: string } }
+  const url = data.video?.url ?? data.output?.video?.url ?? data.output?.video_url
   if (!url) throw new Error('FAL: no motion result')
   return { outputs: [{ kind: 'video', url }] }
 }
