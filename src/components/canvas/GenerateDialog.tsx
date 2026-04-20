@@ -69,23 +69,36 @@ export function GenerateDialog({ initialPrompt = '', upstreamImages = [], defaul
 
   useEffect(() => { fetchAvailability().then(setAvail).catch(() => setAvail({} as ProviderAvailability)) }, [])
 
-  // Pick first enabled provider and a model matching kind
+  // Pick first enabled provider and a model matching kind when kind changes
   useEffect(() => {
     if (!avail) return
     const enabledProviders = PROVIDERS.filter((p) => avail[p.id] && p.models.some((m) => m.kind === kind))
     if (enabledProviders.length === 0) return
 
-    // Preferred defaults: video → doubao, image → libtv (generation that worked before)
+    // Preferred defaults: video → doubao, image → doubao (seedream)
     let preferred: ProviderId | undefined
     if (kind === 'video') preferred = 'doubao'
-    else if (kind === 'image') preferred = 'libtv'
+    else if (kind === 'image') preferred = 'doubao'
     const next = (preferred && enabledProviders.find((p) => p.id === preferred)) ?? enabledProviders[0]
     setProvider(next.id)
-
-    const models = next.models.filter((m) => m.kind === kind)
-    const defaultM = models.find((m) => /默认|default/i.test(m.label)) ?? models[0]
-    setModel(defaultM?.id ?? '')
   }, [avail, kind])
+
+  // When provider or kind changes, auto-select a valid model
+  useEffect(() => {
+    const providerModels = (PROVIDERS.find((p) => p.id === provider)?.models ?? []).filter((m) => m.kind === kind)
+    if (providerModels.length === 0) return
+    // If current model is still valid for this provider+kind, keep it
+    if (providerModels.some((m) => m.id === model)) return
+    // Otherwise pick a preferred default
+    const preferredIds = [
+      'doubao-seedream-5-0-260128',           // image default
+      'doubao-seedance-2-0-fast-260128',      // video default
+    ]
+    const preferred = providerModels.find((m) => preferredIds.includes(m.id))
+      ?? providerModels.find((m) => /默认|default/i.test(m.label))
+      ?? providerModels[0]
+    setModel(preferred.id)
+  }, [provider, kind, model])
 
   const models = (PROVIDERS.find((p) => p.id === provider)?.models ?? []).filter((m) => m.kind === kind)
 
