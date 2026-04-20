@@ -108,6 +108,11 @@ async function runDoubaoImage(req: Req): Promise<{ url: string; kind: 'image' }>
   if (req.seed != null && req.seed >= 0) body.seed = req.seed
   if (req.guidanceScale != null) body.guidance_scale = req.guidanceScale
   if (req.negativePrompt) body.negative_prompt = req.negativePrompt
+  // Reference images: Seedream supports image-to-image via `image` param (string or array)
+  const validRefs = (req.refImages ?? []).filter((u) => u && (u.startsWith('http') || u.startsWith('data:')))
+  if (validRefs.length > 0) {
+    body.image = validRefs.length === 1 ? validRefs[0] : validRefs.slice(0, 10)
+  }
   const res = await fetch('https://ark.cn-beijing.volces.com/api/v3/images/generations', {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },

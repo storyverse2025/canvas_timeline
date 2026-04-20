@@ -45,33 +45,29 @@ export interface GenerateArgs {
 }
 
 /**
- * Ensure the generation result lands on the right node:
- * - If the source node is already the correct kind → write back to it.
- * - Otherwise spawn a new node, connect source → new, return new ids.
+ * Always spawn a new downstream node for generation results.
+ * This preserves the source (reference/prompt) and creates a new node connected from it,
+ * so users can see the generation lineage on the canvas.
+ *
+ * Exception: text-input → text-output (agent capabilities) writes back to source.
  */
 function resolveTargetNode(args: GenerateArgs): { nodeId: string; itemId: string } {
   const targetKind = args.targetKind
-  if (!targetKind || targetKind === 'audio') return { nodeId: args.nodeId, itemId: args.itemId }
-
-  const srcItem = useCanvasItemStore.getState().items[args.itemId]
-  if (srcItem && srcItem.kind === targetKind) return { nodeId: args.nodeId, itemId: args.itemId }
+  // Audio generation always writes to source (no visual canvas node for audio yet)
+  if (targetKind === 'audio') return { nodeId: args.nodeId, itemId: args.itemId }
 
   // Spawn a new image/video node downstream of the source.
   const srcNode = useCanvasStore.getState().nodes.find((n) => n.id === args.nodeId)
   const basePos = srcNode?.position ?? { x: 0, y: 0 }
   const srcW = (srcNode?.style?.width as number) ?? srcNode?.width ?? 280
-  const srcH = (srcNode?.style?.height as number) ?? srcNode?.height ?? 200
   const newPos = { x: basePos.x + srcW + 60, y: basePos.y }
-  const size = targetKind === 'video' ? { width: 360, height: 200 } : { width: 280, height: 200 }
+  const isVideoTarget = targetKind === 'video'
+  const size = isVideoTarget ? { width: 360, height: 200 } : { width: 280, height: 200 }
 
-  // Canvas only has 'image' / 'text' node types today — render videos inside the image node
-  // (the ImageCanvasNode renders `<img>`; for MP4 URLs the browser shows a broken icon, so we
-  // route videos through image nodes visually for now, but the item itself is tagged `image`
-  // so the downstream workflow still works. Content URL is the video URL.)
-  const canvasKind: 'image' | 'text' = targetKind === 'video' ? 'image' : 'image'
+  const canvasKind: 'image' | 'text' = 'image'
   const newItemId = useCanvasItemStore.getState().addItem({
     kind: canvasKind,
-    name: targetKind === 'video' ? '生成视频' : '生成图片',
+    name: isVideoTarget ? '生成视频' : '生成图片',
     content: '',
   })
   const newNodeId = useCanvasStore.getState().addItemNode(newItemId, canvasKind, newPos, size)
