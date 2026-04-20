@@ -237,6 +237,8 @@ interface OptimizeReq {
   kind: 'image' | 'video';
   aspect?: string;
   duration?: number;
+  mode?: 'default' | 'seedance-universal';
+  refImages?: string[];
 }
 
 async function optimizePrompt(req: OptimizeReq): Promise<{ prompt: string }> {
@@ -244,8 +246,25 @@ async function optimizePrompt(req: OptimizeReq): Promise<{ prompt: string }> {
   if (!key) throw new Error('GEMINI_API_KEY not set')
   const durLine = req.kind === 'video' && req.duration ? `- Total duration: ~${req.duration}s` : ''
   const ratioLine = req.aspect ? `- Aspect ratio: ${req.aspect}` : ''
-  const sys = req.kind === 'video'
-    ? `You are a cinematography director. Rewrite the user's brief into a rich video generation prompt.
+  const refCount = req.refImages?.length ?? 0
+
+  let sys: string
+  if (req.mode === 'seedance-universal' && refCount > 0) {
+    // Seedance 2.0 universal multi-reference prompt with @图片N syntax
+    const refList = Array.from({ length: refCount }, (_, i) => `@图片 ${i + 1}`).join('、')
+    sys = `You are a Seedance 2.0 video prompt specialist for multi-reference generation.
+The user provides ${refCount} reference images (referenced as ${refList}) and a creative brief.
+Rewrite the brief into a Seedance 2.0 universal-reference prompt that:
+- Uses @图片 1, @图片 2, ... syntax to reference each image by number
+- Explicitly describes WHAT each referenced image contributes (character? scene? prop? style?)
+- Example format: "参考@图片 1 的男主角和@图片 2 的女主角，在@图片 3 的森林场景中漫步，镜头缓慢推进"
+- Includes camera movement and shot composition
+- Target duration: ~${req.duration ?? 5}s
+- Write in Chinese (Seedance handles Chinese natively)
+
+Return ONE cohesive prompt paragraph, no markdown, under 200 characters.`
+  } else if (req.kind === 'video') {
+    sys = `You are a cinematography director. Rewrite the user's brief into a rich video generation prompt.
 Break the ${req.duration ?? 5}-second clip into 1-3 shots. For each shot include:
 - Shot type (close-up / medium / wide / establishing)
 - Camera movement (dolly / pan / tilt / zoom / static / handheld)
@@ -254,7 +273,8 @@ Break the ${req.duration ?? 5}-second clip into 1-3 shots. For each shot include
 - Duration in seconds (sum must equal total)
 
 Return ONE cohesive prompt paragraph (no JSON, no numbered list, no markdown) in English, ending with --ratio ${req.aspect ?? '16:9'}. Keep it under 180 words.`
-    : `You are an image art director. Rewrite the user's brief into a rich still image prompt with:
+  } else {
+    sys = `You are an image art director. Rewrite the user's brief into a rich still image prompt with:
 - Subject & action
 - Composition and framing (${req.aspect ?? '16:9'})
 - Lens choice (e.g. 35mm, 85mm, wide angle)
@@ -262,6 +282,7 @@ Return ONE cohesive prompt paragraph (no JSON, no numbered list, no markdown) in
 - Mood & style references
 
 Return ONE cohesive prompt paragraph in English, no markdown, under 120 words.`
+  }
 
   const userMsg = [
     `Brief: ${req.prompt}`,

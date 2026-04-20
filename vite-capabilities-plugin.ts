@@ -445,6 +445,69 @@ function filterValidRefs(urls: string[]): string[] {
   return urls.filter((u) => u && u.length > 10 && (/^https?:\/\//i.test(u) || u.startsWith('data:')))
 }
 
+// ─── Seedance video generation type helpers (inlined for Node server) ──
+// Duplicated from src/lib/capabilities/video-types.ts because Vite plugins
+// run in Node and can't resolve the @/ path alias.
+
+type VideoGenType =
+  | 'text-to-video'
+  | 'image-to-video-first'
+  | 'image-to-video-first-last'
+  | 'reference-to-video'
+  | 'universal-to-video'
+
+interface VideoInputs {
+  images: string[]
+  videos: string[]
+  audios: string[]
+  mode?: 'first-last' | 'reference'
+}
+
+function detectVideoType(inputs: VideoInputs): VideoGenType {
+  if (inputs.videos.length > 0 || inputs.audios.length > 0) return 'universal-to-video'
+  const n = inputs.images.length
+  if (n === 0) return 'text-to-video'
+  if (n === 1) return 'image-to-video-first'
+  if (n === 2 && inputs.mode !== 'reference') return 'image-to-video-first-last'
+  return 'reference-to-video'
+}
+
+function buildContentParts(
+  prompt: string,
+  inputs: VideoInputs,
+  type: VideoGenType,
+): Array<Record<string, unknown>> {
+  const parts: Array<Record<string, unknown>> = [{ type: 'text', text: prompt || 'cinematic video' }]
+  switch (type) {
+    case 'text-to-video':
+      break
+    case 'image-to-video-first':
+      parts.push({ type: 'image_url', image_url: { url: inputs.images[0] }, role: 'first_frame' })
+      break
+    case 'image-to-video-first-last':
+      parts.push({ type: 'image_url', image_url: { url: inputs.images[0] }, role: 'first_frame' })
+      parts.push({ type: 'image_url', image_url: { url: inputs.images[1] }, role: 'last_frame' })
+      break
+    case 'reference-to-video':
+      for (const url of inputs.images.slice(0, 9)) {
+        parts.push({ type: 'image_url', image_url: { url }, role: 'reference_image' })
+      }
+      break
+    case 'universal-to-video':
+      for (const url of inputs.images.slice(0, 9)) {
+        parts.push({ type: 'image_url', image_url: { url }, role: 'reference_image' })
+      }
+      for (const url of inputs.videos.slice(0, 3)) {
+        parts.push({ type: 'video_url', video_url: { url }, role: 'reference_video' })
+      }
+      for (const url of inputs.audios.slice(0, 3)) {
+        parts.push({ type: 'audio_url', audio_url: { url }, role: 'reference_audio' })
+      }
+      break
+  }
+  return parts
+}
+
 /** Convert a local /uploads/ path to a file:// readable buffer, or fetch remote URL as base64 data URL */
 async function resolveImageToDataUrl(imageUrl: string): Promise<string> {
   if (imageUrl.startsWith('data:')) return imageUrl
@@ -465,37 +528,30 @@ async function resolveImageToDataUrl(imageUrl: string): Promise<string> {
   return `data:${contentType};base64,${buf.toString('base64')}`
 }
 
-async function textToVideo(req: CapReq): Promise<CapRes> {
-  const text = getText(req.inputs)
-  const refs = filterValidRefs(getImages(req.inputs))
-  if (!text && !refs.length) throw new Error('需要输入文本或参考图')
-  const duration = Number(req.params?.duration ?? 5)
-  const aspect = (req.params?.aspect as string) || '16:9'
-  const resolution = (req.params?.resolution as string) || '480p'
+/** Shared Seedance task submission — handles content parts + polling. */
+async function submitSeedanceTask(opts: {
+  contentParts: Array<Record<string, unknown>>
+  model?: string
+  resolution?: string
+  aspect?: string
+  duration?: number
+  generateAudio?: boolean
+  seed?: number
+}): Promise<string> {
   const key = process.env.ARK_API_KEY
   if (!key) throw new Error('ARK_API_KEY not set')
   const headers = { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' }
-  const contentParts: Array<Record<string, unknown>> = [
-    { type: 'text', text: text || 'cinematic video' },
-  ]
-  // Seedance 2.0: multi-image reference (up to 9) with role: "reference_image"
-  // Single image with role: "first_frame" for first-frame mode
-  if (refs.length === 1) {
-    contentParts.push({ type: 'image_url', image_url: { url: refs[0] }, role: 'first_frame' })
-  } else if (refs.length > 1) {
-    for (const u of refs.slice(0, 9)) {
-      contentParts.push({ type: 'image_url', image_url: { url: u }, role: 'reference_image' })
-    }
-  }
-  // Use new request body parameters (not --flags in prompt)
+
   const body: Record<string, unknown> = {
-    model: 'doubao-seedance-2-0-fast-260128',
-    content: contentParts,
-    resolution,
-    ratio: aspect,
-    duration: Math.max(4, Math.min(15, duration)),
-    generate_audio: true,
+    model: opts.model ?? 'doubao-seedance-2-0-fast-260128',
+    content: opts.contentParts,
+    resolution: opts.resolution ?? '480p',
+    ratio: opts.aspect ?? '16:9',
+    duration: Math.max(4, Math.min(15, opts.duration ?? 5)),
+    generate_audio: opts.generateAudio ?? true,
   }
+  if (opts.seed != null && opts.seed >= 0) body.seed = opts.seed
+
   const createRes = await fetch('https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks', {
     method: 'POST', headers,
     body: JSON.stringify(body),
@@ -503,7 +559,8 @@ async function textToVideo(req: CapReq): Promise<CapRes> {
   if (!createRes.ok) throw new Error(`Doubao create ${createRes.status}: ${await createRes.text()}`)
   const taskId = ((await createRes.json()) as { id?: string }).id
   if (!taskId) throw new Error('Doubao: no task id')
-  const url = await poll<string>(async () => {
+
+  return poll<string>(async () => {
     const r = await fetch(`https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/${taskId}`, { headers })
     if (!r.ok) return { done: false, error: `status ${r.status}` }
     const d = (await r.json()) as Record<string, unknown>
@@ -514,6 +571,50 @@ async function textToVideo(req: CapReq): Promise<CapRes> {
     if (status === 'failed' || status === 'cancelled') return { done: false, error: `task ${status}` }
     return { done: false }
   }, { intervalMs: 4000, timeoutMs: 6 * 60 * 1000 })
+}
+
+async function textToVideo(req: CapReq): Promise<CapRes> {
+  const text = getText(req.inputs)
+  const images = filterValidRefs(getImages(req.inputs))
+  if (!text && !images.length) throw new Error('需要输入文本或参考图')
+
+  const mode = (req.params?.mode as 'first-last' | 'reference' | undefined)
+  const type = detectVideoType({ images, videos: [], audios: [], mode })
+  const contentParts = buildContentParts(text, { images, videos: [], audios: [], mode }, type)
+
+  const url = await submitSeedanceTask({
+    contentParts,
+    model: (req.params?.model as string) || 'doubao-seedance-2-0-fast-260128',
+    resolution: (req.params?.resolution as string) || '480p',
+    aspect: (req.params?.aspect as string) || '16:9',
+    duration: Number(req.params?.duration ?? 5),
+    generateAudio: req.params?.generate_audio !== false,
+    seed: req.params?.seed != null ? Number(req.params.seed) : undefined,
+  })
+  return { outputs: [{ kind: 'video', url }] }
+}
+
+async function universalToVideo(req: CapReq): Promise<CapRes> {
+  const text = getText(req.inputs)
+  const images = filterValidRefs(getImages(req.inputs))
+  const videos = filterValidRefs(getVideos(req.inputs))
+  const audios = filterValidRefs(getAudios(req.inputs))
+
+  if (images.length === 0 && videos.length === 0) {
+    throw new Error('全能生视频至少需要 1 张图片或 1 个视频')
+  }
+
+  const contentParts = buildContentParts(text, { images, videos, audios }, 'universal-to-video')
+
+  const url = await submitSeedanceTask({
+    contentParts,
+    model: (req.params?.model as string) || 'doubao-seedance-2-0-fast-260128',
+    resolution: (req.params?.resolution as string) || '480p',
+    aspect: (req.params?.aspect as string) || '16:9',
+    duration: Number(req.params?.duration ?? 5),
+    generateAudio: req.params?.generate_audio !== false,
+    seed: req.params?.seed != null ? Number(req.params.seed) : undefined,
+  })
   return { outputs: [{ kind: 'video', url }] }
 }
 
@@ -521,27 +622,29 @@ async function firstLastFrame(req: CapReq): Promise<CapRes> {
   const images = getImages(req.inputs)
   if (images.length < 1) throw new Error('需要至少 1 张图片作为首帧')
   const text = getText(req.inputs) || 'smooth transition between frames'
+  // Force first-last mode: 1 image = first frame, 2 images = first + last frame
   return textToVideo({
     capability: 'text-to-video',
     inputs: [
       { kind: 'text', text },
       ...images.map((url) => ({ kind: 'image' as const, url })),
     ],
-    params: req.params,
+    params: { ...req.params, mode: 'first-last' },
   })
 }
 
 async function multiRefVideo(req: CapReq): Promise<CapRes> {
   const images = getImages(req.inputs)
   const text = getText(req.inputs)
-  if (images.length < 1) throw new Error('需要至少 1 张参考图')
+  if (images.length < 2) throw new Error('需要至少 2 张参考图（单张请用文生视频的首帧模式）')
+  // Force reference mode for 2+ images (otherwise 2 images = first+last frame)
   return textToVideo({
     capability: 'text-to-video',
     inputs: [
       { kind: 'text', text: text || 'create a video combining these reference images' },
       ...images.map((url) => ({ kind: 'image' as const, url })),
     ],
-    params: req.params,
+    params: { ...req.params, mode: 'reference' },
   })
 }
 
@@ -751,6 +854,7 @@ const handlers: Record<string, (req: CapReq) => Promise<CapRes>> = {
   'text-to-video': textToVideo,
   'first-last-frame': firstLastFrame,
   'multi-ref-video': multiRefVideo,
+  'universal-video': universalToVideo,
   'upscale-video': upscaleVideo,
   'lip-sync': lipSync,
   'motion-imitation': motionImitation,

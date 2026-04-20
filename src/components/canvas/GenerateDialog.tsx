@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { X, Sparkles, Image as ImageIcon, Video, Link2, Wand2, Loader2, Plus } from 'lucide-react'
+import { X, Sparkles, Image as ImageIcon, Video, Link2, Wand2, Loader2, Plus, FolderOpen } from 'lucide-react'
+import { AssetPickerDialog } from './AssetPickerDialog'
 import { toast } from 'sonner'
 import { PROVIDERS } from '@/lib/providers/registry'
 import { fetchAvailability, optimizePrompt, type ProviderAvailability } from '@/lib/providers/client'
@@ -32,19 +33,34 @@ export function GenerateDialog({ initialPrompt = '', upstreamImages = [], defaul
   const [refImages, setRefImages] = useState<string[]>(upstreamImages)
 
   const addRefFileRef = useRef<HTMLInputElement>(null)
+  const [pickerOpen, setPickerOpen] = useState(false)
   const removeRefImage = (idx: number) => {
     setRefImages((prev) => prev.filter((_, i) => i !== idx))
   }
   const addRefFromFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]; if (!f) return
-    const r = new FileReader()
-    r.onload = () => { if (typeof r.result === 'string') setRefImages((prev) => [...prev, r.result as string]) }
-    r.readAsDataURL(f)
+    const reader = new FileReader()
+    reader.onload = async () => {
+      if (typeof reader.result !== 'string') return
+      // Upload to server to avoid localStorage bloat
+      try {
+        const res = await fetch('/uploads/save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dataUrl: reader.result, filename: f.name }),
+        })
+        const data = await res.json() as { url?: string }
+        if (data.url) setRefImages((prev) => [...prev, data.url!])
+        else setRefImages((prev) => [...prev, reader.result as string])
+      } catch {
+        setRefImages((prev) => [...prev, reader.result as string])
+      }
+    }
+    reader.readAsDataURL(f)
     e.target.value = ''
   }
-  const addRefFromUrl = () => {
-    const url = window.prompt('输入参考图 URL')
-    if (url?.trim()) setRefImages((prev) => [...prev, url.trim()])
+  const handlePickAssets = (urls: string[]) => {
+    setRefImages((prev) => Array.from(new Set([...prev, ...urls])))
   }
   const [provider, setProvider] = useState<ProviderId>('doubao')
   const [model, setModel] = useState<string>('')
@@ -105,6 +121,7 @@ export function GenerateDialog({ initialPrompt = '', upstreamImages = [], defaul
   const disabled = !prompt.trim() || !provider || !model
 
   return (
+    <>
     <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onMouseDown={onCancel}>
       <div
         className="w-[520px] max-w-full bg-card border border-border rounded-lg shadow-xl p-4 flex flex-col gap-3"
@@ -228,15 +245,22 @@ export function GenerateDialog({ initialPrompt = '', upstreamImages = [], defaul
               >×</button>
             </div>
           ))}
-          <div className="shrink-0 h-14 w-14 rounded border border-dashed border-border flex items-center justify-center">
-            <button
-              className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
-              onClick={() => addRefFileRef.current?.click()}
-              title="上传参考图"
-            >
-              <Plus className="w-4 h-4" />
-            </button>
-          </div>
+          <button
+            className="shrink-0 h-14 w-14 rounded border border-dashed border-border flex flex-col items-center justify-center hover:bg-accent/30"
+            onClick={() => setPickerOpen(true)}
+            title="从画布资产选择"
+          >
+            <FolderOpen className="w-4 h-4 text-muted-foreground" />
+            <span className="text-[8px] text-muted-foreground">画布</span>
+          </button>
+          <button
+            className="shrink-0 h-14 w-14 rounded border border-dashed border-border flex flex-col items-center justify-center hover:bg-accent/30"
+            onClick={() => addRefFileRef.current?.click()}
+            title="上传本地图片"
+          >
+            <Plus className="w-4 h-4 text-muted-foreground" />
+            <span className="text-[8px] text-muted-foreground">上传</span>
+          </button>
           <input ref={addRefFileRef} type="file" accept="image/*" className="hidden" onChange={addRefFromFile} />
         </div>
 
@@ -253,5 +277,7 @@ export function GenerateDialog({ initialPrompt = '', upstreamImages = [], defaul
         </div>
       </div>
     </div>
+    {pickerOpen && <AssetPickerDialog onClose={() => setPickerOpen(false)} onSelect={handlePickAssets} />}
+    </>
   )
 }

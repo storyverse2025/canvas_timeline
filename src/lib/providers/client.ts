@@ -36,6 +36,9 @@ export async function optimizePrompt(args: {
   kind: 'image' | 'video';
   aspect?: string;
   duration?: number;
+  /** "seedance-universal" = generate @图片1/@图片2 style prompt for Seedance multi-ref video */
+  mode?: 'default' | 'seedance-universal';
+  refImages?: string[];
 }): Promise<{ prompt: string }> {
   const res = await fetch('/providers/optimize', {
     method: 'POST',
