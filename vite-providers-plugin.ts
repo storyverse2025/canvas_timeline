@@ -8,6 +8,14 @@ interface Req {
   refImages?: string[];
   aspect?: string;
   duration?: number;
+  negativePrompt?: string;
+  seed?: number;
+  guidanceScale?: number;
+  resolution?: string;
+  generateAudio?: boolean;
+  enhancePrompt?: boolean;
+  numImages?: number;
+  fps?: number;
 }
 
 async function readJson(req: IncomingMessage): Promise<Req> {
@@ -39,40 +47,76 @@ async function poll<T>(
 }
 
 // ─── FAL ──────────────────────────────────────────────────────────────
-async function runFal(req: Req): Promise<{ url: string; kind: 'image' | 'video' }> {
+async function runFal(req: Req): Promise<{ url: string; kind: 'image' | 'video'; urls?: string[] }> {
   const key = process.env.FAL_KEY
   if (!key) throw new Error('FAL_KEY not set')
+  const isVideo = /video|wan|kling|minimax|hunyuan/i.test(req.model)
+  const body: Record<string, unknown> = { prompt: req.prompt }
+  if (isVideo) {
+    // Video model params
+    if (req.refImages?.length) body.image_url = req.refImages[0]
+    if (req.duration) body.duration = `${req.duration}s`
+    if (req.aspect) body.aspect_ratio = req.aspect
+    if (req.negativePrompt) body.negative_prompt = req.negativePrompt
+    if (req.seed != null) body.seed = req.seed
+  } else {
+    // Image model params
+    body.image_size = req.aspect === '1:1' ? 'square_hd' : req.aspect === '9:16' ? 'portrait_hd' : 'landscape_16_9'
+    body.num_images = req.numImages ?? 1
+    if (req.refImages?.length) body.image_url = req.refImages[0]
+    if (req.negativePrompt) body.negative_prompt = req.negativePrompt
+    if (req.seed != null) body.seed = req.seed
+    if (req.guidanceScale != null) body.guidance_scale = req.guidanceScale
+  }
   const res = await fetch(`https://fal.run/${req.model}`, {
     method: 'POST',
     headers: { 'Authorization': `Key ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      prompt: req.prompt,
-      image_size: req.aspect === '1:1' ? 'square_hd' : 'landscape_16_9',
-      num_images: 1,
-      ...(req.refImages?.length ? { image_url: req.refImages[0] } : {}),
-    }),
+    body: JSON.stringify(body),
   })
   if (!res.ok) throw new Error(`FAL ${res.status}: ${await res.text()}`)
   const data = (await res.json()) as { images?: { url: string }[]; video?: { url: string } }
-  const url = data.images?.[0]?.url ?? data.video?.url
-  if (!url) throw new Error('FAL: no media in response')
-  return { url, kind: data.video ? 'video' : 'image' }
+  if (data.video?.url) {
+    return { url: data.video.url, kind: 'video' }
+  }
+  const urls = data.images?.map((i) => i.url) ?? []
+  if (urls.length === 0) throw new Error('FAL: no media in response')
+  return { url: urls[0], kind: 'image', urls: urls.length > 1 ? urls : undefined }
 }
 
 // ─── Doubao (火山方舟) ─────────────────────────────────────────────────
 async function runDoubaoImage(req: Req): Promise<{ url: string; kind: 'image' }> {
   const key = process.env.ARK_API_KEY
   if (!key) throw new Error('ARK_API_KEY not set')
+  // Seedream 5.0+ requires ≥ 3,686,400 pixels (2K). Older models accept 1K.
+  const needs2K = /seedream-[5-9]|seedream-\d{2,}/i.test(req.model)
+  const size2K: Record<string, string> = {
+    '1:1': '2048x2048', '16:9': '2560x1440', '9:16': '1440x2560',
+    '4:3': '2240x1680', '3:4': '1680x2240', '21:9': '3024x1296',
+  }
+  const size1K: Record<string, string> = {
+    '1:1': '1024x1024', '16:9': '1920x1088', '9:16': '1088x1920',
+    '4:3': '1408x1056', '3:4': '1056x1408', '21:9': '2016x864',
+  }
+  const sizeMap = needs2K ? size2K : size1K
+  const body: Record<string, unknown> = {
+    model: req.model,
+    prompt: req.prompt,
+    size: sizeMap[req.aspect ?? '16:9'] ?? (needs2K ? '2560x1440' : '1920x1088'),
+    response_format: 'url',
+    n: req.numImages ?? 1,
+  }
+  if (req.seed != null && req.seed >= 0) body.seed = req.seed
+  if (req.guidanceScale != null) body.guidance_scale = req.guidanceScale
+  if (req.negativePrompt) body.negative_prompt = req.negativePrompt
+  // Reference images: Seedream supports image-to-image via `image` param (string or array)
+  const validRefs = (req.refImages ?? []).filter((u) => u && (u.startsWith('http') || u.startsWith('data:')))
+  if (validRefs.length > 0) {
+    body.image = validRefs.length === 1 ? validRefs[0] : validRefs.slice(0, 10)
+  }
   const res = await fetch('https://ark.cn-beijing.volces.com/api/v3/images/generations', {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: req.model,
-      prompt: req.prompt,
-      size: req.aspect === '1:1' ? '1024x1024' : '1920x1088',
-      response_format: 'url',
-      n: 1,
-    }),
+    body: JSON.stringify(body),
   })
   if (!res.ok) throw new Error(`Doubao ${res.status}: ${await res.text()}`)
   const data = (await res.json()) as { data?: { url: string }[] }
@@ -102,11 +146,12 @@ async function runDoubaoVideo(req: Req): Promise<{ url: string; kind: 'video' }>
   const body: Record<string, unknown> = {
     model: req.model,
     content: contentParts,
-    resolution: '480p',
+    resolution: req.resolution ?? '480p',
     ratio: req.aspect ?? '16:9',
     duration: Math.max(4, Math.min(15, Math.round(req.duration ?? 5))),
-    generate_audio: true,
+    generate_audio: req.generateAudio ?? true,
   }
+  if (req.seed != null && req.seed >= 0) body.seed = req.seed
   const createRes = await fetch('https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks', {
     method: 'POST',
     headers,
