@@ -87,14 +87,21 @@ async function runFal(req: Req): Promise<{ url: string; kind: 'image' | 'video';
 async function runDoubaoImage(req: Req): Promise<{ url: string; kind: 'image' }> {
   const key = process.env.ARK_API_KEY
   if (!key) throw new Error('ARK_API_KEY not set')
-  const sizeMap: Record<string, string> = {
+  // Seedream 5.0+ requires ≥ 3,686,400 pixels (2K). Older models accept 1K.
+  const needs2K = /seedream-[5-9]|seedream-\d{2,}/i.test(req.model)
+  const size2K: Record<string, string> = {
+    '1:1': '2048x2048', '16:9': '2560x1440', '9:16': '1440x2560',
+    '4:3': '2240x1680', '3:4': '1680x2240', '21:9': '3024x1296',
+  }
+  const size1K: Record<string, string> = {
     '1:1': '1024x1024', '16:9': '1920x1088', '9:16': '1088x1920',
     '4:3': '1408x1056', '3:4': '1056x1408', '21:9': '2016x864',
   }
+  const sizeMap = needs2K ? size2K : size1K
   const body: Record<string, unknown> = {
     model: req.model,
     prompt: req.prompt,
-    size: sizeMap[req.aspect ?? '16:9'] ?? '1920x1088',
+    size: sizeMap[req.aspect ?? '16:9'] ?? (needs2K ? '2560x1440' : '1920x1088'),
     response_format: 'url',
     n: req.numImages ?? 1,
   }
