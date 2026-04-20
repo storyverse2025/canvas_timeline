@@ -445,6 +445,69 @@ function filterValidRefs(urls: string[]): string[] {
   return urls.filter((u) => u && u.length > 10 && (/^https?:\/\//i.test(u) || u.startsWith('data:')))
 }
 
+// ─── Seedance video generation type helpers (inlined for Node server) ──
+// Duplicated from src/lib/capabilities/video-types.ts because Vite plugins
+// run in Node and can't resolve the @/ path alias.
+
+type VideoGenType =
+  | 'text-to-video'
+  | 'image-to-video-first'
+  | 'image-to-video-first-last'
+  | 'reference-to-video'
+  | 'universal-to-video'
+
+interface VideoInputs {
+  images: string[]
+  videos: string[]
+  audios: string[]
+  mode?: 'first-last' | 'reference'
+}
+
+function detectVideoType(inputs: VideoInputs): VideoGenType {
+  if (inputs.videos.length > 0 || inputs.audios.length > 0) return 'universal-to-video'
+  const n = inputs.images.length
+  if (n === 0) return 'text-to-video'
+  if (n === 1) return 'image-to-video-first'
+  if (n === 2 && inputs.mode !== 'reference') return 'image-to-video-first-last'
+  return 'reference-to-video'
+}
+
+function buildContentParts(
+  prompt: string,
+  inputs: VideoInputs,
+  type: VideoGenType,
+): Array<Record<string, unknown>> {
+  const parts: Array<Record<string, unknown>> = [{ type: 'text', text: prompt || 'cinematic video' }]
+  switch (type) {
+    case 'text-to-video':
+      break
+    case 'image-to-video-first':
+      parts.push({ type: 'image_url', image_url: { url: inputs.images[0] }, role: 'first_frame' })
+      break
+    case 'image-to-video-first-last':
+      parts.push({ type: 'image_url', image_url: { url: inputs.images[0] }, role: 'first_frame' })
+      parts.push({ type: 'image_url', image_url: { url: inputs.images[1] }, role: 'last_frame' })
+      break
+    case 'reference-to-video':
+      for (const url of inputs.images.slice(0, 9)) {
+        parts.push({ type: 'image_url', image_url: { url }, role: 'reference_image' })
+      }
+      break
+    case 'universal-to-video':
+      for (const url of inputs.images.slice(0, 9)) {
+        parts.push({ type: 'image_url', image_url: { url }, role: 'reference_image' })
+      }
+      for (const url of inputs.videos.slice(0, 3)) {
+        parts.push({ type: 'video_url', video_url: { url }, role: 'reference_video' })
+      }
+      for (const url of inputs.audios.slice(0, 3)) {
+        parts.push({ type: 'audio_url', audio_url: { url }, role: 'reference_audio' })
+      }
+      break
+  }
+  return parts
+}
+
 /** Convert a local /uploads/ path to a file:// readable buffer, or fetch remote URL as base64 data URL */
 async function resolveImageToDataUrl(imageUrl: string): Promise<string> {
   if (imageUrl.startsWith('data:')) return imageUrl
@@ -511,9 +574,8 @@ async function submitSeedanceTask(opts: {
 }
 
 async function textToVideo(req: CapReq): Promise<CapRes> {
-  const { detectVideoType, buildContentParts, filterAccessible } = await import('@/lib/capabilities/video-types')
   const text = getText(req.inputs)
-  const images = filterAccessible(getImages(req.inputs))
+  const images = filterValidRefs(getImages(req.inputs))
   if (!text && !images.length) throw new Error('需要输入文本或参考图')
 
   const mode = (req.params?.mode as 'first-last' | 'reference' | undefined)
@@ -533,11 +595,10 @@ async function textToVideo(req: CapReq): Promise<CapRes> {
 }
 
 async function universalToVideo(req: CapReq): Promise<CapRes> {
-  const { buildContentParts, filterAccessible } = await import('@/lib/capabilities/video-types')
   const text = getText(req.inputs)
-  const images = filterAccessible(getImages(req.inputs))
-  const videos = filterAccessible(getVideos(req.inputs))
-  const audios = filterAccessible(getAudios(req.inputs))
+  const images = filterValidRefs(getImages(req.inputs))
+  const videos = filterValidRefs(getVideos(req.inputs))
+  const audios = filterValidRefs(getAudios(req.inputs))
 
   if (images.length === 0 && videos.length === 0) {
     throw new Error('全能生视频至少需要 1 张图片或 1 个视频')
