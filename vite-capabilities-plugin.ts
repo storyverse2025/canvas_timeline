@@ -195,11 +195,11 @@ async function runFluxImage(prompt: string, aspect: string, numImages: number, r
   const key = process.env.FAL_KEY
   if (!key) throw new Error('FAL_KEY not set')
   const sizeMap: Record<string, string> = {
-    '1:1': 'square_hd', '9:16': 'portrait_hd', '16:9': 'landscape_hd', '4:3': 'landscape_4_3',
+    '1:1': 'square_hd', '9:16': 'portrait_16_9', '16:9': 'landscape_16_9', '4:3': 'landscape_4_3',
   }
   const body: Record<string, unknown> = {
     prompt,
-    image_size: sizeMap[aspect] ?? 'landscape_hd',
+    image_size: sizeMap[aspect] ?? 'landscape_16_9',
     num_images: numImages,
   }
   if (refImage) body.image_url = refImage
