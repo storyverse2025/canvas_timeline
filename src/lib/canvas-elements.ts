@@ -226,10 +226,12 @@ export async function ensureElements(
     for (const char of extraction.characters.slice(0, 2)) { // max 2 characters
       onStatus(`正在生成角色: ${char.name}…`)
       try {
-        const prompt = char.image_prompt || fillPrompt('characterImageGen', {
+        const basePrompt = char.image_prompt || fillPrompt('characterImageGen', {
           characterDescription: `${char.name}, ${char.gender}, ${char.appearance}, wearing ${char.clothing}, ${char.expression}`,
           artStyle,
         })
+        // Always ensure artStyle is in the prompt (AI-generated image_prompt may omit it)
+        const prompt = char.image_prompt ? `${basePrompt}. ${artStyle}` : basePrompt
         console.log('[ensureElements] Character prompt:', prompt)
         const r = await runCapability({
           capability: 'text-to-image',
@@ -260,10 +262,12 @@ export async function ensureElements(
     for (const scene of extraction.scenes.slice(0, 2)) { // max 2 scenes
       onStatus(`正在生成场景: ${scene.name}…`)
       try {
-        const prompt = scene.image_prompt || fillPrompt('sceneImageGen', {
+        const basePrompt = scene.image_prompt || fillPrompt('sceneImageGen', {
           sceneDescription: `${scene.name}, ${scene.location}, ${scene.lighting}, ${scene.mood}`,
           artStyle,
         })
+        // Always ensure artStyle is in the prompt (AI-generated image_prompt may omit it)
+        const prompt = scene.image_prompt ? `${basePrompt}. ${artStyle}` : basePrompt
         console.log('[ensureElements] Scene prompt:', prompt)
         const r = await runCapability({
           capability: 'text-to-image',
