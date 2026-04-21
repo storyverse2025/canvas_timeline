@@ -48,7 +48,6 @@ export interface GenerateArgs {
   guidanceScale?: number;
   resolution?: string;
   generateAudio?: boolean;
-  enhancePrompt?: boolean;
   numImages?: number;
 }
 
@@ -146,7 +145,6 @@ export function useLibtvGenerate() {
         guidanceScale: args.guidanceScale,
         resolution: args.resolution,
         generateAudio: args.generateAudio,
-        enhancePrompt: args.enhancePrompt,
         numImages: args.numImages,
       })
       updateItem(target.itemId, {

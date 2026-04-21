@@ -180,7 +180,6 @@ function GenerateDialogMount() {
           guidanceScale: r.guidanceScale,
           resolution: r.resolution,
           generateAudio: r.generateAudio,
-          enhancePrompt: r.enhancePrompt,
           numImages: r.numImages,
         })
       }}

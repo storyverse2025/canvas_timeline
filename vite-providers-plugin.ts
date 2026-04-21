@@ -13,7 +13,6 @@ interface Req {
   guidanceScale?: number;
   resolution?: string;
   generateAudio?: boolean;
-  enhancePrompt?: boolean;
   numImages?: number;
   fps?: number;
 }

@@ -20,7 +20,6 @@ export interface GenerateDialogResult {
   guidanceScale?: number;
   resolution?: string;
   generateAudio?: boolean;
-  enhancePrompt?: boolean;
   numImages?: number;
 }
 
@@ -83,7 +82,6 @@ export function GenerateDialog({ initialPrompt = '', upstreamImages = [], defaul
   const [guidanceScale, setGuidanceScale] = useState<number>(7.5)
   const [resolution, setResolution] = useState<string>('720p')
   const [generateAudio, setGenerateAudio] = useState(true)
-  const [enhancePrompt, setEnhancePrompt] = useState(false)
   const [numImages, setNumImages] = useState<number>(1)
 
   const runOptimize = async () => {
@@ -347,28 +345,18 @@ export function GenerateDialog({ initialPrompt = '', upstreamImages = [], defaul
                   </label>
                 </div>
               )}
-              <div className="flex items-center gap-4">
-                <label className="text-[11px] flex items-center gap-1.5 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={enhancePrompt}
-                    onChange={(e) => setEnhancePrompt(e.target.checked)}
-                  />
-                  自动增强提示词 (Gemini)
-                </label>
-                {kind === 'image' && (
-                  <div className="flex items-center gap-1.5">
-                    <label className="text-[10px] text-muted-foreground uppercase">生成数量</label>
-                    <select
-                      className="text-xs bg-background border border-border rounded px-2 py-1 outline-none"
-                      value={numImages}
-                      onChange={(e) => setNumImages(Number(e.target.value))}
-                    >
-                      {[1, 4].map((n) => <option key={n} value={n}>{n}</option>)}
-                    </select>
-                  </div>
-                )}
-              </div>
+              {kind === 'image' && (
+                <div className="flex items-center gap-1.5">
+                  <label className="text-[10px] text-muted-foreground uppercase">生成数量</label>
+                  <select
+                    className="text-xs bg-background border border-border rounded px-2 py-1 outline-none"
+                    value={numImages}
+                    onChange={(e) => setNumImages(Number(e.target.value))}
+                  >
+                    {[1, 4].map((n) => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -385,7 +373,6 @@ export function GenerateDialog({ initialPrompt = '', upstreamImages = [], defaul
               guidanceScale,
               resolution: kind === 'video' ? resolution : undefined,
               generateAudio: kind === 'video' ? generateAudio : undefined,
-              enhancePrompt: enhancePrompt || undefined,
               numImages: kind === 'image' ? numImages : undefined,
             })}
           >
