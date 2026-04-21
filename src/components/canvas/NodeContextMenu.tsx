@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   Edit3, Copy, Trash2, Replace, Wand2,
-  ChevronRight, Film, Mic, Bot, Palette,
+  ChevronRight, Film, Mic, Palette,
   Scissors, ZoomIn, Expand, CropIcon, Sparkles,
   Eye, Clapperboard, ArrowUpRight, Layers, Move3d,
   SplitSquareHorizontal, PaintBucket, Volume2,
@@ -29,14 +29,12 @@ interface Props {
 }
 
 const CATEGORY_ICONS: Record<string, React.ElementType> = {
-  agent: Bot,
   image: Palette,
   video: Film,
   audio: Mic,
 }
 
 const CATEGORY_LABELS: Record<string, string> = {
-  agent: '短片Agent',
   image: '图片能力',
   video: '视频能力',
   audio: '音频能力',
@@ -96,8 +94,10 @@ export function NodeContextMenu({ menu, onClose }: Props) {
   const isText = node.type === 'text'
   const nodeType = node.type ?? 'image'
 
-  const caps = getCapabilitiesForNodeType(nodeType)
-  const categories = ['agent', 'image', 'video', 'audio'].filter(
+  // Agent capabilities belong to 导演助手 / AI Agent flows (table editing, asset
+  // extraction), not to per-node right-click actions.
+  const caps = getCapabilitiesForNodeType(nodeType).filter((c) => c.category !== 'agent')
+  const categories = ['image', 'video', 'audio'].filter(
     (cat) => caps.some((c) => c.category === cat)
   )
 
