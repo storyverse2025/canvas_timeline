@@ -80,9 +80,6 @@ export const CAPABILITIES: CapabilitySpec[] = [
         { value: '16:9', label: '16:9' }, { value: '9:16', label: '9:16' },
         { value: '1:1', label: '1:1' }, { value: '4:3', label: '4:3' },
       ]},
-      { key: 'enhance_prompt', label: '增强提示词', type: 'select', default: 'false', options: [
-        { value: 'false', label: '关' }, { value: 'true', label: '开' },
-      ]},
     ],
   },
   {
@@ -97,9 +94,6 @@ export const CAPABILITIES: CapabilitySpec[] = [
       { key: 'aspect', label: '比例', type: 'select', default: '16:9', options: [
         { value: '16:9', label: '16:9' }, { value: '9:16', label: '9:16' },
         { value: '1:1', label: '1:1' }, { value: '4:3', label: '4:3' },
-      ]},
-      { key: 'enhance_prompt', label: '增强提示词', type: 'select', default: 'false', options: [
-        { value: 'false', label: '关' }, { value: 'true', label: '开' },
       ]},
     ],
   },
@@ -234,9 +228,6 @@ export const CAPABILITIES: CapabilitySpec[] = [
       ]},
       { key: 'aspect', label: '比例', type: 'select', default: '16:9', options: [
         { value: '16:9', label: '16:9' }, { value: '9:16', label: '9:16' }, { value: '1:1', label: '1:1' },
-      ]},
-      { key: 'enhance_prompt', label: '增强提示词', type: 'select', default: 'false', options: [
-        { value: 'false', label: '关' }, { value: 'true', label: '开' },
       ]},
     ],
   },

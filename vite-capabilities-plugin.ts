@@ -242,21 +242,11 @@ async function runFluxImage(prompt: string, aspect: string, numImages: number, r
   return urls
 }
 
-async function resolvePrompt(prompt: string, enhance: boolean, kind: 'image' | 'video'): Promise<string> {
-  if (!enhance || !prompt.trim()) return prompt
-  return geminiText(
-    `You are a professional ${kind} generation prompt engineer. Expand the user's prompt with vivid details: composition, lighting, style, mood, and technical quality descriptors. Output only the enhanced English prompt, 80-150 words, no commentary.`,
-    prompt,
-  )
-}
-
 async function textToImage(req: CapReq): Promise<CapRes> {
   const text = getText(req.inputs)
   const refs = getImages(req.inputs)
   const aspect = (req.params?.aspect as string) || '16:9'
-  const enhance = req.params?.enhance_prompt === 'true' || req.params?.enhance_prompt === true
-  const prompt = await resolvePrompt(text || 'a beautiful scene', enhance, 'image')
-  const urls = await runFluxImage(prompt, aspect, 1, refs[0])
+  const urls = await runFluxImage(text || 'a beautiful scene', aspect, 1, refs[0])
   return { outputs: urls.map((url) => ({ kind: 'image' as const, url })) }
 }
 
@@ -264,9 +254,7 @@ async function batchImage(req: CapReq): Promise<CapRes> {
   const text = getText(req.inputs)
   const refs = getImages(req.inputs)
   const aspect = (req.params?.aspect as string) || '16:9'
-  const enhance = req.params?.enhance_prompt === 'true' || req.params?.enhance_prompt === true
-  const prompt = await resolvePrompt(text || 'a beautiful scene', enhance, 'image')
-  const urls = await runFluxImage(prompt, aspect, 4, refs[0])
+  const urls = await runFluxImage(text || 'a beautiful scene', aspect, 4, refs[0])
   return { outputs: urls.map((url) => ({ kind: 'image' as const, url })) }
 }
 
@@ -629,12 +617,9 @@ async function submitSeedanceTask(opts: {
 }
 
 async function textToVideo(req: CapReq): Promise<CapRes> {
-  const rawText = getText(req.inputs)
+  const text = getText(req.inputs)
   const images = filterValidRefs(getImages(req.inputs))
-  if (!rawText && !images.length) throw new Error('需要输入文本或参考图')
-
-  const enhance = req.params?.enhance_prompt === 'true' || req.params?.enhance_prompt === true
-  const text = await resolvePrompt(rawText, enhance, 'video')
+  if (!text && !images.length) throw new Error('需要输入文本或参考图')
 
   const mode = (req.params?.mode as 'first-last' | 'reference' | undefined)
   const type = detectVideoType({ images, videos: [], audios: [], mode })
