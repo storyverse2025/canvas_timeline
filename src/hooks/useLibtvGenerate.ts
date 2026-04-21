@@ -42,6 +42,14 @@ export interface GenerateArgs {
   duration?: number;
   /** If set and differs from the source item kind, a new downstream node is created. */
   targetKind?: MediaKind;
+  // Advanced params
+  negativePrompt?: string;
+  seed?: number;
+  guidanceScale?: number;
+  resolution?: string;
+  generateAudio?: boolean;
+  enhancePrompt?: boolean;
+  numImages?: number;
 }
 
 /**
@@ -133,6 +141,13 @@ export function useLibtvGenerate() {
         refImages: refs,
         aspect: args.aspect,
         duration: args.duration,
+        negativePrompt: args.negativePrompt,
+        seed: args.seed,
+        guidanceScale: args.guidanceScale,
+        resolution: args.resolution,
+        generateAudio: args.generateAudio,
+        enhancePrompt: args.enhancePrompt,
+        numImages: args.numImages,
       })
       updateItem(target.itemId, {
         content: r.url,

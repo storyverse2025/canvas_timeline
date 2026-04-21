@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { X, Sparkles, Image as ImageIcon, Video, Link2, Wand2, Loader2, Plus, FolderOpen } from 'lucide-react'
+import { X, Sparkles, Image as ImageIcon, Video, Link2, Wand2, Loader2, Plus, FolderOpen, ChevronDown, ChevronRight } from 'lucide-react'
 import { AssetPickerDialog } from './AssetPickerDialog'
 import { toast } from 'sonner'
 import { PROVIDERS } from '@/lib/providers/registry'
@@ -15,6 +15,13 @@ export interface GenerateDialogResult {
   aspect: string;
   duration: number;
   refImages: string[];
+  negativePrompt?: string;
+  seed?: number;
+  guidanceScale?: number;
+  resolution?: string;
+  generateAudio?: boolean;
+  enhancePrompt?: boolean;
+  numImages?: number;
 }
 
 interface Props {
@@ -26,6 +33,7 @@ interface Props {
 }
 
 const ASPECTS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9']
+const RESOLUTIONS = ['480p', '720p', '1080p']
 
 export function GenerateDialog({ initialPrompt = '', upstreamImages = [], defaultKind = 'image', onCancel, onSubmit }: Props) {
   const [avail, setAvail] = useState<ProviderAvailability | null>(null)
@@ -68,6 +76,15 @@ export function GenerateDialog({ initialPrompt = '', upstreamImages = [], defaul
   const [aspect, setAspect] = useState('16:9')
   const [duration, setDuration] = useState(5)
   const [optimizing, setOptimizing] = useState(false)
+  // Advanced params
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [negativePrompt, setNegativePrompt] = useState('')
+  const [seed, setSeed] = useState<string>('')
+  const [guidanceScale, setGuidanceScale] = useState<number>(7.5)
+  const [resolution, setResolution] = useState<string>('720p')
+  const [generateAudio, setGenerateAudio] = useState(true)
+  const [enhancePrompt, setEnhancePrompt] = useState(false)
+  const [numImages, setNumImages] = useState<number>(1)
 
   const runOptimize = async () => {
     if (!prompt.trim() || optimizing) return
@@ -264,12 +281,113 @@ export function GenerateDialog({ initialPrompt = '', upstreamImages = [], defaul
           <input ref={addRefFileRef} type="file" accept="image/*" className="hidden" onChange={addRefFromFile} />
         </div>
 
+        <div className="border-t border-border pt-2">
+          <button
+            className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+            onClick={() => setAdvancedOpen((v) => !v)}
+          >
+            {advancedOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+            高级设置
+          </button>
+          {advancedOpen && (
+            <div className="mt-2 flex flex-col gap-2">
+              <div>
+                <label className="text-[10px] text-muted-foreground uppercase">负面提示词</label>
+                <input
+                  type="text"
+                  className="w-full mt-1 text-xs bg-background border border-border rounded px-2 py-1.5 outline-none"
+                  value={negativePrompt}
+                  onChange={(e) => setNegativePrompt(e.target.value)}
+                  placeholder="不希望出现的元素…"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[10px] text-muted-foreground uppercase">随机种子</label>
+                  <input
+                    type="number"
+                    className="w-full mt-1 text-xs bg-background border border-border rounded px-2 py-1.5 outline-none"
+                    value={seed}
+                    onChange={(e) => setSeed(e.target.value)}
+                    placeholder="空=随机"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-muted-foreground uppercase">引导强度 ({guidanceScale})</label>
+                  <input
+                    type="range"
+                    min={1}
+                    max={20}
+                    step={0.5}
+                    className="w-full mt-2"
+                    value={guidanceScale}
+                    onChange={(e) => setGuidanceScale(Number(e.target.value))}
+                  />
+                </div>
+              </div>
+              {kind === 'video' && (
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-1.5">
+                    <label className="text-[10px] text-muted-foreground uppercase">分辨率</label>
+                    <select
+                      className="text-xs bg-background border border-border rounded px-2 py-1 outline-none"
+                      value={resolution}
+                      onChange={(e) => setResolution(e.target.value)}
+                    >
+                      {RESOLUTIONS.map((r) => <option key={r} value={r}>{r}</option>)}
+                    </select>
+                  </div>
+                  <label className="text-[11px] flex items-center gap-1.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={generateAudio}
+                      onChange={(e) => setGenerateAudio(e.target.checked)}
+                    />
+                    生成音频
+                  </label>
+                </div>
+              )}
+              <div className="flex items-center gap-4">
+                <label className="text-[11px] flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={enhancePrompt}
+                    onChange={(e) => setEnhancePrompt(e.target.checked)}
+                  />
+                  自动增强提示词 (Gemini)
+                </label>
+                {kind === 'image' && (
+                  <div className="flex items-center gap-1.5">
+                    <label className="text-[10px] text-muted-foreground uppercase">生成数量</label>
+                    <select
+                      className="text-xs bg-background border border-border rounded px-2 py-1 outline-none"
+                      value={numImages}
+                      onChange={(e) => setNumImages(Number(e.target.value))}
+                    >
+                      {[1, 4].map((n) => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
         <div className="flex justify-end gap-2 pt-1">
           <button className="px-3 py-1.5 text-xs rounded border border-border hover:bg-accent" onClick={onCancel}>取消</button>
           <button
             className={cn('px-3 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-40')}
             disabled={disabled}
-            onClick={() => onSubmit({ provider, model, prompt: prompt.trim(), kind, aspect, duration, refImages })}
+            onClick={() => onSubmit({
+              provider, model, prompt: prompt.trim(), kind, aspect, duration, refImages,
+              negativePrompt: negativePrompt.trim() || undefined,
+              seed: seed.trim() === '' ? undefined : Number(seed),
+              guidanceScale,
+              resolution: kind === 'video' ? resolution : undefined,
+              generateAudio: kind === 'video' ? generateAudio : undefined,
+              enhancePrompt: enhancePrompt || undefined,
+              numImages: kind === 'image' ? numImages : undefined,
+            })}
           >
             <Sparkles className="inline w-3 h-3 mr-1" />
             生成

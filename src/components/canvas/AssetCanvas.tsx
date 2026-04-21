@@ -175,6 +175,13 @@ function GenerateDialogMount() {
           aspect: r.aspect,
           duration: r.duration,
           targetKind: r.kind,
+          negativePrompt: r.negativePrompt,
+          seed: r.seed,
+          guidanceScale: r.guidanceScale,
+          resolution: r.resolution,
+          generateAudio: r.generateAudio,
+          enhancePrompt: r.enhancePrompt,
+          numImages: r.numImages,
         })
       }}
     />
