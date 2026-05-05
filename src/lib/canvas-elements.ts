@@ -105,8 +105,12 @@ ${nodeList}` }],
       nodeId: node.nodeId, itemId: node.itemId, name: node.name,
       imageUrl: node.imageUrl, role, description: cls?.description ?? node.name,
     }
-    const bucket = inventory[role === 'beat-video' ? 'unknown' : role] ?? inventory.unknown
-    bucket.push(el)
+    const bucketName = role === 'character' ? 'characters'
+      : role === 'prop' ? 'props'
+      : role === 'scene' ? 'scenes'
+      : role === 'keyframe' ? 'keyframes'
+      : 'unknown'
+    inventory[bucketName].push(el)
   }
   return inventory
 }

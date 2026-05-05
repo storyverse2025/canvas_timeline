@@ -88,7 +88,7 @@ export function GenerateDialog({ initialPrompt = '', upstreamImages = [], defaul
     if (!prompt.trim() || optimizing) return
     setOptimizing(true)
     try {
-      const r = await optimizePrompt({ prompt: prompt.trim(), kind, aspect, duration })
+      const r = await optimizePrompt({ prompt: prompt.trim(), kind: kind === 'audio' ? 'video' : kind, aspect, duration })
       setPrompt(r.prompt)
       toast.success('Prompt 已优化')
     } catch (e) {

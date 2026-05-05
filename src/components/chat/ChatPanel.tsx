@@ -43,7 +43,11 @@ IMPORTANT: When the user mentions any of these keywords — 分镜, 表格, stor
     "prop2": { "image": "<canvas node short id or empty>", "description": "道具2描述" },
     "scene": { "image": "<canvas node short id or empty>", "description": "场景描述" },
     "character_actions": "...",
-    "emotion_mood": "...",
+    "emotion_mood": "情绪关键词",
+    "emotion_atmosphere": "情绪+氛围感：说明本镜要让观众感到什么，并指导焦段/机位/运镜选择",
+    "character_motivation": "角色动机：角色为什么这样行动或说话",
+    "character_psychology": "心理状态：内在纠结、潜台词、面对的处境压力",
+    "performance_guidance": "表演指导：演员可执行的眼神/呼吸/手部/姿态/节奏",
     "scene_tags": "室内,夜间",
     "lighting_atmosphere": "...",
     "sound_effects": "...",
@@ -56,7 +60,8 @@ IMPORTANT: When the user mentions any of these keywords — 分镜, 表格, stor
   }
 ]
 \`\`\`
-Required fields: shot_number (string), duration (positive number in seconds). Element slots (character1/2, prop1/2, scene) have {image, description} sub-fields. All other fields default to empty string if unknown. If a validator error is fed back, fix ONLY the listed fields and resend the complete JSON array.
+Required fields: shot_number (string), duration (positive number in seconds). Element slots (character1/2, prop1/2, scene) have {image, description} sub-fields. emotion_atmosphere, character_motivation, character_psychology, and performance_guidance must be filled from the script beat so the table can guide lens/camera/motion choices and actor performance. All other fields default to empty string if unknown. If a validator error is fed back, fix ONLY the listed fields and resend the complete JSON array.
+When generating storyboard/table rows, follow 小蔡剧本转分镜 Skill as the baseline: use the script before storyboard as the creative reference, map each shot to an emotion anchor, translate abstract psychology into playable visible behavior, and avoid decorative cuts.
 When they ask you to write a script, structure it with numbered beats.
 
 When writing scripts, use this format:
@@ -209,7 +214,7 @@ export function ChatPanel() {
       if (intent) {
         addMessage('system', `Running: ${intent.label}...`)
         try {
-          await executeIntent(intent, 'test')
+          await executeIntent(intent, 'test', text)
         } catch (err) {
           addMessage('system', `Error: ${err instanceof Error ? err.message : 'Unknown'}`)
         }

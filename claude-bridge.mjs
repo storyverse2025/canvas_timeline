@@ -15,6 +15,7 @@
  *   ~/repos/storyverse-skills   (sv-pipeline, sv-intake, etc.)
  *   ~/repos/libtv-skills        (LibTV image/video generation)
  *   ~/repos/fal-skills/skills/claude.ai  (FAL.ai generation)
+ *   ./.claude/skills/ai-script-creation-skill  (AI视频剧本提示词生成; discovered from project cwd)
  */
 
 import http from 'http'
@@ -22,10 +23,14 @@ import { spawn } from 'child_process'
 import { homedir } from 'os'
 import path from 'path'
 import { existsSync } from 'fs'
+import { fileURLToPath } from 'url'
 
 const PORT = 3001
 const HOME = homedir()
-const CLAUDE_BIN = path.join(HOME, '.local/bin/claude')
+const PROJECT_ROOT = path.dirname(fileURLToPath(import.meta.url))
+const CLAUDE_BIN = process.env.CLAUDE_BIN || path.join(HOME, '.local/bin/claude')
+const CODEX_BIN = process.env.CODEX_BIN || 'codex'
+const CODEX_TIMEOUT_MS = Number(process.env.CODEX_TIMEOUT_MS || 120000)
 
 const CANDIDATE_PLUGIN_DIRS = [
   path.join(HOME, 'repos/storyverse-skills'),
@@ -62,6 +67,134 @@ function buildPrompt(messages, system) {
 
 function writeSse(res, data) {
   res.write(`data: ${JSON.stringify(data)}\n\n`)
+}
+
+function buildCodexPrompt(prompt) {
+  return [
+    'You are a local Codex CLI fallback for a Claude Code bridge.',
+    'Claude CLI failed, so answer the original assistant request directly.',
+    'Important: output only the assistant response text. Do not modify files, run commands, create commits, or include tool logs.',
+    'If the request asks for code changes, explain the exact changes or provide patches in text rather than editing the repository.',
+    '',
+    '<original_prompt>',
+    prompt,
+    '</original_prompt>',
+  ].join('\n')
+}
+
+function runCodexFallback(prompt) {
+  return new Promise((resolve, reject) => {
+    const codexPrompt = buildCodexPrompt(prompt)
+    const child = spawn(CODEX_BIN, ['exec', codexPrompt], {
+      cwd: PROJECT_ROOT,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: process.env,
+    })
+
+    let stdout = ''
+    let stderr = ''
+    let settled = false
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      child.kill('SIGTERM')
+      reject(new Error(`Codex fallback timed out after ${CODEX_TIMEOUT_MS}ms`))
+    }, CODEX_TIMEOUT_MS)
+
+    child.stdout.on('data', chunk => { stdout += chunk.toString() })
+    child.stderr.on('data', chunk => { stderr += chunk.toString() })
+    child.on('error', err => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      reject(err)
+    })
+    child.on('close', code => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      const text = stdout.trim()
+      if (code === 0 && text) {
+        resolve(text)
+      } else {
+        reject(new Error(`Codex fallback failed with code ${code}: ${stderr.trim() || 'empty output'}`))
+      }
+    })
+  })
+}
+
+function sendCodexSseResponse(res, text, finalize) {
+  writeSse(res, {
+    type: 'message_start',
+    message: {
+      id: `msg_codex_${Date.now()}`,
+      type: 'message',
+      role: 'assistant',
+      content: [],
+      model: 'codex-cli-fallback',
+      stop_reason: null,
+      stop_sequence: null,
+      usage: { input_tokens: 0, output_tokens: 0 },
+    },
+  })
+  writeSse(res, {
+    type: 'content_block_start',
+    index: 0,
+    content_block: { type: 'text', text: '' },
+  })
+  writeSse(res, {
+    type: 'content_block_delta',
+    index: 0,
+    delta: { type: 'text_delta', text },
+  })
+  writeSse(res, { type: 'content_block_stop', index: 0 })
+  writeSse(res, {
+    type: 'message_delta',
+    delta: { stop_reason: 'end_turn', stop_sequence: null },
+    usage: { output_tokens: text.length },
+  })
+  writeSse(res, { type: 'message_stop' })
+  finalize()
+}
+
+function sendCodexJsonResponse(res, text) {
+  res.writeHead(200, { 'Content-Type': 'application/json' })
+  res.end(JSON.stringify({
+    id: `msg_codex_${Date.now()}`,
+    type: 'message',
+    role: 'assistant',
+    content: [{ type: 'text', text }],
+    model: 'codex-cli-fallback',
+    stop_reason: 'end_turn',
+    usage: { input_tokens: 0, output_tokens: text.length },
+  }))
+}
+
+function sendBridgeError(res, message, stream, finalize) {
+  if (stream) {
+    writeSse(res, { type: 'error', error: { type: 'api_error', message } })
+    finalize()
+    return
+  }
+  if (!res.headersSent) {
+    res.writeHead(502, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ error: { message } }))
+  }
+}
+
+async function handleClaudeFailure({ res, prompt, stream, reason, finalize }) {
+  console.warn(`[bridge] Claude unavailable; trying Codex fallback (${reason})`)
+  try {
+    const text = await runCodexFallback(prompt)
+    if (stream) {
+      sendCodexSseResponse(res, text, finalize)
+    } else if (!res.headersSent) {
+      sendCodexJsonResponse(res, text)
+    }
+  } catch (err) {
+    console.error('[bridge] Codex fallback failed:', err.message)
+    sendBridgeError(res, 'Claude is unavailable and Codex fallback failed.', stream, finalize)
+  }
 }
 
 // ── server ────────────────────────────────────────────────────────────────────
@@ -116,7 +249,7 @@ const server = http.createServer((req, res) => {
 
     console.log(`[bridge] → claude | msgs=${messages.length} plugins=${PLUGIN_DIRS.length} stream=${!!stream}`)
 
-    const child = spawn(CLAUDE_BIN, args, { env, cwd: HOME, stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(CLAUDE_BIN, args, { env, cwd: PROJECT_ROOT, stdio: ['ignore', 'pipe', 'pipe'] })
 
     // ── streaming ─────────────────────────────────────────────────────────────
     if (stream) {
@@ -163,12 +296,20 @@ const server = http.createServer((req, res) => {
         }
       })
 
-      child.stderr.on('data', d => process.stderr.write(`[bridge] ${d}`))
-      child.on('close', () => finalize())
-      child.on('error', err => {
-        console.error('[bridge] spawn error:', err.message)
-        if (!finalized) finalize()
+      let stderrText = ''
+      child.stderr.on('data', d => {
+        stderrText += d.toString()
+        process.stderr.write(`[bridge] ${d}`)
       })
+      child.on('close', code => {
+        if (finalized) return
+        if (code !== 0 && !finalText.trim()) {
+          handleClaudeFailure({ res, prompt, stream: true, reason: stderrText.trim() || `exit ${code}`, finalize })
+          return
+        }
+        finalize()
+      })
+      child.on('error', err => handleClaudeFailure({ res, prompt, stream: true, reason: err.message, finalize }))
       // Kill child only when the TCP socket closes (client truly disconnected),
       // NOT on req 'close' which fires when the request body is received.
       req.socket?.on('close', () => { if (!finalized) { child.kill(); finalize() } })
@@ -200,9 +341,17 @@ const server = http.createServer((req, res) => {
         }
       })
 
-      child.stderr.on('data', d => process.stderr.write(`[bridge] ${d}`))
+      let stderrText = ''
+      child.stderr.on('data', d => {
+        stderrText += d.toString()
+        process.stderr.write(`[bridge] ${d}`)
+      })
 
-      child.on('close', () => {
+      child.on('close', code => {
+        if (code !== 0 || !finalText.trim()) {
+          handleClaudeFailure({ res, prompt, stream: false, reason: stderrText.trim() || `exit ${code}`, finalize: () => {} })
+          return
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({
           id: `msg_bridge_${Date.now()}`,
@@ -215,13 +364,7 @@ const server = http.createServer((req, res) => {
         }))
       })
 
-      child.on('error', err => {
-        console.error('[bridge] spawn error:', err.message)
-        if (!res.headersSent) {
-          res.writeHead(500, { 'Content-Type': 'application/json' })
-          res.end(JSON.stringify({ error: { message: err.message } }))
-        }
-      })
+      child.on('error', err => handleClaudeFailure({ res, prompt, stream: false, reason: err.message, finalize: () => {} }))
     }
   })
 })

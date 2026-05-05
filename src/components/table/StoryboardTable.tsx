@@ -33,6 +33,10 @@ const COLUMNS: Col[] = [
   { key: 'scene',               label: '场景',          width: 'w-40',  type: 'element' },
   { key: 'character_actions',   label: '角色动作',      width: 'w-48',  type: 'multiline' },
   { key: 'emotion_mood',        label: '情绪',          width: 'w-28',  type: 'text' },
+  { key: 'emotion_atmosphere',  label: '情绪/氛围感',   width: 'w-48',  type: 'multiline' },
+  { key: 'character_motivation', label: '角色动机',     width: 'w-48',  type: 'multiline' },
+  { key: 'character_psychology', label: '心理/潜台词',   width: 'w-48',  type: 'multiline' },
+  { key: 'performance_guidance', label: '表演指导',     width: 'w-48',  type: 'multiline' },
   { key: 'lighting_atmosphere', label: '光影氛围',      width: 'w-36',  type: 'multiline' },
   { key: 'dialogue',            label: '对白文本',      width: 'w-56',  type: 'multiline' },
   { key: 'dialogue_audio',      label: '对白音频',      width: 'w-28',  type: 'media-audio' },
@@ -319,6 +323,22 @@ export function StoryboardTable() {
                     {/* 情绪 */}
                     <td className="px-2 py-2 border-b border-zinc-900">
                       <TextCell value={r.emotion_mood} onChange={(v) => updateRow(r.id, { emotion_mood: v })} />
+                    </td>
+                    {/* 情绪 / 氛围感 */}
+                    <td className="px-2 py-2 border-b border-zinc-900">
+                      <TextCell multiline value={r.emotion_atmosphere} onChange={(v) => updateRow(r.id, { emotion_atmosphere: v })} />
+                    </td>
+                    {/* 角色动机 */}
+                    <td className="px-2 py-2 border-b border-zinc-900">
+                      <TextCell multiline value={r.character_motivation} onChange={(v) => updateRow(r.id, { character_motivation: v })} />
+                    </td>
+                    {/* 心理 / 潜台词 */}
+                    <td className="px-2 py-2 border-b border-zinc-900">
+                      <TextCell multiline value={r.character_psychology} onChange={(v) => updateRow(r.id, { character_psychology: v })} />
+                    </td>
+                    {/* 表演指导 */}
+                    <td className="px-2 py-2 border-b border-zinc-900">
+                      <TextCell multiline value={r.performance_guidance} onChange={(v) => updateRow(r.id, { performance_guidance: v })} />
                     </td>
                     {/* 光影氛围 */}
                     <td className="px-2 py-2 border-b border-zinc-900">

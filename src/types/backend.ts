@@ -48,7 +48,7 @@ export interface Character {
 export interface CharacterGenerateRequest { episodes: Episode[]; language?: string; }
 
 // Assets
-export interface Asset {
+export interface BackendAsset {
   id: string;
   type: string;
   url: string;

@@ -54,7 +54,7 @@ export function detectIntent(text: string): Intent | null {
   return null
 }
 
-export async function executeIntent(intent: Intent, projectId: string): Promise<void> {
+export async function executeIntent(intent: Intent, projectId: string, userInput = ''): Promise<void> {
   const chatStore = useChatStore.getState()
 
   const directorUpdate = (state: PipelineState) => {
@@ -144,7 +144,7 @@ export async function executeIntent(intent: Intent, projectId: string): Promise<
 
       case 'generateScript':
         chatStore.setActiveSkill('generateScript')
-        await skills.generateScript(projectId, { inspiration: 'Generate a creative story' })
+        await skills.generateScript(projectId, { inspiration: userInput.trim() || 'Generate a creative story' })
         break
 
       case 'generateCharacters':

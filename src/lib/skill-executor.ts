@@ -5,6 +5,7 @@ import { useTimelineStore } from '@/stores/timeline-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useMappingStore } from '@/stores/mapping-store'
 import { useChatStore } from '@/stores/chat-store'
+import { useProjectDB } from '@/stores/project-db'
 import type { Episode, Character, Scene, Prop, Keyframe } from '@/types/backend'
 
 function autoLayout(index: number, category: string): { x: number; y: number } {
@@ -43,43 +44,16 @@ function addVisualAsset(
 
 export const skills = {
   async generateScript(projectId: string, settings: { inspiration: string }) {
-    const timelineStore = useTimelineStore.getState()
-    const projectStore = useProjectStore.getState()
-
     try {
       const result = await api.scripts.generate(projectId, settings)
-      projectStore.setEpisodes(result.episodes)
+      const itemIds = syncGeneratedScriptToStores(result.episodes, settings.inspiration)
 
-      const assetIds: string[] = []
-      const itemIds: string[] = []
-      let beatIndex = 0
-
-      // Get or create keyframe track
-      const keyframeTrack = timelineStore.tracks.find((t) => t.type === 'keyframe')
-        ?? { id: timelineStore.addTrack('keyframe', '关键帧') }
-
-      for (const episode of result.episodes) {
-        if (episode.beats) {
-          for (const beat of episode.beats) {
-            const dur = beat.duration_seconds || 12
-            const startTime = keyframeTrack.items?.reduce((m: number, i: any) => Math.max(m, i.startTime + i.duration), 0) ?? beatIndex * dur
-            const itemId = timelineStore.addItem(keyframeTrack.id, {
-              label: `Beat ${beat.number}`,
-              startTime,
-              duration: dur,
-            })
-            itemIds.push(itemId)
-            beatIndex++
-          }
-        }
-      }
-
-      useChatStore.getState().addMessage('action', `Created ${itemIds.length} keyframe timeline items (demo mode)`, {
+      useChatStore.getState().addMessage('action', `Created ${itemIds.length} script beat timeline items`, {
         type: 'generate_script', status: 'success', timelineItemIds: itemIds,
       })
-      return { assetIds, itemIds }
+      return { assetIds: [], itemIds }
     } catch (err) {
-      return createDemoScript(timelineStore, projectStore)
+      return createLocalScriptDraft(settings.inspiration, err)
     }
   },
 
@@ -355,36 +329,159 @@ function createDemoKeyframes(
   return createKeyframeAssets(timelineStore, mappingStore, demoKeyframes)
 }
 
-function createDemoScript(
-  timelineStore: ReturnType<typeof useTimelineStore.getState>,
-  projectStore: ReturnType<typeof useProjectStore.getState>
-) {
-  const demoBeats = [
-    { number: 1, duration: 12 },
-    { number: 2, duration: 15 },
-    { number: 3, duration: 10 },
-    { number: 4, duration: 12 },
-    { number: 5, duration: 8 },
-  ]
+function getOrCreateKeyframeTrack() {
+  const timelineStore = useTimelineStore.getState()
+  let track = timelineStore.tracks.find((t) => t.type === 'keyframe')
+  if (track) return track
 
-  const keyframeTrack = timelineStore.tracks.find((t) => t.type === 'keyframe')
-  if (!keyframeTrack) timelineStore.initDefaultTracks()
-  const track = timelineStore.tracks.find((t) => t.type === 'keyframe')!
+  timelineStore.initDefaultTracks()
+  track = useTimelineStore.getState().tracks.find((t) => t.type === 'keyframe')
+  if (track) return track
 
+  const trackId = useTimelineStore.getState().addTrack('keyframe', '关键帧')
+  track = useTimelineStore.getState().tracks.find((t) => t.id === trackId)
+  if (!track) throw new Error('Failed to create keyframe track')
+  return track
+}
+
+function createScriptTimelineItems(episodes: Episode[]): string[] {
   const itemIds: string[] = []
-  let startTime = 0
-  for (const beat of demoBeats) {
-    const itemId = timelineStore.addItem(track.id, {
-      label: `Beat ${beat.number}`,
-      startTime,
-      duration: beat.duration,
-    })
-    itemIds.push(itemId)
-    startTime += beat.duration
+
+  for (const episode of episodes) {
+    for (const beat of episode.beats ?? []) {
+      const track = getOrCreateKeyframeTrack()
+      const duration = Math.max(1, beat.duration_seconds || 8)
+      const startTime = track.items.reduce((max, item) => Math.max(max, item.startTime + item.duration), 0)
+      const label = getBeatLabel(beat.number, beat.narration || beat.action || episode.title)
+      const itemId = useTimelineStore.getState().addItem(track.id, { label, startTime, duration })
+      itemIds.push(itemId)
+    }
   }
 
-  useChatStore.getState().addMessage('action', `Created ${itemIds.length} timeline beats (demo mode)`, {
-    type: 'generate_script', status: 'success', timelineItemIds: itemIds,
-  })
+  return itemIds
+}
+
+function createLocalScriptDraft(inspiration: string, err?: unknown) {
+  const episodes = buildLocalEpisodesFromPrompt(inspiration)
+  const itemIds = syncGeneratedScriptToStores(episodes, inspiration)
+  const reason = err ? '（后端暂不可用，已切换本地草稿）' : '（本地草稿）'
+
+  useChatStore.getState().addMessage(
+    'action',
+    `已基于用户输入生成本地剧本草稿 ${reason}：${episodes[0]?.title ?? '未命名'}，${itemIds.length} 个可编辑时间线节拍。`,
+    { type: 'generate_script', status: 'success', timelineItemIds: itemIds }
+  )
   return { assetIds: [], itemIds }
+}
+
+function syncGeneratedScriptToStores(episodes: Episode[], sourcePrompt: string): string[] {
+  const projectStore = useProjectStore.getState()
+  projectStore.setEpisodes(episodes)
+  projectStore.setEpisodeIndex(0)
+
+  const scriptText = episodesToScriptText(episodes)
+  useProjectDB.getState().updateScript({
+    text: [sourcePrompt.trim(), scriptText].filter(Boolean).join('\n\n---\n\n'),
+    optimizedText: scriptText,
+  })
+
+  const itemIds = createScriptTimelineItems(episodes)
+  createScriptCanvasNodes(itemIds)
+  return itemIds
+}
+
+function createScriptCanvasNodes(itemIds: string[]): string[] {
+  const canvasStore = useCanvasStore.getState()
+  return itemIds.map((itemId, index) =>
+    canvasStore.addItemNode(
+      itemId,
+      'text',
+      { x: 80 + (index % 2) * 340, y: 80 + Math.floor(index / 2) * 180 },
+      { width: 300, height: 130 }
+    )
+  )
+}
+
+function episodesToScriptText(episodes: Episode[]): string {
+  return episodes.map((episode) => {
+    const beats = (episode.beats ?? []).map((beat) => {
+      const dialogue = (beat.dialogues ?? [])
+        .map((line) => `${line.speaker}: ${line.text}`)
+        .join('\n')
+      return [
+        `### Beat ${beat.number}`,
+        `时长：${beat.duration_seconds ?? 0}秒`,
+        beat.narration ? `旁白/画面：${beat.narration}` : '',
+        beat.action ? `动作：${beat.action}` : '',
+        dialogue ? `对白：\n${dialogue}` : '',
+      ].filter(Boolean).join('\n')
+    }).join('\n\n')
+
+    return [`# Episode ${episode.episode_number}: ${episode.title}`, episode.content, beats]
+      .filter(Boolean)
+      .join('\n\n')
+  }).join('\n\n')
+}
+
+function buildLocalEpisodesFromPrompt(inspiration: string): Episode[] {
+  const cleaned = inspiration.trim() || 'Generate a creative story'
+  const title = extractScriptTitle(cleaned)
+  const timedBeats = parseTimedBeats(cleaned)
+  const beats = timedBeats.length > 0
+    ? timedBeats.map((beat, index) => ({
+      number: index + 1,
+      duration_seconds: Math.max(1, beat.end - beat.start),
+      narration: beat.text,
+      action: beat.text,
+      dialogues: extractDialogue(beat.text),
+    }))
+    : [{
+      number: 1,
+      duration_seconds: 15,
+      narration: cleaned,
+      action: cleaned,
+      dialogues: extractDialogue(cleaned),
+    }]
+
+  return [{
+    episode_number: 1,
+    title,
+    content: cleaned,
+    beats,
+  }]
+}
+
+function extractScriptTitle(text: string): string {
+  const bracketTitle = text.match(/【([^】]+)】/)
+  if (bracketTitle?.[1]) return bracketTitle[1].trim()
+
+  const firstLine = text.split('\n').find((line) => line.trim().length > 0) ?? 'AI 视频剧本草稿'
+  return firstLine
+    .replace(/^(generate script|生成剧本|写剧本|create script)\s*[:：]?\s*/i, '')
+    .replace(/[（(].*?[）)]/g, '')
+    .trim()
+    .slice(0, 40) || 'AI 视频剧本草稿'
+}
+
+function parseTimedBeats(text: string): Array<{ start: number; end: number; text: string }> {
+  const timedBeatPattern = /(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)\s*秒\s*[：:]\s*([\s\S]*?)(?=\s*\d+(?:\.\d+)?\s*-\s*\d+(?:\.\d+)?\s*秒\s*[：:]|$)/g
+  const matches = Array.from(text.matchAll(timedBeatPattern))
+  return matches.map((match) => ({
+    start: Number(match[1]),
+    end: Number(match[2]),
+    text: match[3].trim(),
+  })).filter((beat) => Number.isFinite(beat.start) && Number.isFinite(beat.end) && beat.end > beat.start && beat.text.length > 0)
+}
+
+function extractDialogue(text: string) {
+  const quoted = Array.from(text.matchAll(/[“"]([^”"]+)[”"]/g)).map((match) => match[1].trim())
+  return quoted.map((line) => ({ speaker: '旁白/字幕', text: line }))
+}
+
+function getBeatLabel(number: number, description: string): string {
+  if (/入学邀请卡|邀请卡/.test(description) && /门缝|关着的门|正对/.test(description)) return '0-3秒 入学邀请卡'
+  if (/升级|像素风|2D|3D|推开门/.test(description)) return '3-8秒 角色升级开门'
+  if (/欢迎|相视一笑|看向镜头|无限进化/.test(description)) return '12-15秒 社区欢迎钩子'
+  if (/AIGC|代码|发光/.test(description)) return '8-12秒 AIGC邀请卡特写'
+  return `Beat ${number}: ${description.slice(0, 18)}`
 }

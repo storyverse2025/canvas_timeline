@@ -69,6 +69,10 @@ export function useStoryboardGenerate() {
       row.visual_description,
       row.lighting_atmosphere,
       row.emotion_mood,
+      row.emotion_atmosphere,
+      row.character_motivation ? `character motivation: ${row.character_motivation}` : '',
+      row.character_psychology ? `inner psychology: ${row.character_psychology}` : '',
+      row.performance_guidance ? `performance guidance: ${row.performance_guidance}` : '',
       row.shot_size ? `${row.shot_size} shot` : '',
     ].filter(Boolean).join('. ')
     if (!prompt.trim()) { toast.error('缺少画面描述或分镜提示词'); return }
@@ -165,6 +169,10 @@ export function useStoryboardGenerate() {
       row.visual_description,
       row.character_actions,
       row.emotion_mood,
+      row.emotion_atmosphere,
+      row.character_motivation ? `character motivation: ${row.character_motivation}` : '',
+      row.character_psychology ? `inner psychology: ${row.character_psychology}` : '',
+      row.performance_guidance ? `performance guidance: ${row.performance_guidance}` : '',
       row.lighting_atmosphere,
       row.shot_size ? `${row.shot_size} shot` : '',
     ].filter(Boolean).join('. ')

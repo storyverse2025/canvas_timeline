@@ -30,16 +30,18 @@ describe('dispatch coverage', () => {
 })
 
 describe('input extraction logic', () => {
-  function getText(inputs: { kind: string; text?: string }[]) {
+  type TestInput = { kind: string; text?: string; url?: string }
+
+  function getText(inputs: TestInput[]) {
     return inputs.filter((i) => i.kind === 'text').map((i) => i.text ?? '').join('\n').trim()
   }
-  function getImages(inputs: { kind: string; url?: string }[]) {
+  function getImages(inputs: TestInput[]) {
     return inputs.filter((i) => i.kind === 'image' && i.url).map((i) => i.url!)
   }
-  function getVideos(inputs: { kind: string; url?: string }[]) {
+  function getVideos(inputs: TestInput[]) {
     return inputs.filter((i) => i.kind === 'video' && i.url).map((i) => i.url!)
   }
-  function getAudios(inputs: { kind: string; url?: string }[]) {
+  function getAudios(inputs: TestInput[]) {
     return inputs.filter((i) => i.kind === 'audio' && i.url).map((i) => i.url!)
   }
 

@@ -196,6 +196,14 @@ export const PROMPTS: Record<string, PromptTemplate> = {
     label: '生成分镜表 JSON',
     template: `将以上所有分析整合，输出最终的分镜表 JSON 数组。
 
+【小蔡剧本转分镜 Skill 基准】
+你不是单纯拆 shot list，而是把剧本先当作分镜前的创作基准：
+- 先依据剧本动作建立情绪锚点，再生成每个镜头；禁止为切而切。
+- 把抽象心理转成可拍/可演/可听的具象视听语言。
+- 每个镜头必须说明情绪与氛围感如何指导后续焦段、光圈、机位、构图、运镜。
+- 表格必须补充角色动机、心理状态、表演指导：演员为什么这样演、此刻面对什么处境、内在纠结是什么。
+- 角色心理描写要来自剧本上下文，但输出要能指导表演和镜头，不能只写空泛文学句。
+
 重要：每行的 character1/character2 的 description 和 image_prompt 必须使用前面角色提取步骤中的详细描述，
 scene 的 description 必须使用场景提取步骤中的详细描述。这样才能确保后续生成图片时角色和场景一致。
 
@@ -207,17 +215,27 @@ scene 的 description 必须使用场景提取步骤中的详细描述。这样�
   "visual_anchor": "该镜头的视觉锚点",
   "shot_size": "景别",
   "character_actions": "角色动作",
-  "emotion_mood": "情绪",
+  "emotion_mood": "情绪关键词",
+  "emotion_atmosphere": "情绪+氛围感：本镜要让观众感到什么，以及这种氛围如何指导镜头语言",
+  "character_motivation": "角色动机：角色为什么这样行动/说话",
+  "character_psychology": "心理状态：内在纠结、压力、潜台词、面对的处境",
+  "performance_guidance": "表演指导：演员可执行的眼神/呼吸/手部/姿态/节奏",
   "lighting_atmosphere": "光影氛围",
   "dialogue": "对白",
   "storyboard_prompts": "english keyframe generation prompt (include style: {{artStyle}})",
-  "motion_prompts": "english video motion prompt",
+  "motion_prompts": "english video motion prompt; include camera movement motivated by emotion_atmosphere and character_motivation",
   "character1": { "image": "", "description": "从角色提取结果复制完整描述" },
   "character2": { "image": "", "description": "从角色提取结果复制完整描述" },
   "prop1": { "image": "", "description": "道具描述" },
   "prop2": { "image": "", "description": "" },
   "scene": { "image": "", "description": "从场景提取结果复制完整描述" }
 }
+
+字段硬约束：
+- emotion_atmosphere 不等于 lighting_atmosphere；前者是情绪/氛围目标，后者是光影实现。
+- character_motivation 必须回答“为什么这样表演/行动”。
+- character_psychology 必须回答“心理纠结/潜台词/处境压力”。
+- performance_guidance 必须是演员能演出来的身体细节，不要写抽象鸡汤。
 
 角色设计：
 {{characterDesigns}}

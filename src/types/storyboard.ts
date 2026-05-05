@@ -15,11 +15,20 @@ export type ElementSlot = z.infer<typeof ElementSlotSchema>
 export const StoryboardRowSchema = z.object({
   shot_number: z.string().min(1),
   duration: z.number().positive().max(600),
+  status: z.enum(['todo', 'in_progress', 'done', 'pending', 'generating', 'completed', 'failed']).default('todo'),
   visual_description: z.string().default(''),
   reference_image: z.string().default(''),
   shot_size: z.string().default(''),
   character_actions: z.string().default(''),
   emotion_mood: z.string().default(''),
+  /** Per-shot emotional + atmospheric intent used to steer camera/lens/motion. */
+  emotion_atmosphere: z.string().default(''),
+  /** Why the visible character acts this way in this shot. */
+  character_motivation: z.string().default(''),
+  /** Inner conflict / psychological pressure translated from the script beat. */
+  character_psychology: z.string().default(''),
+  /** Actor-facing performance note: playable behavior, not abstract prose. */
+  performance_guidance: z.string().default(''),
   scene_tags: z.string().default(''),
   lighting_atmosphere: z.string().default(''),
   sound_effects: z.string().default(''),
@@ -36,11 +45,11 @@ export const StoryboardRowSchema = z.object({
   /** Visual anchor: a reference point for visual consistency across shots */
   visual_anchor: z.string().default(''),
   // Element slots
-  character1: ElementSlotSchema.default({}),
-  character2: ElementSlotSchema.default({}),
-  prop1: ElementSlotSchema.default({}),
-  prop2: ElementSlotSchema.default({}),
-  scene: ElementSlotSchema.default({}),
+  character1: ElementSlotSchema.default({ image: '', description: '', nodeId: '' }),
+  character2: ElementSlotSchema.default({ image: '', description: '', nodeId: '' }),
+  prop1: ElementSlotSchema.default({ image: '', description: '', nodeId: '' }),
+  prop2: ElementSlotSchema.default({ image: '', description: '', nodeId: '' }),
+  scene: ElementSlotSchema.default({ image: '', description: '', nodeId: '' }),
 })
 
 export type StoryboardRowInput = z.infer<typeof StoryboardRowSchema>

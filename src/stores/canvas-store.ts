@@ -4,9 +4,10 @@ import { persist } from 'zustand/middleware';
 import { v4 as uuid } from 'uuid';
 import { applyNodeChanges, applyEdgeChanges } from '@xyflow/react';
 import type { Node, Edge, NodeChange, EdgeChange } from '@xyflow/react';
+import type { CanvasNodeData, CanvasNodeType } from '@/types/canvas';
 
 /** Data stored per canvas node — reference to asset or free-form item */
-export interface CanvasNodeGeometry {
+export interface CanvasNodeGeometry extends Record<string, unknown> {
   assetId?: string;
   itemId?: string;
 }
@@ -18,9 +19,13 @@ interface CanvasState {
 }
 
 interface CanvasActions {
-  addNode: (assetId: string, position: { x: number; y: number }) => string;
+  addNode: {
+    (assetId: string, position: { x: number; y: number }): string;
+    (type: CanvasNodeType, data: CanvasNodeData, position: { x: number; y: number }): string;
+  };
   addItemNode: (itemId: string, kind: 'image' | 'text', position: { x: number; y: number }, size?: { width: number; height: number }) => string;
   removeNode: (id: string) => void;
+  updateNode: (id: string, data: Partial<CanvasNodeGeometry>) => void;
   setNodes: (nodes: Node<CanvasNodeGeometry>[]) => void;
   setEdges: (edges: Edge[]) => void;
   onNodesChange: (changes: NodeChange<Node<CanvasNodeGeometry>>[]) => void;
@@ -40,10 +45,24 @@ export const useCanvasStore = create<CanvasState & CanvasActions>()(
       edges: [],
       selectedNodeIds: [],
 
-      addNode: (assetId, position) => {
+      addNode: (typeOrAssetId: string, dataOrPosition: CanvasNodeData | { x: number; y: number }, maybePosition?: { x: number; y: number }) => {
         const id = uuid();
         set((state) => {
-          state.nodes.push({ id, type: 'asset', position, data: { assetId } });
+          if (maybePosition) {
+            state.nodes.push({
+              id,
+              type: typeOrAssetId,
+              position: maybePosition,
+              data: dataOrPosition as CanvasNodeGeometry,
+            });
+          } else {
+            state.nodes.push({
+              id,
+              type: 'asset',
+              position: dataOrPosition as { x: number; y: number },
+              data: { assetId: typeOrAssetId },
+            });
+          }
         });
         return id;
       },
@@ -71,6 +90,13 @@ export const useCanvasStore = create<CanvasState & CanvasActions>()(
           state.nodes = state.nodes.filter((n) => n.id !== id);
           state.edges = state.edges.filter((e) => e.source !== id && e.target !== id);
           state.selectedNodeIds = state.selectedNodeIds.filter((sid) => sid !== id);
+        });
+      },
+
+      updateNode: (id, data) => {
+        set((state) => {
+          const node = state.nodes.find((n) => n.id === id);
+          if (node) node.data = { ...node.data, ...data };
         });
       },
 

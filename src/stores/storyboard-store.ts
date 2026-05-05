@@ -5,6 +5,12 @@ import { v4 as uuid } from 'uuid'
 import type { StoryboardRow, StoryboardRowInput } from '@/types/storyboard'
 
 const EMPTY_SLOT = { image: '', description: '', nodeId: '' }
+const STORYBOARD_ROW_DEFAULTS = {
+  emotion_atmosphere: '',
+  character_motivation: '',
+  character_psychology: '',
+  performance_guidance: '',
+}
 
 interface State {
   rows: StoryboardRow[];
@@ -25,14 +31,14 @@ export const useStoryboardStore = create<State & Actions>()(
       rows: [],
       addRow: (row) => {
         const id = uuid()
-        set((s) => { s.rows.push({ ...row, id, createdAt: Date.now() }) })
+        set((s) => { s.rows.push({ ...STORYBOARD_ROW_DEFAULTS, ...row, id, createdAt: Date.now() }) })
         return id
       },
       insertRowAfter: (afterId, row) => {
         const id = uuid()
         set((s) => {
           const idx = s.rows.findIndex((r) => r.id === afterId)
-          const newRow = { ...row, id, createdAt: Date.now() }
+          const newRow = { ...STORYBOARD_ROW_DEFAULTS, ...row, id, createdAt: Date.now() }
           if (idx >= 0) s.rows.splice(idx + 1, 0, newRow)
           else s.rows.push(newRow)
         })
@@ -45,6 +51,7 @@ export const useStoryboardStore = create<State & Actions>()(
       removeRow: (id) => set((s) => { s.rows = s.rows.filter((r) => r.id !== id) }),
       replaceAll: (rows) => set({
         rows: rows.map((r) => ({
+          ...STORYBOARD_ROW_DEFAULTS,
           ...r,
           id: uuid(),
           createdAt: Date.now(),
@@ -60,12 +67,13 @@ export const useStoryboardStore = create<State & Actions>()(
     })),
     {
       name: 'storyboard-store',
-      version: 3,
+      version: 4,
       migrate: (persisted: unknown, version) => {
-        if (version < 3) {
+        if (version < 4) {
           // Migrate v2 rows: rename aiImageUrl→keyframeUrl, aiVideoUrl→beatVideoUrl, add element slots
           const old = persisted as { rows?: Array<Record<string, unknown>> }
           const rows = (old.rows ?? []).map((r) => ({
+            ...STORYBOARD_ROW_DEFAULTS,
             ...r,
             keyframeUrl: r.keyframeUrl ?? r.aiImageUrl ?? '',
             beatVideoUrl: r.beatVideoUrl ?? r.aiVideoUrl ?? '',

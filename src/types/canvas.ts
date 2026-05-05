@@ -1,6 +1,6 @@
 export interface Tag {
   id: string;
-  category: 'character' | 'scene' | 'prop' | 'beat' | 'custom';
+  category: 'character' | 'scene' | 'prop' | 'keyframe' | 'beat' | 'custom';
   label: string;
   color?: string;
 }

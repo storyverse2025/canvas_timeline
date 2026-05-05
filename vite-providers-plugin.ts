@@ -223,7 +223,7 @@ async function runGemini(req: Req): Promise<{ url: string; kind: 'image' }> {
     }),
   })
   if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`)
-  const data = (await res.json()) as { candidates?: { content?: { parts?: { inlineData?: { mimeType: string; data: string } }[] }[] }[] }
+  const data = (await res.json()) as { candidates?: { content?: { parts?: { inlineData?: { mimeType: string; data: string } }[] } }[] }
   const part = data.candidates?.[0]?.content?.parts?.find((p) => p.inlineData)
   const inline = part?.inlineData
   if (!inline) throw new Error('Gemini: no image in response')

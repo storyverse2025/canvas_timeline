@@ -2,7 +2,7 @@ import { v4 as uuid } from 'uuid'
 import { useTimelineStore } from '@/stores/timeline-store'
 import { useStoryboardStore } from '@/stores/storyboard-store'
 import type { StoryboardRow } from '@/types/storyboard'
-import type { Track } from '@/types/timeline'
+import type { TimelineItem, Track } from '@/types/timeline'
 
 const SCENE_TRACK_LABEL = '场景'
 const KF_TRACK_LABEL = 'Keyframe'
@@ -49,9 +49,9 @@ export function syncStoryboardToTimeline(rows: StoryboardRow[]) {
   const vidTrackId = ensureTrack(VIDEO_TRACK_LABEL, 'video')
 
   let cursor = 0
-  const sceneItems: Array<Record<string, unknown>> = []
-  const kfItems: Array<Record<string, unknown>> = []
-  const vidItems: Array<Record<string, unknown>> = []
+  const sceneItems: TimelineItem[] = []
+  const kfItems: TimelineItem[] = []
+  const vidItems: TimelineItem[] = []
 
   // Scene merging state
   let currentSceneKey = ''
@@ -133,11 +133,11 @@ export function syncStoryboardToTimeline(rows: StoryboardRow[]) {
 
   useTimelineStore.setState((s) => {
     const scTrack = s.tracks.find((x: Track) => x.id === sceneTrackId)
-    if (scTrack) scTrack.items = sceneItems as Track['items']
+    if (scTrack) scTrack.items = sceneItems
     const kfTrack = s.tracks.find((x: Track) => x.id === kfTrackId)
-    if (kfTrack) kfTrack.items = kfItems as Track['items']
+    if (kfTrack) kfTrack.items = kfItems
     const vidTrack = s.tracks.find((x: Track) => x.id === vidTrackId)
-    if (vidTrack) vidTrack.items = vidItems as Track['items']
+    if (vidTrack) vidTrack.items = vidItems
     const maxEnd = s.tracks.flatMap((x: Track) => x.items).reduce((m, i) => Math.max(m, i.startTime + i.duration), 0)
     if (maxEnd + 5 > s.duration) s.duration = maxEnd + 10
   })

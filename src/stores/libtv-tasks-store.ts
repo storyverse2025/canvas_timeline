@@ -11,7 +11,7 @@ export interface LibtvTask {
   sessionId?: string;
   status: TaskStatus;
   resultUrl?: string;
-  resultKind?: 'image' | 'video';
+  resultKind?: 'image' | 'video' | 'audio';
   error?: string;
   createdAt: number;
 }

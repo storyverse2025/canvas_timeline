@@ -4,18 +4,24 @@ import type { StoryboardRow } from '@/types/storyboard'
 
 const EMPTY_SLOT = { image: '', description: '', nodeId: '' }
 
-function makeRow(overrides: Partial<StoryboardRow> & { shot_number: string }): StoryboardRow {
+function makeRow(overrides: Omit<Partial<StoryboardRow>, 'shot_number'> & { shot_number: string }): StoryboardRow {
+  const { shot_number, ...rest } = overrides
   return {
-    id: `row-${overrides.shot_number}`,
+    id: `row-${shot_number}`,
     createdAt: Date.now(),
-    shot_number: overrides.shot_number,
+    shot_number,
     duration: 3,
+    status: 'todo',
     visual_description: '',
     visual_anchor: '',
     reference_image: '',
     shot_size: '',
     character_actions: '',
     emotion_mood: '',
+    emotion_atmosphere: '',
+    character_motivation: '',
+    character_psychology: '',
+    performance_guidance: '',
     scene_tags: '',
     lighting_atmosphere: '',
     sound_effects: '',
@@ -30,7 +36,7 @@ function makeRow(overrides: Partial<StoryboardRow> & { shot_number: string }): S
     prop1: { ...EMPTY_SLOT },
     prop2: { ...EMPTY_SLOT },
     scene: { ...EMPTY_SLOT },
-    ...overrides,
+    ...rest,
   }
 }
 

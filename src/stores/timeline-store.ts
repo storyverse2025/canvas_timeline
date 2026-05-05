@@ -2,9 +2,10 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { persist } from 'zustand/middleware';
 import { v4 as uuid } from 'uuid';
-import type { Track, TrackType, TimelineItem } from '@/types/timeline';
+import type { Shot, Track, TrackType, TimelineItem } from '@/types/timeline';
 
 interface TimelineState {
+  shots: Shot[];
   tracks: Track[];
   playheadTime: number;
   duration: number;
@@ -15,6 +16,16 @@ interface TimelineState {
 }
 
 interface TimelineActions {
+  // Legacy shot API retained for older canvas/timeline pipeline code.
+  setShots: (shots: Shot[]) => void;
+  addShot: (label?: string, duration?: number) => string;
+  removeShot: (shotId: string) => void;
+  updateShot: (shotId: string, data: Partial<Omit<Shot, 'id'>>) => void;
+  resizeShot: (shotId: string, newDuration: number) => void;
+  linkNodeToShot: (shotId: string, nodeId: string) => void;
+  unlinkNodeFromShot: (shotId: string, nodeId: string) => void;
+  getShotById: (id: string) => Shot | undefined;
+
   // Track management
   addTrack: (type: TrackType, label?: string) => string;
   removeTrack: (trackId: string) => void;
@@ -59,12 +70,73 @@ export const useTimelineStore = create<TimelineState & TimelineActions>()(
   persist(
     immer((set, get) => ({
       tracks: [],
+      shots: [],
       playheadTime: 0,
       duration: 120,
       zoom: 1,
       isPlaying: false,
       snapEnabled: true,
       snapInterval: 1,
+
+      setShots: (shots) => set({ shots }),
+
+      addShot: (label = 'New Shot', duration = 8) => {
+        const id = uuid();
+        set((state) => {
+          const startTime = state.shots.reduce((t, s) => Math.max(t, s.startTime + s.duration), 0);
+          state.shots.push({ id, label, duration, linkedNodeIds: [], startTime });
+          const end = startTime + duration;
+          if (end > state.duration) state.duration = end + 10;
+        });
+        return id;
+      },
+
+      removeShot: (shotId) => {
+        set((state) => {
+          state.shots = state.shots.filter((s) => s.id !== shotId);
+          let t = 0;
+          for (const shot of state.shots) {
+            shot.startTime = t;
+            t += shot.duration;
+          }
+        });
+      },
+
+      updateShot: (shotId, data) => {
+        set((state) => {
+          const shot = state.shots.find((s) => s.id === shotId);
+          if (shot) Object.assign(shot, data);
+        });
+      },
+
+      resizeShot: (shotId, newDuration) => {
+        set((state) => {
+          const shot = state.shots.find((s) => s.id === shotId);
+          if (!shot) return;
+          shot.duration = Math.max(1, newDuration);
+          let t = 0;
+          for (const s of state.shots) {
+            s.startTime = t;
+            t += s.duration;
+          }
+        });
+      },
+
+      linkNodeToShot: (shotId, nodeId) => {
+        set((state) => {
+          const shot = state.shots.find((s) => s.id === shotId);
+          if (shot && !shot.linkedNodeIds.includes(nodeId)) shot.linkedNodeIds.push(nodeId);
+        });
+      },
+
+      unlinkNodeFromShot: (shotId, nodeId) => {
+        set((state) => {
+          const shot = state.shots.find((s) => s.id === shotId);
+          if (shot) shot.linkedNodeIds = shot.linkedNodeIds.filter((id) => id !== nodeId);
+        });
+      },
+
+      getShotById: (id) => get().shots.find((s) => s.id === id),
 
       addTrack: (type, label) => {
         const id = uuid();
@@ -188,7 +260,7 @@ export const useTimelineStore = create<TimelineState & TimelineActions>()(
     })),
     {
       name: 'timeline-store-v2',
-      partialize: (state) => ({ tracks: state.tracks, duration: state.duration }),
+      partialize: (state) => ({ tracks: state.tracks, shots: state.shots, duration: state.duration }),
     }
   )
 );

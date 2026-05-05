@@ -1,6 +1,6 @@
 import { get, post, put, del, postForm } from './api';
 import type {
-  AuthResponse, Episode, Character, Asset, StoryboardFrame,
+  AuthResponse, Episode, Character, BackendAsset, StoryboardFrame,
   Keyframe, VideoShot, Scene, Prop, EditResult, ReviewNote,
   Version, VersionDiff, AiChatResponse, AiIssue, AiSuggestion,
   Template, JobStatus, UploadResponse,
@@ -55,9 +55,9 @@ export const api = {
   // === Assets ===
   assets: {
     get: (projectId: string, timestamp?: string) =>
-      get<{ assets: Asset[] }>(`/projects/${projectId}/assets`, { timestamp }),
+      get<{ assets: BackendAsset[] }>(`/projects/${projectId}/assets`, { timestamp }),
     editImage: (projectId: string, data: Record<string, unknown>) =>
-      post<Asset>(`/projects/${projectId}/asset_edit`, data),
+      post<BackendAsset>(`/projects/${projectId}/asset_edit`, data),
   },
 
   // === Storyboards ===

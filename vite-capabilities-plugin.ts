@@ -555,7 +555,6 @@ function buildContentParts(
 async function resolveImageToDataUrl(imageUrl: string): Promise<string> {
   if (imageUrl.startsWith('data:')) return imageUrl
   if (imageUrl.startsWith('/')) {
-    // Local file — read from disk
     const { readFileSync } = await import('fs')
     const { join } = await import('path')
     const buf = readFileSync(join(process.cwd(), 'public', imageUrl))
@@ -571,8 +570,58 @@ async function resolveImageToDataUrl(imageUrl: string): Promise<string> {
   return `data:${contentType};base64,${buf.toString('base64')}`
 }
 
+function svgDataUrl(svg: string): string {
+  return `data:image/svg+xml;base64,${Buffer.from(svg, 'utf8').toString('base64')}`
+}
+
+function escapeSvgAttr(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+/**
+ * Seedance sometimes rejects realistic face input images. On video generation
+ * failure, retry by wrapping each input image in an SVG containing the original
+ * image plus a 6×6 white grid overlay (12px, 100% opacity).
+ */
+export function createSeedanceGridOverlayImageUrl(imageUrl: string): string {
+  const escapedUrl = escapeSvgAttr(imageUrl)
+  const gridLines = Array.from({ length: 7 }, (_, i) => {
+    const p = (i / 6) * 1024
+    return `<line x1="${p}" y1="0" x2="${p}" y2="1024"/><line x1="0" y1="${p}" x2="1024" y2="${p}"/>`
+  }).join('')
+
+  return svgDataUrl(`<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" data-grid="6x6">
+  <image href="${escapedUrl}" x="0" y="0" width="1024" height="1024" preserveAspectRatio="xMidYMid slice"/>
+  <g stroke="white" stroke-width="12" stroke-opacity="1" fill="none" vector-effect="non-scaling-stroke">${gridLines}</g>
+</svg>`)
+}
+
+export function buildSeedanceGridRetryContentParts(
+  contentParts: Array<Record<string, unknown>>,
+): Array<Record<string, unknown>> {
+  return contentParts.map((part) => {
+    const imageUrl = (part.image_url as { url?: unknown } | undefined)?.url
+    if (part.type !== 'image_url' || typeof imageUrl !== 'string') return part
+    return {
+      ...part,
+      image_url: {
+        ...(part.image_url as Record<string, unknown>),
+        url: createSeedanceGridOverlayImageUrl(imageUrl),
+      },
+    }
+  })
+}
+
+function hasSeedanceImageParts(contentParts: Array<Record<string, unknown>>): boolean {
+  return contentParts.some((part) => part.type === 'image_url' && typeof (part.image_url as { url?: unknown } | undefined)?.url === 'string')
+}
+
 /** Shared Seedance task submission — handles content parts + polling. */
-async function submitSeedanceTask(opts: {
+async function submitSeedanceTaskOnce(opts: {
   contentParts: Array<Record<string, unknown>>
   model?: string
   resolution?: string
@@ -614,6 +663,35 @@ async function submitSeedanceTask(opts: {
     if (status === 'failed' || status === 'cancelled') return { done: false, error: `task ${status}` }
     return { done: false }
   }, { intervalMs: 4000, timeoutMs: 6 * 60 * 1000 })
+}
+
+async function submitSeedanceTask(opts: {
+  contentParts: Array<Record<string, unknown>>
+  model?: string
+  resolution?: string
+  aspect?: string
+  duration?: number
+  generateAudio?: boolean
+  seed?: number
+}): Promise<string> {
+  try {
+    return await submitSeedanceTaskOnce(opts)
+  } catch (firstError) {
+    if (!hasSeedanceImageParts(opts.contentParts)) throw firstError
+
+    const retryOpts = {
+      ...opts,
+      contentParts: buildSeedanceGridRetryContentParts(opts.contentParts),
+    }
+
+    try {
+      return await submitSeedanceTaskOnce(retryOpts)
+    } catch (retryError) {
+      const firstMessage = (firstError as Error).message ?? String(firstError)
+      const retryMessage = (retryError as Error).message ?? String(retryError)
+      throw new Error(`Seedance failed, grid-overlay retry also failed: ${retryMessage}; original: ${firstMessage}`)
+    }
+  }
 }
 
 async function textToVideo(req: CapReq): Promise<CapRes> {

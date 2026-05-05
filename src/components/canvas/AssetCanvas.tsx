@@ -127,7 +127,7 @@ export function AssetCanvas() {
         <MiniMap
           className="!bottom-4 !right-4 !bg-card"
           nodeColor={(n) => {
-            const d = n.data as AssetNodeData
+            const d = n.data as unknown as AssetNodeData
             if (d?.type === 'character') return '#8b5cf6'
             if (d?.type === 'scene') return '#10b981'
             if (d?.type === 'prop') return '#f59e0b'
