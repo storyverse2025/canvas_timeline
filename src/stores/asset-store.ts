@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import { createIdbStorage } from '@/lib/storage/idb-storage';
 import { v4 as uuid } from 'uuid';
 import type { Asset, AssetType } from '@/types/asset';
 
@@ -49,6 +50,6 @@ export const useAssetStore = create<AssetState & AssetActions>()(
 
       getAssetsByType: (type) => get().assets.filter((a) => a.type === type),
     })),
-    { name: 'asset-store' }
+    { name: 'asset-store', storage: createJSONStorage(() => createIdbStorage('asset-store')) }
   )
 );

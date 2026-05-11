@@ -165,7 +165,7 @@ export async function executeIntent(intent: Intent, projectId: string, userInput
 
       case 'generateKeyframes':
         chatStore.setActiveSkill('generateKeyframes')
-        await skills.generateKeyframes(projectId, '1')
+        await skills.generateKeyframes(projectId, '1', { userInput })
         break
 
       case 'generateVideoShots':

@@ -11,6 +11,7 @@ import { useAssetStore } from '@/stores/asset-store'
 import { useViewStore } from '@/stores/view-store'
 import { useTimelineStore } from '@/stores/timeline-store'
 import type { Asset, AssetType } from '@/types/asset'
+import { VoiceFeedbackButton } from '@/components/canvas/VoiceFeedbackButton'
 
 const TYPE_META: Record<AssetType, { label: string; Icon: React.ElementType; badge: string }> = {
   character: { label: '角色',  Icon: User,    badge: 'bg-violet-500/20 text-violet-300 border-violet-500/30' },
@@ -139,6 +140,25 @@ function AssetRow({ asset }: { asset: Asset }) {
           <span className="text-[10px] text-muted-foreground/30">—</span>
         )}
       </TableCell>
+
+      {/* Voice feedback (MVP: characters only) */}
+      <TableCell className="w-12 py-1.5 text-center">
+        {asset.type === 'character' && (
+          <VoiceFeedbackButton
+            elementKind="character"
+            elementId={asset.id}
+            label={asset.name}
+            elementContext={{
+              id: asset.id,
+              name: asset.name,
+              description: asset.description,
+              imageUrl: asset.imageUrl,
+              type: asset.type,
+            }}
+            compact
+          />
+        )}
+      </TableCell>
     </TableRow>
   )
 }
@@ -232,6 +252,7 @@ export function AssetTable() {
                           <TableHead className="text-[10px] py-1">名称</TableHead>
                           <TableHead className="text-[10px] py-1">描述</TableHead>
                           <TableHead className="w-20 text-[10px] py-1 text-center">时间轴</TableHead>
+                          <TableHead className="w-12 text-[10px] py-1 text-center">语音</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>

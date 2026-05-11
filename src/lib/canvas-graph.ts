@@ -3,7 +3,12 @@ import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { useAssetStore } from '@/stores/asset-store'
 
 export interface UpstreamContext {
+  /** Regular text content (role undefined). */
   texts: string[];
+  /** Text content from items tagged role='style' (global art style). */
+  styleTexts: string[];
+  /** Text content from items tagged role='system' (system prompts). */
+  systemTexts: string[];
   images: string[];
 }
 
@@ -21,6 +26,8 @@ export function gatherUpstream(nodeId: string): UpstreamContext {
   }
 
   const texts: string[] = []
+  const styleTexts: string[] = []
+  const systemTexts: string[] = []
   const images: string[] = []
   const visited = new Set<string>()
   const queue = [...(incoming.get(nodeId) ?? [])]
@@ -35,8 +42,12 @@ export function gatherUpstream(nodeId: string): UpstreamContext {
     if (node.data.itemId) {
       const it = items[node.data.itemId]
       if (it) {
-        if (it.kind === 'text' && it.content.trim()) texts.push(it.content.trim())
-        else if (it.kind === 'image' && it.content) images.push(it.content)
+        if (it.kind === 'text' && it.content.trim()) {
+          const txt = it.content.trim()
+          if (it.role === 'style') styleTexts.push(txt)
+          else if (it.role === 'system') systemTexts.push(txt)
+          else texts.push(txt)
+        } else if (it.kind === 'image' && it.content) images.push(it.content)
       }
     } else if (node.data.assetId) {
       const a = assets.find((x) => x.id === node.data.assetId)
@@ -48,5 +59,5 @@ export function gatherUpstream(nodeId: string): UpstreamContext {
     for (const src of incoming.get(id) ?? []) if (!visited.has(src)) queue.push(src)
   }
 
-  return { texts, images }
+  return { texts, styleTexts, systemTexts, images }
 }

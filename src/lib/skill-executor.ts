@@ -6,7 +6,20 @@ import { useProjectStore } from '@/stores/project-store'
 import { useMappingStore } from '@/stores/mapping-store'
 import { useChatStore } from '@/stores/chat-store'
 import { useProjectDB } from '@/stores/project-db'
+import { buildCharacterMaterialPrompt, CHARACTER_MATERIAL_SYSTEM_PROMPT } from '@/lib/canvas-elements'
+import { runCapability } from '@/lib/capabilities/client'
+import { streamClaude } from '@/lib/claude-client'
 import type { Episode, Character, Scene, Prop, Keyframe } from '@/types/backend'
+
+/**
+ * Returns true when the projectId clearly does not point to a real backend
+ * project — either the 'test' sentinel from chat-intent.ts (no project loaded)
+ * or an empty/undefined value. Skills use this to short-circuit straight to
+ * the local fallback instead of firing a doomed fetch that 404s.
+ */
+function isLocalOnlyProject(projectId: string | undefined | null): boolean {
+  return !projectId || projectId === 'test'
+}
 
 function autoLayout(index: number, category: string): { x: number; y: number } {
   const columns: Record<string, number> = {
@@ -44,6 +57,9 @@ function addVisualAsset(
 
 export const skills = {
   async generateScript(projectId: string, settings: { inspiration: string }) {
+    if (isLocalOnlyProject(projectId)) {
+      return createLocalScriptDraft(settings.inspiration, null)
+    }
     try {
       const result = await api.scripts.generate(projectId, settings)
       const itemIds = syncGeneratedScriptToStores(result.episodes, settings.inspiration)
@@ -59,10 +75,18 @@ export const skills = {
 
   async generateCharacters(projectId: string, episodes: Episode[]) {
     const projectStore = useProjectStore.getState()
+    if (isLocalOnlyProject(projectId)) return createDemoCharacters(projectStore)
     try {
-      const result = await api.characters.generate(projectId, { episodes })
-      projectStore.setCharacters(result.characters)
-      return createCharacterAssets(result.characters)
+      const result = await api.characters.generate(projectId, {
+        episodes,
+        character_material_system_prompt: CHARACTER_MATERIAL_SYSTEM_PROMPT,
+      })
+      const characters = result.characters.map((char) => ({
+        ...char,
+        prompt: toCharacterMaterialPrompt(char),
+      }))
+      projectStore.setCharacters(characters)
+      return createCharacterAssets(characters)
     } catch {
       return createDemoCharacters(projectStore)
     }
@@ -70,6 +94,7 @@ export const skills = {
 
   async generateScenes(projectId: string) {
     const projectStore = useProjectStore.getState()
+    if (isLocalOnlyProject(projectId)) return createDemoScenes(projectStore)
     try {
       const result = await api.scenes.list(projectId)
       projectStore.setScenes(result.scenes)
@@ -81,6 +106,7 @@ export const skills = {
 
   async generateProps(projectId: string) {
     const projectStore = useProjectStore.getState()
+    if (isLocalOnlyProject(projectId)) return createDemoProps(projectStore)
     try {
       const result = await api.props.list(projectId)
       projectStore.setProps(result.props)
@@ -90,22 +116,29 @@ export const skills = {
     }
   },
 
-  async generateKeyframes(projectId: string, episodeId: string) {
+  async generateKeyframes(projectId: string, episodeId: string, opts?: { userInput?: string; count?: number }) {
     const timelineStore = useTimelineStore.getState()
     const mappingStore = useMappingStore.getState()
     const projectStore = useProjectStore.getState()
 
+    if (isLocalOnlyProject(projectId)) {
+      return generateKeyframesLocal(opts?.userInput ?? '', opts?.count ?? 5)
+    }
     try {
       const result = await api.keyframes.list(projectId, episodeId)
       projectStore.setKeyframes(result.keyframes)
       return createKeyframeAssets(timelineStore, mappingStore, result.keyframes)
     } catch {
-      return createDemoKeyframes(timelineStore, mappingStore, projectStore)
+      return generateKeyframesLocal(opts?.userInput ?? '', opts?.count ?? 5)
     }
   },
 
   async generateVideoShots(projectId: string, episodeIndex: number) {
     const projectStore = useProjectStore.getState()
+    if (isLocalOnlyProject(projectId)) {
+      useChatStore.getState().addMessage('assistant', '本地模式：视频镜头生成需要后端项目。请在画布或表格上手动生成视频。')
+      return { shots: [] }
+    }
     try {
       const result = await api.shots.list(projectId, episodeIndex, 'en')
       projectStore.setShots(result.shots)
@@ -120,6 +153,10 @@ export const skills = {
   },
 
   async runEditPipeline(projectId: string, episodeId: string) {
+    if (isLocalOnlyProject(projectId)) {
+      useChatStore.getState().addMessage('assistant', '本地模式：剪辑流水线需要后端项目。')
+      return null
+    }
     try {
       const result = await api.edits.render(projectId, episodeId, 'default')
       useChatStore.getState().addMessage('action', 'Edit pipeline started', {
@@ -196,6 +233,10 @@ export const skills = {
   },
 
   async analyzeQuality(projectId: string, itemType: string, itemId: string) {
+    if (isLocalOnlyProject(projectId)) {
+      useChatStore.getState().addMessage('assistant', '本地模式：质量分析需要后端项目。')
+      return { issues: [], suggestions: [] }
+    }
     try {
       const result = await api.aiAgents.analyze({ page_context: 'canvas', item_type: itemType, item_id: itemId })
       useChatStore.getState().addMessage('action', `Found ${result.issues.length} issues and ${result.suggestions.length} suggestions`, {
@@ -209,7 +250,10 @@ export const skills = {
   },
 
   async regenerateCharacter(projectId: string, charId: string, prompt: string) {
-    return api.characters.regenerate(projectId, charId, { prompt, gacha: true })
+    return api.characters.regenerate(projectId, charId, {
+      prompt: buildCharacterMaterialPrompt(prompt, getCharacterMaterialArtStyle()),
+      gacha: true,
+    })
   },
 
   async regenerateKeyframe(projectId: string, episodeId: string, keyframeId: string, prompt: string) {
@@ -219,9 +263,19 @@ export const skills = {
 
 // === Asset creators (replace old node creators) ===
 
+function getCharacterMaterialArtStyle(): string {
+  const artDirection = useProjectDB.getState().artDirection
+  return artDirection.customStyle || artDirection.stylePreset || 'cinematic'
+}
+
+function toCharacterMaterialPrompt(char: Character): string {
+  const basePrompt = char.prompt || char.description || char.asset_identifier || char.asset_id
+  return buildCharacterMaterialPrompt(basePrompt, getCharacterMaterialArtStyle())
+}
+
 function createCharacterAssets(characters: Character[]) {
   const assetIds = characters.map((char, i) =>
-    addVisualAsset('character', char.asset_identifier, char.img_url, char.prompt, char.asset_id, i)
+    addVisualAsset('character', char.asset_identifier, char.img_url, toCharacterMaterialPrompt(char), char.asset_id, i)
   )
   useChatStore.getState().addMessage('action', `Created ${assetIds.length} character assets`, {
     type: 'generate_characters', status: 'success',
@@ -327,6 +381,107 @@ function createDemoKeyframes(
   }))
   projectStore.setKeyframes(demoKeyframes)
   return createKeyframeAssets(timelineStore, mappingStore, demoKeyframes)
+}
+
+/**
+ * Parse `[IMAGE_PROMPT]: ...` lines (or bullet lines / numbered lines) out of
+ * an LLM response. Falls back to splitting non-empty lines if no marker is
+ * found, so we still get some prompts even when the model ignores the format.
+ */
+function extractImagePrompts(text: string, count: number): string[] {
+  const out: string[] = []
+  const re = /\[IMAGE_PROMPT\]\s*[:：]\s*([^\n]+)/gi
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) && out.length < count) out.push(m[1].trim())
+  if (out.length > 0) return out
+  // Fallback: numbered or bullet lines
+  const lines = text
+    .split('\n')
+    .map((l) => l.replace(/^[\s\-•*]*\d+[.、)]\s*/, '').replace(/^[\s\-•*]+/, '').trim())
+    .filter((l) => l.length > 12)
+  return lines.slice(0, count)
+}
+
+async function planKeyframePrompts(userInput: string, count: number): Promise<string[]> {
+  const projectDb = useProjectDB.getState()
+  const scriptText = projectDb.script?.text?.trim() ?? ''
+  const artStyle = projectDb.artDirection?.customStyle?.trim() || projectDb.artDirection?.stylePreset || ''
+  const system = `You are a storyboard artist. Produce exactly ${count} keyframe image prompts, one per line. Each line must start with "[IMAGE_PROMPT]:" followed by a detailed, self-contained visual prompt (1-2 sentences) that an image model can render directly. Cover the story arc beat by beat. No headers, no commentary, no numbering, just the ${count} [IMAGE_PROMPT] lines.`
+  const context = [
+    artStyle ? `Art style: ${artStyle}` : '',
+    scriptText ? `Script / story beats:\n${scriptText.slice(0, 4000)}` : '',
+    userInput ? `User request: ${userInput}` : '',
+  ].filter(Boolean).join('\n\n')
+  const userMsg = context || `Generate ${count} keyframes for a generic short animated film.`
+  let full = ''
+  try {
+    for await (const ev of streamClaude([{ role: 'user', content: userMsg }], { system })) {
+      if (ev.type === 'text') full += ev.text
+      else if (ev.type === 'error') break
+    }
+  } catch {
+    // Bridge unreachable — fall through to fallback prompts below.
+  }
+  const parsed = extractImagePrompts(full, count)
+  if (parsed.length >= 1) return parsed
+  return Array.from({ length: count }, (_, i) =>
+    userInput
+      ? `${userInput} — beat ${i + 1}, cinematic, ${artStyle || 'illustrated'}`
+      : `Cinematic keyframe ${i + 1}, ${artStyle || 'illustrated'}, dramatic lighting, wide shot`,
+  )
+}
+
+/**
+ * Local-mode keyframe generation: ask the LLM (via the bridge) for image
+ * prompts, create placeholder keyframe assets immediately, then fire image
+ * generation per-asset in parallel and patch each asset's imageUrl when its
+ * generation returns. Returns once placeholders + their timeline items exist;
+ * the images fill in asynchronously.
+ */
+async function generateKeyframesLocal(userInput: string, count: number) {
+  const timelineStore = useTimelineStore.getState()
+  const mappingStore = useMappingStore.getState()
+  const projectStore = useProjectStore.getState()
+  const chatStore = useChatStore.getState()
+  const assetStore = useAssetStore.getState()
+
+  chatStore.addMessage('system', `本地模式：正在为 ${count} 个关键帧生成提示词…`)
+  const prompts = await planKeyframePrompts(userInput, count)
+  chatStore.addMessage('system', `已生成 ${prompts.length} 条提示词，开始并行渲染图片…`)
+
+  const demoKeyframes: Keyframe[] = prompts.map((p, i) => ({
+    id: `kf_${i + 1}`,
+    beat_number: i + 1,
+    prompt: p,
+  }))
+  projectStore.setKeyframes(demoKeyframes)
+  const { assetIds, itemIds } = createKeyframeAssets(timelineStore, mappingStore, demoKeyframes)
+
+  // Fire-and-forget per-asset image generation. We deliberately don't await
+  // them all here so the function returns quickly and the UI can show
+  // placeholders → images as each completes.
+  void Promise.all(
+    assetIds.map(async (assetId, i) => {
+      const prompt = prompts[i]
+      try {
+        const result = await runCapability({
+          capability: 'text-to-image',
+          inputs: [{ kind: 'text', text: prompt }],
+          params: { aspect: '16:9' },
+        })
+        const url = result.outputs[0]?.url
+        if (!url) throw new Error('no image url')
+        assetStore.updateAsset(assetId, { imageUrl: url, status: 'completed' })
+      } catch (err) {
+        assetStore.updateAsset(assetId, { status: 'failed' })
+        chatStore.addMessage('system', `关键帧 ${i + 1} 渲染失败：${err instanceof Error ? err.message : String(err)}`)
+      }
+    }),
+  ).then(() => {
+    chatStore.addMessage('system', `✓ 关键帧渲染完成（${assetIds.length} 张）`)
+  })
+
+  return { assetIds, itemIds }
 }
 
 function getOrCreateKeyframeTrack() {

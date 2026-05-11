@@ -45,7 +45,11 @@ export interface Character {
   prompt?: string;
   description?: string;
 }
-export interface CharacterGenerateRequest { episodes: Episode[]; language?: string; }
+export interface CharacterGenerateRequest {
+  episodes: Episode[];
+  language?: string;
+  character_material_system_prompt?: string;
+}
 
 // Assets
 export interface BackendAsset {

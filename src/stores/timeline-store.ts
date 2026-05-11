@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import { createIdbStorage } from '@/lib/storage/idb-storage';
 import { v4 as uuid } from 'uuid';
 import type { Shot, Track, TrackType, TimelineItem } from '@/types/timeline';
 
@@ -261,6 +262,7 @@ export const useTimelineStore = create<TimelineState & TimelineActions>()(
     {
       name: 'timeline-store-v2',
       partialize: (state) => ({ tracks: state.tracks, shots: state.shots, duration: state.duration }),
+      storage: createJSONStorage(() => createIdbStorage('timeline-store-v2')),
     }
   )
 );

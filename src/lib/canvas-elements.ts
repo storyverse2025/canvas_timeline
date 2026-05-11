@@ -188,7 +188,13 @@ const STYLE_MAP: Record<string, string> = {
   cyberpunk: 'cyberpunk neon aesthetic, futuristic',
 }
 
-function getArtStyle(opts?: EnsureElementsOptions): string {
+export const CHARACTER_MATERIAL_SYSTEM_PROMPT = 'Sony Venice camera, Panavision C-series lenses, 24mm focal length, f/1.4 aperture, full-frame capture, clean shadows, cinematic lighting, anamorphic lens, wide angle, ultra-high detail, 8k, Final Fantasy CG game style, refined CG, Unreal Engine 5 render. pure white background. Composition requirement: top 1/3 is a front-face extreme close-up with natural expression; lower 2/3 is divided into three blocks showing the character from neck down to feet only, no head visible, three-view full body reference: front view, side view, back view, hands naturally hanging down.'
+
+export function buildCharacterMaterialPrompt(basePrompt: string, artStyle: string): string {
+  return `${basePrompt}. ${artStyle}. ${CHARACTER_MATERIAL_SYSTEM_PROMPT}`
+}
+
+export function getArtStyle(opts?: EnsureElementsOptions): string {
   if (opts?.customStyle) return opts.customStyle
   if (opts?.stylePreset) return STYLE_MAP[opts.stylePreset] ?? opts.stylePreset
   return 'cinematic'
@@ -234,8 +240,9 @@ export async function ensureElements(
           characterDescription: `${char.name}, ${char.gender}, ${char.appearance}, wearing ${char.clothing}, ${char.expression}`,
           artStyle,
         })
-        // Always ensure artStyle is in the prompt (AI-generated image_prompt may omit it)
-        const prompt = char.image_prompt ? `${basePrompt}. ${artStyle}` : basePrompt
+        // Always ensure artStyle and the required three-view character material
+        // system prompt are present, because AI-generated image_prompt can omit both.
+        const prompt = char.image_prompt ? buildCharacterMaterialPrompt(basePrompt, artStyle) : basePrompt
         console.log('[ensureElements] Character prompt:', prompt)
         const r = await runCapability({
           capability: 'text-to-image',
@@ -303,24 +310,23 @@ export async function ensureElements(
 
 /** Build element context string for the storyboard generation prompt. */
 export function buildElementContext(inv: ElementInventory): string {
+  // Tell the LLM to put the [node:xxxxxx] short id in slot.image rather than
+  // a URL — the storyboard parser resolves short ids back to full URLs after
+  // validation. This avoids the LLM ever copying a long URL incorrectly.
   const lines: string[] = []
+  const fmt = (label: string, e: { name: string; nodeId: string; description: string }) =>
+    `- "${e.name}" [node:${e.nodeId.slice(0, 6)}] (${label}) — ${e.description}`
   if (inv.characters.length > 0) {
-    lines.push('## 角色 Characters')
-    inv.characters.forEach((c, i) => {
-      lines.push(`${i + 1}. "${c.name}" [node:${c.nodeId.slice(0, 6)}] — ${c.description} — image: ${c.imageUrl.slice(0, 100)}`)
-    })
+    lines.push('## 角色 Characters (use [node:xxxxxx] in slot.image)')
+    inv.characters.forEach((c) => lines.push(fmt('character', c)))
   }
   if (inv.props.length > 0) {
-    lines.push('## 道具 Props')
-    inv.props.forEach((p, i) => {
-      lines.push(`${i + 1}. "${p.name}" [node:${p.nodeId.slice(0, 6)}] — ${p.description} — image: ${p.imageUrl.slice(0, 100)}`)
-    })
+    lines.push('## 道具 Props (use [node:xxxxxx] in slot.image)')
+    inv.props.forEach((p) => lines.push(fmt('prop', p)))
   }
   if (inv.scenes.length > 0) {
-    lines.push('## 场景 Scenes')
-    inv.scenes.forEach((s, i) => {
-      lines.push(`${i + 1}. "${s.name}" [node:${s.nodeId.slice(0, 6)}] — ${s.description} — image: ${s.imageUrl.slice(0, 100)}`)
-    })
+    lines.push('## 场景 Scenes (use [node:xxxxxx] in slot.image)')
+    inv.scenes.forEach((s) => lines.push(fmt('scene', s)))
   }
   return lines.join('\n')
 }

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import { createIdbStorage } from '@/lib/storage/idb-storage';
 import { v4 as uuid } from 'uuid';
 import type { CanvasToTimelineLink } from '@/types/mapping';
 
@@ -95,6 +96,6 @@ export const useMappingStore = create<MappingState & MappingActions>()(
     setLinks: (links) => set({ links }),
     clearLinks: () => set({ links: [] }),
   })),
-  { name: 'mapping-store' }
+  { name: 'mapping-store', storage: createJSONStorage(() => createIdbStorage('mapping-store')) }
   )
 );

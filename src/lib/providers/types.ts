@@ -1,5 +1,5 @@
 export type MediaKind = 'image' | 'video' | 'audio'
-export type ProviderId = 'libtv' | 'fal' | 'doubao' | 'openai' | 'gemini'
+export type ProviderId = 'libtv' | 'fal' | 'doubao' | 'openai' | 'gemini' | 'tokenrouter'
 
 export interface ModelSpec {
   id: string;

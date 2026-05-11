@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest'
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { useProjectDB } from '@/stores/project-db'
+import { fillPrompt } from '@/lib/prompts'
 
 function resetDB() { useProjectDB.getState().clearAll() }
 
@@ -59,16 +62,76 @@ describe('Director Pipeline — Script State', () => {
 })
 
 describe('Director Pipeline — PipelineState Structure', () => {
-  // These test the type contracts without running the actual AI calls
-  it('pipeline state has 3 stages', async () => {
-    // Import the module to check the initial state shape
-    const { runDirectorPipeline } = await import('@/lib/director-assistant')
-    // We can't run it without AI, but we can verify the function exists
+  it('exposes redesigned script-to-casting stages before storyboard generation', async () => {
+    const { createDirectorInitialState, runDirectorPipeline } = await import('@/lib/director-assistant')
     expect(typeof runDirectorPipeline).toBe('function')
+
+    const state = createDirectorInitialState()
+    const labels = state.stages.flatMap((stage) => stage.steps.map((step) => step.label))
+    expect(labels).toEqual(expect.arrayContaining([
+      '剧本框架七层校准',
+      '完整剧本扩写',
+      '剧本医生圆桌会诊',
+      '台词专家全量诊断',
+      'Casting 角色卡与表演锚点',
+      '角色/场景/道具素材生成',
+    ]))
+    expect(state.stages[0].description).toContain('Script → Casting')
   })
 
   it('runDirectorStage accepts stage ids', async () => {
     const { runDirectorStage } = await import('@/lib/director-assistant')
     expect(typeof runDirectorStage).toBe('function')
+  })
+})
+
+describe('Director Pipeline — Server Skill Files', () => {
+  const skillRoot = join(process.cwd(), '.claude', 'skills')
+  const skills = [
+    ['script-framework-qa', '七步流程'],
+    ['script-writing-expansion', '写作模式'],
+    ['script-doctor-roundtable', '剧本医生'],
+    ['dialogue-doctor-diagnosis', '七维诊断框架'],
+  ] as const
+
+  it('saves uploaded script skills under project .claude skills for server discovery', () => {
+    for (const [name, marker] of skills) {
+      const path = join(skillRoot, name, 'SKILL.md')
+      expect(existsSync(path), `${name} should exist`).toBe(true)
+      expect(readFileSync(path, 'utf8')).toContain(marker)
+    }
+  })
+
+  it('director prompts reference the saved skills and preserve script-to-casting contract', () => {
+    const prompt = fillPrompt('scriptToCastingFlow', {
+      scriptText: '场景1：主角沉默。',
+      artStyle: 'cinematic',
+      canvasContext: '画布为空',
+      existingStoryboard: '',
+    })
+    expect(prompt).toContain('script-framework-qa')
+    expect(prompt).toContain('script-writing-expansion')
+    expect(prompt).toContain('script-doctor-roundtable')
+    expect(prompt).toContain('dialogue-doctor-diagnosis')
+    expect(prompt).toContain('Casting 角色卡')
+    expect(prompt).toContain('只输出 JSON')
+  })
+
+  it('character material prompt enforces the required three-view CG system prompt', () => {
+    const prompt = fillPrompt('characterImageGen', {
+      characterDescription: '女主角，黑色短发，银色战术外套',
+      artStyle: 'cinematic',
+    })
+    expect(prompt).toContain('Sony Venice camera')
+    expect(prompt).toContain('Panavision C-series lenses')
+    expect(prompt).toContain('24mm focal length')
+    expect(prompt).toContain('f/1.4 aperture')
+    expect(prompt).toContain('Final Fantasy CG game style')
+    expect(prompt).toContain('top 1/3')
+    expect(prompt).toContain('lower 2/3')
+    expect(prompt).toContain('three-view')
+    expect(prompt).toContain('front view, side view, back view')
+    expect(prompt).toContain('no head visible')
+    expect(prompt).toContain('pure white background')
   })
 })

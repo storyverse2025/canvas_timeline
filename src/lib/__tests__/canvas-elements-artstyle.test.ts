@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { buildCharacterMaterialPrompt } from '@/lib/canvas-elements'
 
 /**
  * Regression test for the bug where AI agent-generated character/scene images
@@ -16,14 +17,19 @@ describe('ensureElements: artStyle always applied', () => {
     return char.image_prompt ? `${basePrompt}. ${artStyle}` : basePrompt
   }
 
-  it('appends artStyle when AI-generated image_prompt omits it', () => {
-    // AI generated a prompt WITHOUT the art style (common failure mode)
+  it('appends artStyle and character material system prompt when AI-generated image_prompt omits them', () => {
+    // AI generated a prompt WITHOUT the art style/system prompt (common failure mode)
     const char = { image_prompt: 'A young woman with red hair, full body' }
     const artStyle = 'anime style, cel-shaded, vibrant colors'
-    const prompt = buildCharacterPrompt({ ...char, fallback: 'default' }, artStyle)
+    const prompt = buildCharacterMaterialPrompt(char.image_prompt, artStyle)
 
     expect(prompt).toContain('anime style')
     expect(prompt).toContain('red hair')
+    expect(prompt).toContain('Sony Venice camera')
+    expect(prompt).toContain('Panavision C-series lenses')
+    expect(prompt).toContain('Final Fantasy CG game style')
+    expect(prompt).toContain('three-view full body reference')
+    expect(prompt).toContain('no head visible')
   })
 
   it('keeps template fallback intact when image_prompt is missing', () => {

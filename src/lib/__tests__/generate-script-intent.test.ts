@@ -6,6 +6,7 @@ import { useProjectStore } from '@/stores/project-store'
 import { useTimelineStore } from '@/stores/timeline-store'
 import { useCanvasStore } from '@/stores/canvas-store'
 import { useProjectDB } from '@/stores/project-db'
+import { useAssetStore } from '@/stores/asset-store'
 
 const USER_SCRIPT_PROMPT = `Generate script: 像素进化风 ——【角色觉醒】（主打成长感与社区共鸣）
 0-3秒：画面是一个极其简陋的像素小人，正面对着一扇关着的门，门缝里塞进来一张极具质感的【入学邀请卡】。
@@ -42,6 +43,7 @@ function resetStores() {
     snapInterval: 1,
   })
   useCanvasStore.getState().clearAll()
+  useAssetStore.setState({ assets: [] })
   useProjectDB.getState().clearAll()
 }
 
@@ -151,5 +153,48 @@ describe('Generate Script intent', () => {
 
     const actionMessage = useChatStore.getState().messages.find((message) => message.action?.type === 'generate_script')
     expect(actionMessage?.content).toContain('4 个可编辑时间线节拍')
+  })
+
+  it('wraps backend character asset prompts with the three-view material system prompt', async () => {
+    const generateSpy = vi.spyOn(api.characters, 'generate').mockResolvedValue({
+      characters: [
+        {
+          asset_id: 'char_hero',
+          asset_identifier: '英雄',
+          img_url: '/uploads/hero.png',
+          prompt: 'A young hero in a silver coat',
+          description: '主角',
+        },
+      ],
+    })
+
+    const intent = detectIntent('生成角色')
+    expect(intent?.skill).toBe('generateCharacters')
+
+    await executeIntent(intent!, 'test-project', '生成角色')
+
+    expect(generateSpy).toHaveBeenCalledWith(
+      'test-project',
+      expect.objectContaining({
+        character_material_system_prompt: expect.stringContaining('Sony Venice camera'),
+      }),
+    )
+
+    const characters = useProjectStore.getState().characters
+    expect(characters).toHaveLength(1)
+    expect(characters[0].prompt).toContain('A young hero in a silver coat')
+    expect(characters[0].prompt).toContain('Sony Venice camera')
+    expect(characters[0].prompt).toContain('front view')
+    expect(characters[0].prompt).toContain('side view')
+    expect(characters[0].prompt).toContain('back view')
+
+    const characterAssets = useAssetStore.getState().getAssetsByType('character')
+    expect(characterAssets).toHaveLength(1)
+    expect(characterAssets[0].prompt).toContain('A young hero in a silver coat')
+    expect(characterAssets[0].prompt).toContain('Sony Venice camera')
+    expect(characterAssets[0].prompt).toContain('Panavision C-series lenses')
+    expect(characterAssets[0].prompt).toContain('Final Fantasy CG game style')
+    expect(characterAssets[0].prompt).toContain('three-view full body reference')
+    expect(characterAssets[0].prompt).toContain('no head visible')
   })
 })

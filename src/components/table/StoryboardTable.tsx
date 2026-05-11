@@ -1,5 +1,6 @@
-import { useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { Image as ImageIcon, Video, Wand2, Upload, Play, Volume2 } from 'lucide-react'
+import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { useStoryboardStore } from '@/stores/storyboard-store'
 import { useTimelineStore } from '@/stores/timeline-store'
@@ -9,6 +10,11 @@ import { useLibtvTasksStore } from '@/stores/libtv-tasks-store'
 import { TableContextMenu, type TableMenuState } from './TableContextMenu'
 import { BatchToolbar } from '@/components/batch/BatchToolbar'
 import { useShotEditorStore } from '@/stores/shot-editor-store'
+import { runCapability } from '@/lib/capabilities/client'
+import { VoiceFeedbackButton, type VoicePlan } from '@/components/canvas/VoiceFeedbackButton'
+import { useAssetStore } from '@/stores/asset-store'
+import { useCanvasStore } from '@/stores/canvas-store'
+import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import type { StoryboardRow, ElementSlot } from '@/types/storyboard'
 
 interface Col {
@@ -20,6 +26,7 @@ interface Col {
 
 const COLUMNS: Col[] = [
   { key: 'index',               label: '#',             width: 'w-10' },
+  { key: 'voice',               label: '语音',          width: 'w-12' },
   { key: 'shot_number',         label: '镜号',          width: 'w-20',  type: 'text' },
   { key: 'duration',            label: '时长(秒)',      width: 'w-20',  type: 'number' },
   { key: 'visual_description',  label: '画面描述',      width: 'w-56',  type: 'multiline' },
@@ -209,6 +216,136 @@ export function StoryboardTable() {
     setActiveTab('timeline')
   }
 
+  /**
+   * One-shot repair: fill in missing/broken slot images on every storyboard
+   * row by matching slot.description / slot.nodeId against canvas asset names
+   * + descriptions. Needed because earlier prompts truncated URLs to 100
+   * chars when handing them to the LLM, leaving rows with garbage in
+   * `slot.image`. Future generations use [node:xxxxxx] short ids and resolve
+   * cleanly via the parser, so this button is only a back-fill.
+   */
+  const repairSlotImages = useCallback(() => {
+    const looksLikeUrl = (s: string) =>
+      /^https?:\/\//i.test(s) || s.startsWith('data:') || s.startsWith('/')
+    const norm = (s: string | undefined) => (s ?? '').trim().toLowerCase()
+    const assets = useAssetStore.getState().assets
+    const items = useCanvasItemStore.getState().items
+    const nodes = useCanvasStore.getState().nodes
+    type Cand = { kind: 'character' | 'scene' | 'prop' | 'keyframe'; name: string; description: string; imageUrl: string; nodeId?: string }
+    const candidates: Cand[] = [
+      ...assets
+        .filter((a) => !!a.imageUrl)
+        .map<Cand>((a) => ({ kind: a.type, name: a.name, description: a.description ?? '', imageUrl: a.imageUrl ?? '' })),
+      ...nodes
+        .map((n) => {
+          const itemId = (n.data as { itemId?: string }).itemId
+          if (!itemId) return null
+          const it = items[itemId]
+          if (!it || it.kind !== 'image' || !it.content || !looksLikeUrl(it.content)) return null
+          return {
+            kind: 'keyframe' as const,
+            name: it.name ?? '',
+            description: it.prompt ?? it.name ?? '',
+            imageUrl: it.content,
+            nodeId: n.id,
+          } satisfies Cand
+        })
+        .filter((c): c is Cand => !!c),
+    ]
+    const findMatch = (slot: ElementSlot, prefer: Cand['kind'][]): Cand | undefined => {
+      const desc = norm(slot.description)
+      const sid = (slot.nodeId ?? '').slice(0, 8)
+      // 1. Exact prefix-id match against canvas nodes.
+      if (sid) {
+        const byId = candidates.find((c) => c.nodeId?.startsWith(sid))
+        if (byId) return byId
+      }
+      if (!desc) return undefined
+      // 2. Walk preferred kinds first to avoid e.g. matching a prop to character1.
+      for (const k of prefer) {
+        for (const c of candidates) {
+          if (c.kind !== k) continue
+          const cn = norm(c.name)
+          const cd = norm(c.description)
+          if (!cn && !cd) continue
+          if (cn && desc.includes(cn)) return c
+          if (cn && cn.includes(desc.slice(0, 12))) return c
+          if (cd && desc.startsWith(cd.slice(0, 16))) return c
+          if (cd && cd.startsWith(desc.slice(0, 16))) return c
+        }
+      }
+      return undefined
+    }
+    const allRows = useStoryboardStore.getState().rows
+    let fixed = 0
+    for (const row of allRows) {
+      const patch: Partial<StoryboardRow> = {}
+      const slotsConfig = [
+        { key: 'character1' as const, prefer: ['character'] as Cand['kind'][] },
+        { key: 'character2' as const, prefer: ['character'] as Cand['kind'][] },
+        { key: 'prop1' as const,      prefer: ['prop'] as Cand['kind'][] },
+        { key: 'prop2' as const,      prefer: ['prop'] as Cand['kind'][] },
+        { key: 'scene' as const,      prefer: ['scene', 'keyframe'] as Cand['kind'][] },
+      ]
+      for (const { key, prefer } of slotsConfig) {
+        const slot = row[key]
+        if (!slot) continue
+        const cur = String(slot.image ?? '')
+        if (cur && looksLikeUrl(cur)) continue // already a real URL — leave alone
+        const match = findMatch(slot, prefer)
+        if (!match) continue
+        patch[key] = { ...slot, image: match.imageUrl, nodeId: match.nodeId ?? slot.nodeId ?? '' }
+        fixed++
+      }
+      // Reference image too — same problem can hit r.reference_image.
+      const ref = String(row.reference_image ?? '')
+      if (!looksLikeUrl(ref) && row.character1?.image && looksLikeUrl(String(row.character1.image))) {
+        // Leave reference_image alone unless explicitly broken; only fix obvious cases.
+      }
+      if (Object.keys(patch).length > 0) updateRow(row.id, patch)
+    }
+    toast.success(`图片已修复 · 共 ${fixed} 个槽位`)
+  }, [updateRow])
+
+  // Voice-driven keyframe regen for a single shot row. Reads the row freshly
+  // from the store so we always use the latest slot images / metadata.
+  const handleVoicePlanReady = useCallback(async (plan: VoicePlan) => {
+    const row = useStoryboardStore.getState().rows.find((r) => r.id === plan.elementId)
+    if (!row) return
+    const refImages = [
+      row.character1?.image, row.character2?.image,
+      row.prop1?.image, row.prop2?.image,
+      row.scene?.image, row.reference_image,
+    ].filter((u): u is string => !!u && u.length > 0)
+    updateRow(row.id, { status: 'in_progress' })
+    try {
+      const result = await runCapability({
+        capability: 'text-to-image',
+        inputs: [
+          { kind: 'text', text: plan.newPrompt },
+          ...refImages.map((url) => ({ kind: 'image' as const, url })),
+        ],
+        params: { aspect: '16:9' },
+      })
+      const url = result.outputs[0]?.url
+      if (!url) throw new Error('regen returned no image')
+      updateRow(row.id, {
+        keyframeUrl: url,
+        reference_image: url,
+        storyboard_prompts: plan.newPrompt,
+        status: 'completed',
+      })
+      toast.success(`镜头 ${row.shot_number || row.id.slice(0, 4)} 已根据语音重生`, {
+        description: plan.userIntent?.slice(0, 120),
+      })
+    } catch (err) {
+      updateRow(row.id, { status: 'failed' })
+      toast.error('镜头语音重生失败', {
+        description: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }, [updateRow])
+
   const handleRowContextMenu = (e: React.MouseEvent, rowId: string) => {
     e.preventDefault()
     setCtxMenu({ rowId, x: e.clientX, y: e.clientY })
@@ -221,6 +358,12 @@ export function StoryboardTable() {
           分镜表 ({rows.length}) · {totalDuration.toFixed(1)}s
         </div>
         {rows.length > 0 && <BatchToolbar />}
+        <button
+          className="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-800 text-zinc-300 shrink-0"
+          onClick={repairSlotImages}
+          disabled={rows.length === 0}
+          title="把每一行的角色/道具/场景图片，按名称/描述匹配回当前画布资产"
+        >同步画布图片</button>
         <button
           className="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-800 text-zinc-300 shrink-0"
           onClick={() => { if (confirm('清空分镜表？')) clear() }}
@@ -264,6 +407,31 @@ export function StoryboardTable() {
                       <button className="hover:text-primary inline-flex items-center gap-1" onClick={() => jumpToTimeline(idx)} title="跳转到时间线">
                         <Play className="w-3 h-3" />{idx + 1}
                       </button>
+                    </td>
+                    {/* 语音 — voice-feedback mic for this shot */}
+                    <td className="px-2 py-2 border-b border-zinc-900 text-center">
+                      <VoiceFeedbackButton
+                        elementKind="shot"
+                        elementId={r.id}
+                        label={`镜头 ${r.shot_number || idx + 1}`}
+                        elementContext={{
+                          shot_number: r.shot_number,
+                          duration: r.duration,
+                          visual_description: r.visual_description,
+                          visual_anchor: r.visual_anchor,
+                          shot_size: r.shot_size,
+                          character_actions: r.character_actions,
+                          emotion_mood: r.emotion_mood,
+                          emotion_atmosphere: r.emotion_atmosphere,
+                          lighting_atmosphere: r.lighting_atmosphere,
+                          dialogue: r.dialogue,
+                          storyboard_prompts: r.storyboard_prompts,
+                          motion_prompts: r.motion_prompts,
+                          current_keyframe: r.keyframeUrl ?? r.reference_image ?? '',
+                        }}
+                        onPlanReady={handleVoicePlanReady}
+                        compact
+                      />
                     </td>
                     {/* 镜号 */}
                     <td className="px-2 py-2 border-b border-zinc-900">

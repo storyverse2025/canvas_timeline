@@ -44,17 +44,26 @@ export const PROVIDERS: ProviderSpec[] = [
     ],
   },
   {
+    id: 'tokenrouter', label: 'TokenRouter', envVar: 'TOKENROUTER_API_KEY',
+    models: [
+      { id: 'openai/gpt-5.4-image-2', label: 'GPT Image 2 (默认)', kind: 'image' },
+      { id: 'openai/gpt-5-image', label: 'GPT-5 Image', kind: 'image' },
+      { id: 'openai/gpt-5-image-mini', label: 'GPT-5 Image Mini', kind: 'image' },
+    ],
+  },
+  {
     id: 'openai', label: 'OpenAI', envVar: 'OPENAI_API_KEY',
     models: [
-      { id: 'gpt-image-1', label: 'GPT Image 1', kind: 'image' },
+      { id: 'gpt-image-1', label: 'GPT Image 1 (直连)', kind: 'image' },
       { id: 'dall-e-3', label: 'DALL·E 3', kind: 'image' },
     ],
   },
   {
-    id: 'gemini', label: 'Google Gemini', envVar: 'GEMINI_API_KEY',
+    id: 'gemini', label: 'Google Gemini (via TokenRouter)', envVar: 'TOKENROUTER_API_KEY',
     models: [
-      { id: 'gemini-2.5-flash-image-preview', label: 'Gemini 2.5 Flash Image', kind: 'image' },
-      { id: 'gemini-2.0-flash-exp', label: 'Gemini 2.0 Flash', kind: 'image' },
+      { id: 'google/gemini-3.1-flash-image-preview', label: 'Gemini 3 Flash (默认)', kind: 'image' },
+      { id: 'google/gemini-3-pro-image-preview', label: 'Gemini 3 Pro Image', kind: 'image' },
+      { id: 'google/gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image', kind: 'image' },
     ],
   },
 ]

@@ -2,6 +2,7 @@ import { streamClaude } from './claude-client'
 import { generateImage, generateVideo, generateSfx } from './fal-client'
 import { api } from './api-client'
 import { isBackendAvailable, ensureAuth } from './api'
+import { buildCharacterMaterialPrompt, CHARACTER_MATERIAL_SYSTEM_PROMPT } from './canvas-elements'
 import {
   episodeToBeats,
   characterToNodeData,
@@ -289,10 +290,21 @@ export async function generateStep2_Assets(): Promise<{ nodeCount: number; image
 
       // Characters
       if (episodes) {
-        const charResult = await api.characters.generate(PROJECT_ID, { episodes, language: 'zh' })
+        const charResult = await api.characters.generate(PROJECT_ID, {
+          episodes,
+          language: 'zh',
+          character_material_system_prompt: CHARACTER_MATERIAL_SYSTEM_PROMPT,
+        })
         if (charResult.characters) {
-          projectStore.setCharacters(charResult.characters)
-          log(`Step 2: Backend returned ${charResult.characters.length} characters`)
+          const characters = charResult.characters.map((char) => ({
+            ...char,
+            prompt: buildCharacterMaterialPrompt(
+              char.prompt || char.description || char.asset_identifier || 'character material reference',
+              'cinematic production character sheet',
+            ),
+          }))
+          projectStore.setCharacters(characters)
+          log(`Step 2: Backend returned ${characters.length} characters`)
         }
       }
 

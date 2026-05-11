@@ -39,7 +39,7 @@ export function NodeFloatingToolbar({ nodeId, itemId, isVisible }: Props) {
       : []
     // When source is a text node, seed its content into the prompt.
     const selfText = item.kind === 'text' && item.content ? [item.content] : []
-    const prompt = [item.name, ...selfText, ...upstream.texts].filter(Boolean).join(' · ')
+    const prompt = [...upstream.systemTexts, ...upstream.styleTexts, item.name, ...selfText, ...upstream.texts].filter(Boolean).join(' · ')
     const refImages = [...selfImage, ...upstream.images]
     openDialog({ nodeId, itemId: item.id, prompt, upstreamImages: refImages, defaultKind: kind })
   }

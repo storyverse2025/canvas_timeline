@@ -36,16 +36,18 @@ export interface PipelineState {
   fixes: string[]
 }
 
-function createInitialState(): PipelineState {
+export function createDirectorInitialState(): PipelineState {
   return {
     stages: [
       {
-        id: 'optimize', label: '01 优化', description: '结构化拆解与镜头设计生成',
+        id: 'optimize', label: '01 优化', description: 'Script → Casting → Storyboard 智能优化流程',
         steps: [
-          { id: 'script-analysis', label: '剧本结构化分析', status: 'pending' },
-          { id: 'char-extraction', label: '角色提取与丰富', status: 'pending' },
-          { id: 'scene-extraction', label: '场景提取与丰富', status: 'pending' },
-          { id: 'element-generation', label: '素材生成', status: 'pending' },
+          { id: 'skill-calibration', label: '剧本框架七层校准', status: 'pending' },
+          { id: 'script-expansion', label: '完整剧本扩写', status: 'pending' },
+          { id: 'script-doctor', label: '剧本医生圆桌会诊', status: 'pending' },
+          { id: 'dialogue-diagnosis', label: '台词专家全量诊断', status: 'pending' },
+          { id: 'casting-breakdown', label: 'Casting 角色卡与表演锚点', status: 'pending' },
+          { id: 'element-generation', label: '角色/场景/道具素材生成', status: 'pending' },
           { id: 'visual-anchor', label: '视觉锚定提取', status: 'pending' },
           { id: 'visual-strategy', label: '全局视觉策略', status: 'pending' },
           { id: 'shot-allocation', label: '镜头分配计划', status: 'pending' },
@@ -109,68 +111,68 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
     ? `\n现有分镜表（${storyboardRows.length}行）：\n${storyboardRows.map((r) => `${r.shot_number}: ${r.visual_description}`).join('\n')}`
     : ''
 
-  // Step 1: 剧本结构化分析
+  // Step 1-5: Script → Casting creative intelligence pass.
+  // One model pass reads the server-side project skills and returns the durable
+  // creative contract used by casting, asset generation, and storyboard design.
   setStep(state, 0, 0, 'running'); onUpdate(state)
-  const scriptAnalysis = await aiCall(fillPrompt('scriptAnalysis', {
-    scriptText, canvasContext: canvasCtx, existingStoryboard,
+  const scriptToCastingReport = await aiCall(fillPrompt('scriptToCastingFlow', {
+    scriptText, artStyle, canvasContext: canvasCtx, existingStoryboard,
   }))
-  setStep(state, 0, 0, 'done', scriptAnalysis); onUpdate(state)
+  setStep(state, 0, 0, 'done', '已按 script-framework-qa 完成七层框架校准'); onUpdate(state)
+  setStep(state, 0, 1, 'done', '已按 script-writing-expansion 生成/补齐完整剧本基准'); onUpdate(state)
+  setStep(state, 0, 2, 'done', '已按 script-doctor-roundtable 完成结构会诊摘要'); onUpdate(state)
+  setStep(state, 0, 3, 'done', '已按 dialogue-doctor-diagnosis 完成台词病灶摘要'); onUpdate(state)
+  setStep(state, 0, 4, 'done', scriptToCastingReport); onUpdate(state)
 
-  // Step 2: 角色提取与丰富
-  setStep(state, 0, 1, 'running'); onUpdate(state)
+  const scriptAnalysis = scriptToCastingReport
   const extraction = await extractElementsFromScript(scriptAnalysis, artStyle)
   const characterDesigns = JSON.stringify(extraction.characters, null, 2)
-  setStep(state, 0, 1, 'done', `提取 ${extraction.characters.length} 个角色`); onUpdate(state)
-
-  // Step 3: 场景提取与丰富
-  setStep(state, 0, 2, 'running'); onUpdate(state)
   const sceneDesigns = JSON.stringify(extraction.scenes, null, 2)
   const propDesigns = JSON.stringify(extraction.props, null, 2)
-  setStep(state, 0, 2, 'done', `提取 ${extraction.scenes.length} 场景, ${extraction.props.length} 道具`); onUpdate(state)
 
-  // Step 4: 素材生成 (角色/场景图片)
-  setStep(state, 0, 3, 'running'); onUpdate(state)
+  // Step 6: 素材生成 (角色/场景图片)
+  setStep(state, 0, 5, 'running'); onUpdate(state)
   const inv = await ensureElements(
     (msg) => { /* silent — progress shown via pipeline UI */ },
-    { scriptText, stylePreset: artDir.stylePreset, customStyle: artDir.customStyle, extraction },
+    { scriptText: scriptAnalysis, stylePreset: artDir.stylePreset, customStyle: artDir.customStyle, extraction },
   )
   const elementCtx = buildElementContext(inv)
-  setStep(state, 0, 3, 'done', `${inv.characters.length} 角色, ${inv.scenes.length} 场景`); onUpdate(state)
+  setStep(state, 0, 5, 'done', `${inv.characters.length} 角色, ${inv.scenes.length} 场景`); onUpdate(state)
 
-  // Step 5: 视觉锚定提取
-  setStep(state, 0, 4, 'running'); onUpdate(state)
+  // Step 7: 视觉锚定提取
+  setStep(state, 0, 6, 'running'); onUpdate(state)
   const visualAnchor = await aiCall(fillPrompt('visualAnchor', {
     scriptAnalysis, characterDesigns, sceneDesigns, elementContext: elementCtx,
   }))
-  setStep(state, 0, 4, 'done', visualAnchor); onUpdate(state)
+  setStep(state, 0, 6, 'done', visualAnchor); onUpdate(state)
 
-  // Step 6: 全局视觉策略
-  setStep(state, 0, 5, 'running'); onUpdate(state)
+  // Step 8: 全局视觉策略
+  setStep(state, 0, 7, 'running'); onUpdate(state)
   const visualStrategy = await aiCall(fillPrompt('visualStrategy', {
     artStyle, stylePreset: artDir.stylePreset,
     scriptAnalysis: scriptAnalysis.slice(0, 500),
     visualAnchor: visualAnchor.slice(0, 500),
   }))
-  setStep(state, 0, 5, 'done', visualStrategy); onUpdate(state)
+  setStep(state, 0, 7, 'done', visualStrategy); onUpdate(state)
 
-  // Step 7: 镜头分配计划
-  setStep(state, 0, 6, 'running'); onUpdate(state)
+  // Step 9: 镜头分配计划
+  setStep(state, 0, 8, 'running'); onUpdate(state)
   const shotAllocation = await aiCall(fillPrompt('shotAllocation', {
     scriptAnalysis: scriptAnalysis.slice(0, 500),
     visualStrategy: visualStrategy.slice(0, 500),
   }))
-  setStep(state, 0, 6, 'done', shotAllocation); onUpdate(state)
+  setStep(state, 0, 8, 'done', shotAllocation); onUpdate(state)
 
-  // Step 8: 镜头构图设计
-  setStep(state, 0, 7, 'running'); onUpdate(state)
+  // Step 10: 镜头构图设计
+  setStep(state, 0, 9, 'running'); onUpdate(state)
   const shotComposition = await aiCall(fillPrompt('shotComposition', {
     shotAllocation: shotAllocation.slice(0, 800),
     visualAnchor: visualAnchor.slice(0, 500),
   }))
-  setStep(state, 0, 7, 'done', shotComposition); onUpdate(state)
+  setStep(state, 0, 9, 'done', shotComposition); onUpdate(state)
 
-  // Step 9: 生成分镜表 JSON
-  setStep(state, 0, 8, 'running'); onUpdate(state)
+  // Step 11: 生成分镜表 JSON
+  setStep(state, 0, 10, 'running'); onUpdate(state)
   const storyboardJson = await aiCall(fillPrompt('storyboardGeneration', {
     artStyle,
     characterDesigns: characterDesigns.slice(0, 800),
@@ -181,7 +183,7 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
     visualStrategy: visualStrategy.slice(0, 400),
     elementContext: elementCtx,
   }))
-  setStep(state, 0, 8, 'done', storyboardJson); onUpdate(state)
+  setStep(state, 0, 10, 'done', storyboardJson); onUpdate(state)
 
   return storyboardJson
 }
@@ -241,7 +243,7 @@ export type StageId = 'optimize' | 'selfcheck' | 'fix'
 export async function runDirectorPipeline(
   onUpdate: OnUpdate,
 ): Promise<{ state: PipelineState; storyboardJson: string }> {
-  const state = createInitialState()
+  const state = createDirectorInitialState()
   onUpdate(state)
 
   const storyboardJson = await runOptimize(state, onUpdate)
@@ -256,7 +258,7 @@ export async function runDirectorStage(
   existingJson?: string,
   onUpdate?: OnUpdate,
 ): Promise<string> {
-  const state = createInitialState()
+  const state = createDirectorInitialState()
   const update = onUpdate ?? (() => {})
 
   switch (stageId) {

@@ -42,7 +42,7 @@ export const api = {
 
   // === Characters ===
   characters: {
-    generate: (projectId: string, data: { episodes: Episode[]; language?: string }) =>
+    generate: (projectId: string, data: { episodes: Episode[]; language?: string; character_material_system_prompt?: string }) =>
       post<{ characters: Character[] }>(`/projects/${projectId}/characters`, data),
     stylize: (projectId: string, charId: string, data: Record<string, unknown>) =>
       post<Character>(`/projects/${projectId}/characters/${charId}/image_stylizations`, data),
@@ -216,5 +216,102 @@ export const api = {
   jobs: {
     getStatus: (projectId: string, jobId: string) =>
       get<JobStatus>(`/projects/${projectId}/jobs/${jobId}`),
+  },
+
+  // === Voice Feedback ===
+  // Sends a recorded audio clip about a single element. Backend transcribes
+  // + plans via Gemini-3 (TokenRouter) and stores a `new_prompt` on the job.
+  // The frontend polls /projects/{id}/progress.voice_feedback_jobs and runs
+  // its own local regeneration once the new_prompt is available.
+  voiceFeedback: {
+    submit: (
+      projectId: string,
+      data: {
+        audio: Blob;
+        elementKind: 'character' | 'scene' | 'prop' | 'keyframe' | 'shot';
+        elementId: string;
+        elementContext?: Record<string, unknown>;
+      },
+    ) => {
+      const fd = new FormData();
+      const filename =
+        data.audio.type.includes('webm') ? 'recording.webm'
+        : data.audio.type.includes('mp3') ? 'recording.mp3'
+        : 'recording.wav';
+      fd.append('audio', data.audio, filename);
+      fd.append('element_kind', data.elementKind);
+      fd.append('element_id', data.elementId);
+      fd.append('element_context', JSON.stringify(data.elementContext ?? {}));
+      return postForm<{ job_id: string; status: string }>(
+        `/projects/${projectId}/voice-feedback`,
+        fd,
+      );
+    },
+
+    // Frontend-only path: audio → TokenRouter Gemini 3 Flash → revised prompt.
+    // No backend project required. Used by canvas nodes / any element without a
+    // server-side id. Returns the plan synchronously (one round-trip, ~3-6s).
+    revise: async (data: {
+      audio: Blob;
+      elementKind: string;
+      elementContext?: Record<string, unknown>;
+    }): Promise<{
+      new_prompt: string;
+      user_intent: string;
+      transcript: string;
+      key_changes?: string[];
+      preserve?: string[];
+      severity?: string;
+    }> => {
+      const fd = new FormData();
+      const filename =
+        data.audio.type.includes('webm') ? 'recording.webm'
+        : data.audio.type.includes('mp3') ? 'recording.mp3'
+        : 'recording.wav';
+      fd.append('audio', data.audio, filename);
+      fd.append('element_kind', data.elementKind);
+      fd.append('element_context', JSON.stringify(data.elementContext ?? {}));
+      // Hits the vite plugin endpoint directly — no /api/v1 prefix, no auth.
+      const res = await fetch('/providers/voice-revise', { method: 'POST', body: fd });
+      if (!res.ok) {
+        const errText = await res.text().catch(() => res.statusText);
+        throw new Error(`voice-revise ${res.status}: ${errText.slice(0, 300)}`);
+      }
+      return res.json();
+    },
+  },
+
+  // === Project Progress ===
+  // Polled by the canvas/table to show inline status for in-flight regens
+  // and voice-feedback jobs.
+  progress: {
+    get: (projectId: string) =>
+      get<{
+        total_episodes: number;
+        scripts: { reviewed: number; pending: number };
+        storyboard: { completed: number; generating: number; pending: number; failed: number };
+        shots: { completed: number; generating: number; pending: number; failed: number };
+        failed_episodes: Array<{
+          episode_id: string;
+          episode_number: number;
+          stage: string;
+          error: string;
+        }>;
+        voice_feedback_jobs: Array<{
+          job_id: string;
+          element_kind: string;
+          element_id: string;
+          status: string;
+          phase?: string;
+          progress: number;
+          transcript?: string;
+          user_intent?: string;
+          new_prompt?: string;
+          downstream_job_id?: string;
+          error?: string | null;
+          created_at: string;
+          updated_at: string;
+        }>;
+      }>(`/projects/${projectId}/progress`),
   },
 };

@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
-import { persist } from 'zustand/middleware'
+import { persist, createJSONStorage } from 'zustand/middleware'
+import { createIdbStorage } from '@/lib/storage/idb-storage'
 import { v4 as uuid } from 'uuid'
 import type { StoryboardRow, StoryboardRowInput } from '@/types/storyboard'
 
@@ -68,6 +69,7 @@ export const useStoryboardStore = create<State & Actions>()(
     {
       name: 'storyboard-store',
       version: 4,
+      storage: createJSONStorage(() => createIdbStorage('storyboard-store')),
       migrate: (persisted: unknown, version) => {
         if (version < 4) {
           // Migrate v2 rows: rename aiImageUrl→keyframeUrl, aiVideoUrl→beatVideoUrl, add element slots

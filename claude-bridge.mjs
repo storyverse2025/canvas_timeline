@@ -1,23 +1,16 @@
 #!/usr/bin/env node
 /**
- * claude-bridge.mjs
+ * hermes-bridge.mjs
  *
  * Local HTTP bridge: accepts POST /v1/messages in Anthropic API format,
- * spawns `claude --dangerously-skip-permissions --output-format stream-json`,
- * and converts the stream-json output back into Anthropic SSE format.
+ * spawns `hermes chat -p`,
+ * and converts plain text output back into Anthropic-compatible JSON/SSE.
  *
- * Key observation: claude CLI with --output-format stream-json --verbose emits
- * {"type":"stream_event","event":{...}} lines whose inner "event" objects are
- * already valid Anthropic API events (message_start, content_block_delta, etc.).
- * We simply forward those inner events as SSE data lines.
- *
- * Skills loaded:
- *   ~/repos/storyverse-skills   (sv-pipeline, sv-intake, etc.)
- *   ~/repos/libtv-skills        (LibTV image/video generation)
- *   ~/repos/fal-skills/skills/claude.ai  (FAL.ai generation)
- *   ./.claude/skills/ai-script-creation-skill  (AI视频剧本提示词生成; discovered from project cwd)
+ * Skills/capabilities are handled by Hermes itself; this bridge no longer passes
+ * Claude Code plugin dirs or stream-json flags.
  */
 
+import './load-env.mjs'
 import http from 'http'
 import { spawn } from 'child_process'
 import { homedir } from 'os'
@@ -28,7 +21,7 @@ import { fileURLToPath } from 'url'
 const PORT = 3001
 const HOME = homedir()
 const PROJECT_ROOT = path.dirname(fileURLToPath(import.meta.url))
-const CLAUDE_BIN = process.env.CLAUDE_BIN || path.join(HOME, '.local/bin/claude')
+const HERMES_BIN = process.env.HERMES_BIN || 'hermes'
 const CODEX_BIN = process.env.CODEX_BIN || 'codex'
 const CODEX_TIMEOUT_MS = Number(process.env.CODEX_TIMEOUT_MS || 120000)
 
@@ -182,8 +175,8 @@ function sendBridgeError(res, message, stream, finalize) {
   }
 }
 
-async function handleClaudeFailure({ res, prompt, stream, reason, finalize }) {
-  console.warn(`[bridge] Claude unavailable; trying Codex fallback (${reason})`)
+async function handleHermesFailure({ res, prompt, stream, reason, finalize }) {
+  console.warn(`[bridge] Hermes unavailable; trying Codex fallback (${reason})`)
   try {
     const text = await runCodexFallback(prompt)
     if (stream) {
@@ -193,7 +186,7 @@ async function handleClaudeFailure({ res, prompt, stream, reason, finalize }) {
     }
   } catch (err) {
     console.error('[bridge] Codex fallback failed:', err.message)
-    sendBridgeError(res, 'Claude is unavailable and Codex fallback failed.', stream, finalize)
+    sendBridgeError(res, 'Hermes is unavailable and Codex fallback failed.', stream, finalize)
   }
 }
 
@@ -232,14 +225,7 @@ const server = http.createServer((req, res) => {
     const { messages = [], system, stream } = reqBody
     const prompt = buildPrompt(messages, system)
 
-    const args = [
-      '--dangerously-skip-permissions',
-      '--output-format', 'stream-json',
-      '--verbose',
-      '--include-partial-messages',
-      '-p', prompt,
-    ]
-    for (const dir of PLUGIN_DIRS) args.push('--plugin-dir', dir)
+    const args = ['chat', '-p', prompt]
 
     const env = {
       ...process.env,
@@ -247,9 +233,9 @@ const server = http.createServer((req, res) => {
       LIBTV_ACCESS_KEY: process.env.LIBTV_ACCESS_KEY || 'sk-libtv-f60919a34eac47a18cb5424ea3519d7d',
     }
 
-    console.log(`[bridge] → claude | msgs=${messages.length} plugins=${PLUGIN_DIRS.length} stream=${!!stream}`)
+    console.log(`[bridge] → hermes chat -p | msgs=${messages.length} plugins=${PLUGIN_DIRS.length} stream=${!!stream}`)
 
-    const child = spawn(CLAUDE_BIN, args, { env, cwd: PROJECT_ROOT, stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(HERMES_BIN, args, { env, cwd: PROJECT_ROOT, stdio: ['ignore', 'pipe', 'pipe'] })
 
     // ── streaming ─────────────────────────────────────────────────────────────
     if (stream) {
@@ -259,9 +245,8 @@ const server = http.createServer((req, res) => {
         'Connection': 'keep-alive',
       })
 
-      let stdoutBuf = ''
       let finalized = false
-      let finalText = ''   // accumulated from stream_events for non-stream fallback
+      let finalText = ''   // accumulated for logging/fallback
 
       function finalize() {
         if (finalized) return
@@ -271,29 +256,12 @@ const server = http.createServer((req, res) => {
       }
 
       child.stdout.on('data', chunk => {
-        stdoutBuf += chunk.toString()
-        const lines = stdoutBuf.split('\n')
-        stdoutBuf = lines.pop() ?? ''
-
-        for (const line of lines) {
-          if (!line.trim()) continue
-          let ev
-          try { ev = JSON.parse(line) } catch { continue }
-
-          if (ev.type === 'stream_event' && ev.event) {
-            // Forward the inner event directly — it's already Anthropic SSE format
-            writeSse(res, ev.event)
-
-            // Track text for cost/debug logging
-            const inner = ev.event
-            if (inner.type === 'content_block_delta' && inner.delta?.type === 'text_delta') {
-              finalText += inner.delta.text
-            }
-          } else if (ev.type === 'result') {
-            console.log(`[bridge] done | cost=$${(ev.total_cost_usd ?? 0).toFixed(4)} chars=${finalText.length}`)
-            finalize()
-          }
-        }
+        const text = chunk.toString()
+        finalText += text
+        writeSse(res, {
+          type: 'content_block_delta',
+          delta: { type: 'text_delta', text },
+        })
       })
 
       let stderrText = ''
@@ -304,41 +272,22 @@ const server = http.createServer((req, res) => {
       child.on('close', code => {
         if (finalized) return
         if (code !== 0 && !finalText.trim()) {
-          handleClaudeFailure({ res, prompt, stream: true, reason: stderrText.trim() || `exit ${code}`, finalize })
+          handleHermesFailure({ res, prompt, stream: true, reason: stderrText.trim() || `exit ${code}`, finalize })
           return
         }
         finalize()
       })
-      child.on('error', err => handleClaudeFailure({ res, prompt, stream: true, reason: err.message, finalize }))
+      child.on('error', err => handleHermesFailure({ res, prompt, stream: true, reason: err.message, finalize }))
       // Kill child only when the TCP socket closes (client truly disconnected),
       // NOT on req 'close' which fires when the request body is received.
       req.socket?.on('close', () => { if (!finalized) { child.kill(); finalize() } })
 
     // ── non-streaming ─────────────────────────────────────────────────────────
     } else {
-      let stdoutBuf = ''
       let finalText = ''
 
       child.stdout.on('data', chunk => {
-        stdoutBuf += chunk.toString()
-        const lines = stdoutBuf.split('\n')
-        stdoutBuf = lines.pop() ?? ''
-
-        for (const line of lines) {
-          if (!line.trim()) continue
-          let ev
-          try { ev = JSON.parse(line) } catch { continue }
-
-          // Accumulate text from content_block_delta events
-          if (ev.type === 'stream_event' && ev.event?.type === 'content_block_delta') {
-            const delta = ev.event.delta
-            if (delta?.type === 'text_delta') finalText += delta.text
-          }
-          // Also read from result.result as backup
-          if (ev.type === 'result' && typeof ev.result === 'string' && !finalText) {
-            finalText = ev.result
-          }
-        }
+        finalText += chunk.toString()
       })
 
       let stderrText = ''
@@ -349,7 +298,7 @@ const server = http.createServer((req, res) => {
 
       child.on('close', code => {
         if (code !== 0 || !finalText.trim()) {
-          handleClaudeFailure({ res, prompt, stream: false, reason: stderrText.trim() || `exit ${code}`, finalize: () => {} })
+          handleHermesFailure({ res, prompt, stream: false, reason: stderrText.trim() || `exit ${code}`, finalize: () => {} })
           return
         }
         res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -358,22 +307,23 @@ const server = http.createServer((req, res) => {
           type: 'message',
           role: 'assistant',
           content: [{ type: 'text', text: finalText }],
-          model: 'claude-code-bridge',
+          model: 'hermes-chat-bridge',
           stop_reason: 'end_turn',
           usage: { input_tokens: 0, output_tokens: finalText.length },
         }))
       })
 
-      child.on('error', err => handleClaudeFailure({ res, prompt, stream: false, reason: err.message, finalize: () => {} }))
+      child.on('error', err => handleHermesFailure({ res, prompt, stream: false, reason: err.message, finalize: () => {} }))
     }
   })
 })
 
 server.listen(PORT, () => {
-  console.log(`\n[bridge] Claude Code bridge → http://localhost:${PORT}`)
-  console.log(`[bridge] Claude CLI:   ${CLAUDE_BIN}`)
-  console.log(`[bridge] Plugin dirs (${PLUGIN_DIRS.length}/${CANDIDATE_PLUGIN_DIRS.length}):`)
+  console.log(`\n[bridge] Hermes chat bridge → http://localhost:${PORT}`)
+  console.log(`[bridge] Hermes CLI:   ${HERMES_BIN}`)
+  console.log(`[bridge] Plugin dirs discovered but not passed to hermes (${PLUGIN_DIRS.length}/${CANDIDATE_PLUGIN_DIRS.length}):`)
   for (const d of PLUGIN_DIRS) console.log(`           ${d}`)
   console.log(`[bridge] LIBTV_ACCESS_KEY: ${process.env.LIBTV_ACCESS_KEY ? '✓ set' : '⚠ using hardcoded fallback'}`)
-  console.log(`[bridge] FAL_KEY:          ${process.env.FAL_KEY ? '✓ set' : '⚠ not set'}\n`)
+  console.log(`[bridge] FAL_KEY:          ${process.env.FAL_KEY ? '✓ set' : '⚠ not set'}`)
+  console.log(`[bridge] TOKENROUTER_API_KEY: ${process.env.TOKENROUTER_API_KEY ? '✓ set' : '⚠ not set'}\n`)
 })

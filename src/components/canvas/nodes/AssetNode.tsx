@@ -1,9 +1,12 @@
 import { memo, useState, useCallback, useRef } from 'react'
 import { Handle, Position } from '@xyflow/react'
 import { User, MapPin, Package, Film, ImageIcon } from 'lucide-react'
+import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import type { Asset, AssetType } from '@/types/asset'
 import { useAssetStore } from '@/stores/asset-store'
+import { runCapability } from '@/lib/capabilities/client'
+import { VoiceFeedbackButton, type VoicePlan } from '@/components/canvas/VoiceFeedbackButton'
 
 export interface AssetNodeData extends Asset {
   assetId: string;
@@ -49,16 +52,58 @@ export const AssetNode = memo(function AssetNode({ data, selected }: Props) {
     e.dataTransfer.effectAllowed = 'copy'
   }, [data.assetId, data.type])
 
+  const handlePlanReady = useCallback(async (plan: VoicePlan) => {
+    const refs = data.imageUrl ? [data.imageUrl] : []
+    updateAsset(data.assetId, { status: 'generating' })
+    try {
+      const result = await runCapability({
+        capability: 'text-to-image',
+        inputs: [
+          { kind: 'text', text: plan.newPrompt },
+          ...refs.map((url) => ({ kind: 'image' as const, url })),
+        ],
+        params: { aspect: '1:1' },
+      })
+      const url = result.outputs[0]?.url
+      if (!url) throw new Error('regen returned no image')
+      updateAsset(data.assetId, { imageUrl: url, status: 'completed' })
+      toast.success(`已根据语音重生 · ${data.name}`, { description: plan.userIntent?.slice(0, 120) })
+    } catch (err) {
+      updateAsset(data.assetId, { status: 'failed' })
+      toast.error('语音重生失败', {
+        description: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }, [data.assetId, data.imageUrl, data.name, updateAsset])
+
   return (
     <div
       className={cn(
-        'w-[140px] rounded-lg border-2 shadow-md transition-all duration-150 cursor-grab active:cursor-grabbing',
+        'relative w-[140px] rounded-lg border-2 shadow-md transition-all duration-150 cursor-grab active:cursor-grabbing',
         cfg.color,
         selected && 'ring-2 ring-white ring-offset-1 ring-offset-background'
       )}
       draggable
       onDragStart={handleDragStart}
     >
+      {/* Voice-feedback mic — top-right overlay; stops propagation so it doesn't drag the node */}
+      <div className="absolute top-1 right-1 z-10">
+        <VoiceFeedbackButton
+          elementKind={data.type}
+          elementId={data.assetId}
+          label={data.name}
+          elementContext={{
+            id: data.assetId,
+            name: data.name,
+            description: data.description ?? '',
+            imageUrl: data.imageUrl ?? '',
+            type: data.type,
+            tags: data.tags ?? [],
+          }}
+          onPlanReady={handlePlanReady}
+          compact
+        />
+      </div>
       <Handle type="target" position={Position.Left} className="!w-2 !h-2 !bg-muted-foreground" />
 
       {/* Thumbnail */}

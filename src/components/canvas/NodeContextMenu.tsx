@@ -142,7 +142,7 @@ export function NodeContextMenu({ menu, onClose }: Props) {
     const selfImage = item.kind === 'image' && item.content && !/\.(mp4|webm|mov)(\?|$)/i.test(item.content)
       ? [item.content] : []
     const selfText = item.kind === 'text' && item.content ? [item.content] : []
-    const composedPrompt = [item.name, ...selfText, ...upstream.texts].filter(Boolean).join(' · ')
+    const composedPrompt = [...upstream.systemTexts, ...upstream.styleTexts, item.name, ...selfText, ...upstream.texts].filter(Boolean).join(' · ')
     openGenerateDialog({
       nodeId: menu.nodeId,
       itemId: item.id,
@@ -159,7 +159,7 @@ export function NodeContextMenu({ menu, onClose }: Props) {
     const selfImage = item.kind === 'image' && item.content && !/\.(mp4|webm|mov)(\?|$)/i.test(item.content)
       ? [item.content] : []
     const selfText = item.kind === 'text' && item.content ? [item.content] : []
-    const composedPrompt = [item.name, ...selfText, ...upstream.texts].filter(Boolean).join(' · ')
+    const composedPrompt = [...upstream.systemTexts, ...upstream.styleTexts, item.name, ...selfText, ...upstream.texts].filter(Boolean).join(' · ')
     openCapDialog({
       capability: cap,
       nodeId: menu.nodeId,

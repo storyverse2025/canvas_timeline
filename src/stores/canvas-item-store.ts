@@ -1,9 +1,11 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import { v4 as uuid } from 'uuid';
+import { createIdbStorage } from '@/lib/storage/idb-storage';
 
 export type CanvasItemKind = 'image' | 'text';
+export type CanvasItemRole = 'style' | 'system';
 
 export interface CanvasItem {
   id: string;
@@ -11,6 +13,8 @@ export interface CanvasItem {
   name: string;
   /** image: url, text: content */
   content: string;
+  /** Semantic tag for text items. 'style' = global art style, 'system' = system prompt. */
+  role?: CanvasItemRole;
   /** Generation metadata (set when AI-generated, for Edit panel) */
   prompt?: string;
   refImages?: string[];
@@ -58,6 +62,10 @@ export const useCanvasItemStore = create<ItemState & ItemActions>()(
 
       getItem: (id) => get().items[id],
     })),
-    { name: 'canvas-item-store' }
+    {
+      name: 'canvas-item-store',
+      // Image data URLs blow past the 5 MB localStorage cap; IDB has plenty.
+      storage: createJSONStorage(() => createIdbStorage('canvas-item-store')),
+    },
   )
 );

@@ -2,7 +2,7 @@ import { memo, useEffect, useRef, useState, useCallback } from 'react'
 import { Handle, Position, NodeResizer, useNodeId } from '@xyflow/react'
 import { NodeFloatingToolbar } from '../NodeFloatingToolbar'
 import { cn } from '@/lib/utils'
-import { useCanvasItemStore } from '@/stores/canvas-item-store'
+import { useCanvasItemStore, type CanvasItemRole } from '@/stores/canvas-item-store'
 
 export interface TextNodeData {
   itemId: string;
@@ -11,6 +11,12 @@ export interface TextNodeData {
 interface Props {
   data: TextNodeData;
   selected: boolean;
+}
+
+const ROLE_CYCLE: (CanvasItemRole | undefined)[] = [undefined, 'style', 'system']
+const ROLE_STYLES: Record<NonNullable<CanvasItemRole>, { border: string; ring: string; chipBg: string; chipText: string; label: string }> = {
+  style:  { border: 'border-purple-400', ring: 'ring-purple-400', chipBg: 'bg-purple-500/90', chipText: 'text-white',  label: '全局风格' },
+  system: { border: 'border-blue-400',   ring: 'ring-blue-400',   chipBg: 'bg-blue-500/90',   chipText: 'text-white',  label: '系统提示' },
 }
 
 export const TextCanvasNode = memo(function TextCanvasNode({ data, selected }: Props) {
@@ -36,17 +42,38 @@ export const TextCanvasNode = memo(function TextCanvasNode({ data, selected }: P
     if (draft !== item?.content) updateItem(data.itemId, { content: draft })
   }, [draft, item?.content, data.itemId, updateItem])
 
+  const cycleRole = useCallback(() => {
+    if (!item) return
+    const idx = ROLE_CYCLE.indexOf(item.role)
+    const next = ROLE_CYCLE[(idx + 1) % ROLE_CYCLE.length]
+    updateItem(data.itemId, { role: next })
+  }, [item, data.itemId, updateItem])
+
   if (!item) return null
+
+  const roleSkin = item.role ? ROLE_STYLES[item.role] : null
 
   return (
     <div
       className={cn(
-        'relative w-full h-full rounded-lg border-2 border-border bg-card shadow-md',
-        selected && 'ring-2 ring-primary'
+        'relative w-full h-full rounded-lg border-2 bg-card shadow-md',
+        roleSkin ? roleSkin.border : 'border-border',
+        selected && (roleSkin ? `ring-2 ${roleSkin.ring}` : 'ring-2 ring-primary'),
       )}
       onDoubleClick={startEdit}
     >
       <NodeFloatingToolbar nodeId={nodeId} itemId={data.itemId} isVisible={selected} />
+      <button
+        type="button"
+        title="切换角色：普通 → 全局风格 → 系统提示"
+        onClick={(e) => { e.stopPropagation(); cycleRole() }}
+        className={cn(
+          'absolute -top-2 -left-2 z-10 px-1.5 py-0.5 rounded text-[10px] font-medium border shadow-sm select-none cursor-pointer',
+          roleSkin ? `${roleSkin.chipBg} ${roleSkin.chipText} border-transparent` : 'bg-card text-muted-foreground border-border hover:text-foreground',
+        )}
+      >
+        {roleSkin ? roleSkin.label : 'T'}
+      </button>
       <NodeResizer
         isVisible={selected}
         minWidth={140}

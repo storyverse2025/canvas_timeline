@@ -210,24 +210,74 @@ async function runOpenAI(req: Req): Promise<{ url: string; kind: 'image' }> {
   return { url, kind: 'image' }
 }
 
-// ─── Gemini image ─────────────────────────────────────────────────────
-async function runGemini(req: Req): Promise<{ url: string; kind: 'image' }> {
-  const key = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY
-  if (!key) throw new Error('GEMINI_API_KEY not set')
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${req.model}:generateContent?key=${key}`, {
+// ─── TokenRouter (OpenAI-compatible) ─────────────────────────────────
+const TOKENROUTER_BASE_URL = 'https://www.tokenrouter.com/backend-api/v1'
+const TOKENROUTER_TEXT_MODEL = 'google/gemini-3-flash-preview'
+
+const TR_IMAGE_SIZE: Record<string, string> = {
+  '1:1': '1024x1024', '9:16': '1024x1792', '16:9': '1792x1024', '4:3': '1536x1152', '3:4': '1152x1536',
+}
+
+function tokenRouterBaseUrl(): string {
+  return (process.env.TOKENROUTER_BASE_URL || TOKENROUTER_BASE_URL).replace(/\/$/, '')
+}
+
+async function tokenRouterChat(systemPrompt: string, userText: string, temperature?: number): Promise<string> {
+  const key = process.env.TOKENROUTER_API_KEY
+  if (!key) throw new Error('TOKENROUTER_API_KEY not set')
+  const res = await fetch(`${tokenRouterBaseUrl()}/chat/completions`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      contents: [{ role: 'user', parts: [{ text: req.prompt }] }],
-      generationConfig: { responseModalities: ['IMAGE'] },
+      model: process.env.TOKENROUTER_TEXT_MODEL || TOKENROUTER_TEXT_MODEL,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userText },
+      ],
+      ...(temperature != null ? { temperature } : {}),
     }),
   })
-  if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`)
-  const data = (await res.json()) as { candidates?: { content?: { parts?: { inlineData?: { mimeType: string; data: string } }[] } }[] }
-  const part = data.candidates?.[0]?.content?.parts?.find((p) => p.inlineData)
-  const inline = part?.inlineData
-  if (!inline) throw new Error('Gemini: no image in response')
-  return { url: `data:${inline.mimeType};base64,${inline.data}`, kind: 'image' }
+  if (!res.ok) throw new Error(`TokenRouter chat ${res.status}: ${await res.text()}`)
+  const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
+  const text = data.choices?.[0]?.message?.content?.trim()
+  if (!text) throw new Error('TokenRouter: empty response')
+  return text
+}
+
+// ─── TokenRouter image (covers gemini provider + tokenrouter provider) ─────
+async function runTokenRouterImage(req: Req, providerPrefix?: string): Promise<{ url: string; kind: 'image' }> {
+  const key = process.env.TOKENROUTER_API_KEY
+  if (!key) throw new Error('TOKENROUTER_API_KEY not set')
+  // Accept either bare model id (e.g. "gpt-5.4-image-2") or full TokenRouter id ("openai/...", "google/...")
+  const model = req.model.includes('/') ? req.model : `${providerPrefix ?? ''}${req.model}`
+  const body: Record<string, unknown> = {
+    model,
+    prompt: req.prompt,
+    n: req.numImages ?? 1,
+    size: TR_IMAGE_SIZE[req.aspect ?? '16:9'] ?? '1024x1024',
+  }
+  const refs = (req.refImages ?? []).slice(0, 3).filter((u) => /^https?:\/\//i.test(u) || u.startsWith('data:'))
+  if (refs.length) body.image = refs
+  let res = await fetch(`${tokenRouterBaseUrl()}/images/generations`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok && refs.length) {
+    delete body.image
+    res = await fetch(`${tokenRouterBaseUrl()}/images/generations`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  }
+  if (!res.ok) throw new Error(`TokenRouter image ${res.status}: ${await res.text()}`)
+  const data = (await res.json()) as { data?: Array<{ url?: string; b64_json?: string }>; images?: Array<{ url?: string; b64_json?: string }> }
+  const items = data.data || data.images || []
+  const first = items[0]
+  const url = first?.url || (first?.b64_json ? `data:image/png;base64,${first.b64_json}` : undefined)
+  if (!url) throw new Error('TokenRouter: no image in response')
+  return { url, kind: 'image' }
 }
 
 // ─── Prompt optimizer (Gemini text) ───────────────────────────────────
@@ -241,8 +291,6 @@ interface OptimizeReq {
 }
 
 async function optimizePrompt(req: OptimizeReq): Promise<{ prompt: string }> {
-  const key = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY
-  if (!key) throw new Error('GEMINI_API_KEY not set')
   const durLine = req.kind === 'video' && req.duration ? `- Total duration: ~${req.duration}s` : ''
   const ratioLine = req.aspect ? `- Aspect ratio: ${req.aspect}` : ''
   const refCount = req.refImages?.length ?? 0
@@ -289,20 +337,113 @@ Return ONE cohesive prompt paragraph in English, no markdown, under 120 words.`
     durLine,
   ].filter(Boolean).join('\n')
 
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`, {
+  const text = await tokenRouterChat(sys, userMsg, 0.8)
+  return { prompt: text }
+}
+
+// ─── Voice revise (audio → revised image-gen prompt, frontend-only) ───
+interface VoiceRevisePlan {
+  new_prompt: string
+  user_intent: string
+  transcript: string
+  key_changes?: string[]
+  preserve?: string[]
+  severity?: 'minor' | 'moderate' | 'major'
+}
+
+async function readMultipart(req: IncomingMessage): Promise<{ audio: Buffer; audioMime: string; fields: Record<string, string> }> {
+  const ct = req.headers['content-type'] || ''
+  const m = ct.match(/boundary=(?:"([^"]+)"|([^;]+))/)
+  if (!m) throw new Error('voice-revise: missing multipart boundary')
+  const boundary = '--' + (m[1] ?? m[2]).trim()
+  const chunks: Buffer[] = []
+  for await (const c of req) chunks.push(c as Buffer)
+  const raw = Buffer.concat(chunks)
+  const parts: { name: string; filename?: string; contentType?: string; data: Buffer }[] = []
+  let idx = raw.indexOf(boundary)
+  while (idx >= 0) {
+    const start = idx + boundary.length
+    if (raw.slice(start, start + 2).toString() === '--') break
+    const headerEnd = raw.indexOf('\r\n\r\n', start)
+    if (headerEnd < 0) break
+    const headers = raw.slice(start, headerEnd).toString('utf8')
+    const next = raw.indexOf(boundary, headerEnd + 4)
+    if (next < 0) break
+    const data = raw.slice(headerEnd + 4, next - 2) // strip trailing \r\n
+    const nameM = headers.match(/name="([^"]+)"/)
+    const fileM = headers.match(/filename="([^"]*)"/)
+    const ctM = headers.match(/Content-Type:\s*(\S+)/i)
+    if (nameM) parts.push({ name: nameM[1], filename: fileM?.[1], contentType: ctM?.[1], data })
+    idx = next
+  }
+  const audioPart = parts.find((p) => p.name === 'audio' && p.filename != null)
+  if (!audioPart) throw new Error('voice-revise: no audio field')
+  const fields: Record<string, string> = {}
+  for (const p of parts) if (p.name !== 'audio') fields[p.name] = p.data.toString('utf8')
+  return { audio: audioPart.data, audioMime: audioPart.contentType || 'audio/webm', fields }
+}
+
+function audioFormatFromMime(mime: string): string {
+  // TokenRouter / OpenAI input_audio supports: wav, mp3. Gemini-3 also accepts webm/ogg in practice.
+  if (mime.includes('mp3') || mime.includes('mpeg')) return 'mp3'
+  if (mime.includes('wav')) return 'wav'
+  if (mime.includes('ogg')) return 'ogg'
+  return 'webm'
+}
+
+async function voiceRevise(req: IncomingMessage): Promise<VoiceRevisePlan> {
+  const key = process.env.TOKENROUTER_API_KEY
+  if (!key) throw new Error('TOKENROUTER_API_KEY not set')
+  const { audio, audioMime, fields } = await readMultipart(req)
+  const elementKind = fields.element_kind || 'image'
+  const elementContext = fields.element_context ? JSON.parse(fields.element_context) : {}
+  const audioB64 = audio.toString('base64')
+  const format = audioFormatFromMime(audioMime)
+
+  const sys = `You are a prompt-revision assistant for an AI image generator. The user has just recorded spoken feedback about a ${elementKind}. Listen to the audio, then output a JSON object describing how to revise the current generation prompt.
+
+Current element context (the user is talking about this):
+${JSON.stringify(elementContext, null, 2).slice(0, 1500)}
+
+Return JSON ONLY, no markdown, with this shape:
+{
+  "transcript": "<verbatim transcript of the audio>",
+  "user_intent": "<one sentence in the user's language summarising what they want changed>",
+  "new_prompt": "<a complete revised image-generation prompt that incorporates the user's feedback. Preserve everything in the original that wasn't criticised. Use English unless the original context is Chinese-heavy.>",
+  "key_changes": ["short bullet of what changed", ...],
+  "preserve": ["what was kept", ...],
+  "severity": "minor | moderate | major"
+}`
+
+  const res = await fetch(`${tokenRouterBaseUrl()}/chat/completions`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      systemInstruction: { parts: [{ text: sys }] },
-      contents: [{ role: 'user', parts: [{ text: userMsg }] }],
-      generationConfig: { temperature: 0.8 },
+      model: process.env.TOKENROUTER_TEXT_MODEL || TOKENROUTER_TEXT_MODEL,
+      messages: [
+        { role: 'system', content: sys },
+        { role: 'user', content: [
+          { type: 'text', text: 'Here is my spoken feedback. Listen and produce the revision JSON.' },
+          { type: 'input_audio', input_audio: { data: audioB64, format } },
+        ] },
+      ],
     }),
   })
-  if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`)
-  const data = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] }
-  const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('').trim()
-  if (!text) throw new Error('Gemini: empty response')
-  return { prompt: text }
+  if (!res.ok) throw new Error(`TokenRouter voice-revise ${res.status}: ${await res.text()}`)
+  const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
+  const text = data.choices?.[0]?.message?.content?.trim() ?? ''
+  const jsonM = text.match(/\{[\s\S]*\}/)
+  if (!jsonM) throw new Error(`voice-revise: model did not return JSON. Got: ${text.slice(0, 200)}`)
+  const plan = JSON.parse(jsonM[0]) as Partial<VoiceRevisePlan>
+  if (!plan.new_prompt) throw new Error('voice-revise: missing new_prompt in model output')
+  return {
+    new_prompt: plan.new_prompt,
+    user_intent: plan.user_intent ?? '',
+    transcript: plan.transcript ?? '',
+    key_changes: plan.key_changes,
+    preserve: plan.preserve,
+    severity: plan.severity,
+  }
 }
 
 async function dispatch(req: Req): Promise<{ url: string; kind: 'image' | 'video' }> {
@@ -313,7 +454,8 @@ async function dispatch(req: Req): Promise<{ url: string; kind: 'image' | 'video
     case 'doubao':
       return /seedance/i.test(req.model) ? runDoubaoVideo(req) : runDoubaoImage(req)
     case 'openai': return runOpenAI(req)
-    case 'gemini': return runGemini(req)
+    case 'gemini': return runTokenRouterImage(req, 'google/')
+    case 'tokenrouter': return runTokenRouterImage(req)
     default: throw new Error(`unsupported provider: ${req.provider}`)
   }
 }
@@ -342,13 +484,23 @@ export function providersPlugin(): Plugin {
           sendJson(res, 500, { error: String((e as Error).message ?? e) })
         }
       })
+      server.middlewares.use('/providers/voice-revise', async (req, res) => {
+        if (req.method !== 'POST') { sendJson(res, 405, { error: 'POST only' }); return }
+        try {
+          const r = await voiceRevise(req)
+          sendJson(res, 200, r)
+        } catch (e) {
+          sendJson(res, 500, { error: String((e as Error).message ?? e) })
+        }
+      })
       server.middlewares.use('/providers/available', (_req, res) => {
         sendJson(res, 200, {
           libtv:  !!process.env.LIBTV_ACCESS_KEY,
           fal:    !!process.env.FAL_KEY,
           doubao: !!process.env.ARK_API_KEY,
           openai: !!process.env.OPENAI_API_KEY,
-          gemini: !!(process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY),
+          gemini: !!process.env.TOKENROUTER_API_KEY,
+          tokenrouter: !!process.env.TOKENROUTER_API_KEY,
         })
       })
     },

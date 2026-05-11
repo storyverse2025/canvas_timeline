@@ -7,7 +7,8 @@
  */
 import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
-import { persist } from 'zustand/middleware'
+import { persist, createJSONStorage } from 'zustand/middleware'
+import { createIdbStorage } from '@/lib/storage/idb-storage'
 import { v4 as uuid } from 'uuid'
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -180,7 +181,7 @@ interface ProjectDBActions {
 const DEFAULT_ART_DIRECTION: ArtDirection = {
   stylePreset: 'cinematic',
   customStyle: '',
-  defaultImageModel: 'fal-ai/flux-pro/v1.1',
+  defaultImageModel: 'openai/gpt-5.4-image-2',
   defaultVideoModel: 'doubao-seedance-2-0-fast-260128',
   defaultAspectRatio: '16:9',
   updatedAt: 0,
@@ -434,7 +435,20 @@ export const useProjectDB = create<ProjectDBState & ProjectDBActions>()(
         })
       },
     })),
-    { name: 'project-db', version: 1 },
+    {
+      name: 'project-db',
+      version: 2,
+      storage: createJSONStorage(() => createIdbStorage('project-db')),
+      migrate: (state, fromVersion) => {
+        if (fromVersion < 2 && state && typeof state === 'object') {
+          const s = state as { artDirection?: ArtDirection }
+          if (s.artDirection?.defaultImageModel === 'fal-ai/flux-pro/v1.1') {
+            s.artDirection.defaultImageModel = 'openai/gpt-5.4-image-2'
+          }
+        }
+        return state as ProjectDBState & ProjectDBActions
+      },
+    },
   ),
 )
 

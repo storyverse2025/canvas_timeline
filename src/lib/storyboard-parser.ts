@@ -80,6 +80,21 @@ export function parseAndValidateStoryboard(response: string): ParseResult {
       if (ref.nodeId) out.referenceNodeId = ref.nodeId
       if (ref.url) out.reference_image = ref.url
     }
+    // Element slots: resolve [node:xxxxxx] short ids in slot.image to full URLs.
+    for (const slotKey of ['character1', 'character2', 'prop1', 'prop2', 'scene'] as const) {
+      const slot = out[slotKey]
+      if (!slot || typeof slot !== 'object') continue
+      const img = String(slot.image ?? '').trim()
+      if (!img || /^https?:\/\//i.test(img) || img.startsWith('data:')) continue
+      const sm = img.match(SHORT_ID_RE)
+      if (!sm) continue
+      const ref = resolveCanvasReference(sm[1])
+      out[slotKey] = {
+        image: ref.url ?? '',
+        description: slot.description ?? '',
+        nodeId: ref.nodeId ?? slot.nodeId ?? '',
+      }
+    }
     return out
   })
 

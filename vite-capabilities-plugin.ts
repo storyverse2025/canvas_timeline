@@ -52,48 +52,42 @@ async function poll<T>(
   throw new Error('timeout')
 }
 
-// ─── LLM helpers (Gemini text) ───────────────────────────────────────
-async function geminiText(systemPrompt: string, userText: string): Promise<string> {
-  const key = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY
-  if (!key) throw new Error('GEMINI_API_KEY not set')
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`, {
+// ─── TokenRouter (OpenAI-compatible) ─────────────────────────────────
+const TOKENROUTER_BASE_URL = 'https://www.tokenrouter.com/backend-api/v1'
+const TOKENROUTER_TEXT_MODEL = 'google/gemini-3-flash-preview'
+const TOKENROUTER_IMAGE_MODEL = 'openai/gpt-5.4-image-2'
+
+async function tokenRouterChat(systemPrompt: string, userText: string, imageUrl?: string, temperature?: number): Promise<string> {
+  const key = process.env.TOKENROUTER_API_KEY
+  if (!key) throw new Error('TOKENROUTER_API_KEY not set')
+  const baseUrl = (process.env.TOKENROUTER_BASE_URL || TOKENROUTER_BASE_URL).replace(/\/$/, '')
+  const userContent: Array<Record<string, unknown>> = [{ type: 'text', text: userText }]
+  if (imageUrl) userContent.push({ type: 'image_url', image_url: { url: imageUrl } })
+  const res = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      systemInstruction: { parts: [{ text: systemPrompt }] },
-      contents: [{ role: 'user', parts: [{ text: userText }] }],
-      generationConfig: { temperature: 0.7 },
+      model: process.env.TOKENROUTER_TEXT_MODEL || TOKENROUTER_TEXT_MODEL,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userContent },
+      ],
+      ...(temperature != null ? { temperature } : {}),
     }),
   })
-  if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`)
-  const data = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] }
-  const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('').trim()
-  if (!text) throw new Error('Gemini: empty response')
+  if (!res.ok) throw new Error(`TokenRouter chat ${res.status}: ${await res.text()}`)
+  const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
+  const text = data.choices?.[0]?.message?.content?.trim()
+  if (!text) throw new Error('TokenRouter: empty response')
   return text
 }
 
+async function geminiText(systemPrompt: string, userText: string): Promise<string> {
+  return tokenRouterChat(systemPrompt, userText, undefined, 0.7)
+}
+
 async function geminiVision(systemPrompt: string, userText: string, imageUrl: string): Promise<string> {
-  const key = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY
-  if (!key) throw new Error('GEMINI_API_KEY not set')
-  const parts: Record<string, unknown>[] = [{ text: userText }]
-  if (imageUrl.startsWith('data:')) {
-    const m = imageUrl.match(/^data:([^;]+);base64,(.+)$/)
-    if (m) parts.push({ inlineData: { mimeType: m[1], data: m[2] } })
-  } else {
-    parts.push({ fileData: { mimeType: 'image/jpeg', fileUri: imageUrl } })
-  }
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: systemPrompt }] },
-      contents: [{ role: 'user', parts }],
-      generationConfig: { temperature: 0.5 },
-    }),
-  })
-  if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`)
-  const data = (await res.json()) as { candidates?: { content?: { parts?: { text?: string }[] } }[] }
-  return data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('').trim() || ''
+  return tokenRouterChat(systemPrompt, userText, imageUrl, 0.5)
 }
 
 // ─── Agent capabilities ──────────────────────────────────────────────
@@ -218,7 +212,56 @@ async function storyboardQC(req: CapReq): Promise<CapRes> {
 }
 
 // ─── Image capabilities ─────────────────────────────────────────────
-async function runFluxImage(prompt: string, aspect: string, numImages: number, refImage?: string): Promise<string[]> {
+function tokenRouterImageSize(aspect: string): string {
+  const sizeMap: Record<string, string> = {
+    '1:1': '1024x1024',
+    '9:16': '1024x1792',
+    '16:9': '1792x1024',
+    '4:3': '1536x1152',
+  }
+  return process.env.TOKENROUTER_IMAGE_SIZE || sizeMap[aspect] || '1024x1024'
+}
+
+async function runTokenRouterImage(prompt: string, aspect: string, numImages: number, refImages: string[] = []): Promise<string[]> {
+  const key = process.env.TOKENROUTER_API_KEY
+  if (!key) return []
+
+  const body: Record<string, unknown> = {
+    model: process.env.TOKENROUTER_IMAGE_MODEL || TOKENROUTER_IMAGE_MODEL,
+    prompt,
+    n: numImages,
+    size: tokenRouterImageSize(aspect),
+  }
+
+  const refs = refImages.slice(0, 3).filter((url) => /^https?:\/\//i.test(url) || url.startsWith('data:'))
+  if (refs.length) body.image = refs
+
+  const baseUrl = (process.env.TOKENROUTER_BASE_URL || TOKENROUTER_BASE_URL).replace(/\/$/, '')
+  let res = await fetch(`${baseUrl}/images/generations`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+
+  if (!res.ok && refs.length) {
+    delete body.image
+    res = await fetch(`${baseUrl}/images/generations`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  }
+  if (!res.ok) throw new Error(`TokenRouter image ${res.status}: ${await res.text()}`)
+
+  const data = (await res.json()) as { data?: Array<{ url?: string; b64_json?: string }>; images?: Array<{ url?: string; b64_json?: string }> }
+  const images = data.data || data.images || []
+  const urls = images
+    .map((img) => img.url || (img.b64_json ? `data:image/png;base64,${img.b64_json}` : undefined))
+    .filter((url): url is string => Boolean(url))
+  return urls
+}
+
+async function runFalFluxImage(prompt: string, aspect: string, numImages: number, refImage?: string): Promise<string[]> {
   const key = process.env.FAL_KEY
   if (!key) throw new Error('FAL_KEY not set')
   const sizeMap: Record<string, string> = {
@@ -242,11 +285,22 @@ async function runFluxImage(prompt: string, aspect: string, numImages: number, r
   return urls
 }
 
+async function runFluxImage(prompt: string, aspect: string, numImages: number, refImages: string[] = []): Promise<string[]> {
+  try {
+    const tokenRouterUrls = await runTokenRouterImage(prompt, aspect, numImages, refImages)
+    if (tokenRouterUrls.length) return tokenRouterUrls
+  } catch (error) {
+    console.warn(`[image] TokenRouter failed; falling back to FAL: ${(error as Error).message}`)
+  }
+  if (process.env.DISABLE_FAL_IMAGE_FALLBACK === '1') throw new Error('TokenRouter image generation failed and FAL fallback is disabled')
+  return runFalFluxImage(prompt, aspect, numImages, refImages[0])
+}
+
 async function textToImage(req: CapReq): Promise<CapRes> {
   const text = getText(req.inputs)
   const refs = getImages(req.inputs)
   const aspect = (req.params?.aspect as string) || '16:9'
-  const urls = await runFluxImage(text || 'a beautiful scene', aspect, 1, refs[0])
+  const urls = await runFluxImage(text || 'a beautiful scene', aspect, 1, refs)
   return { outputs: urls.map((url) => ({ kind: 'image' as const, url })) }
 }
 
@@ -254,7 +308,7 @@ async function batchImage(req: CapReq): Promise<CapRes> {
   const text = getText(req.inputs)
   const refs = getImages(req.inputs)
   const aspect = (req.params?.aspect as string) || '16:9'
-  const urls = await runFluxImage(text || 'a beautiful scene', aspect, 4, refs[0])
+  const urls = await runFluxImage(text || 'a beautiful scene', aspect, 4, refs)
   return { outputs: urls.map((url) => ({ kind: 'image' as const, url })) }
 }
 

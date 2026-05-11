@@ -1,6 +1,11 @@
 import { useProjectDB } from '@/stores/project-db'
 import { PROVIDERS } from '@/lib/providers/registry'
 import { StylePresetsGrid } from './StylePresetsGrid'
+import { useCanvasItemStore } from '@/stores/canvas-item-store'
+import { useCanvasStore } from '@/stores/canvas-store'
+import { getArtStyle } from '@/lib/canvas-elements'
+import { toast } from 'sonner'
+import { Wand2 } from 'lucide-react'
 
 const ASPECTS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9']
 
@@ -10,6 +15,21 @@ export function ArtDirectionPanel() {
 
   const imageModels = PROVIDERS.flatMap((p) => p.models.filter((m) => m.kind === 'image').map((m) => ({ provider: p.id, model: m.id, label: `${p.label} · ${m.label}` })))
   const videoModels = PROVIDERS.flatMap((p) => p.models.filter((m) => m.kind === 'video').map((m) => ({ provider: p.id, model: m.id, label: `${p.label} · ${m.label}` })))
+
+  const spawnGlobalStyleNode = () => {
+    const styleText = getArtStyle({ stylePreset: art.stylePreset, customStyle: art.customStyle })
+    if (!styleText.trim()) { toast.error('当前风格为空'); return }
+    const { items, addItem, updateItem } = useCanvasItemStore.getState()
+    const existing = Object.values(items).find((it) => it.kind === 'text' && it.role === 'style')
+    if (existing) {
+      updateItem(existing.id, { content: styleText, name: '全局风格' })
+      toast.success('已更新画布上的全局风格节点')
+      return
+    }
+    const itemId = addItem({ kind: 'text', name: '全局风格', content: styleText, role: 'style' })
+    useCanvasStore.getState().addItemNode(itemId, 'text', { x: 40, y: 40 }, { width: 260, height: 140 })
+    toast.success('已在画布添加全局风格节点 — 连接它到资产节点即可应用')
+  }
 
   return (
     <div className="flex flex-col gap-3">
@@ -26,6 +46,14 @@ export function ArtDirectionPanel() {
           onChange={(e) => update({ customStyle: e.target.value })}
           placeholder="例：赛博朋克 + 霓虹灯光 + 雨夜"
         />
+        <button
+          onClick={spawnGlobalStyleNode}
+          className="mt-1.5 w-full flex items-center justify-center gap-1.5 text-[11px] px-2 py-1.5 rounded border border-purple-400/40 bg-purple-500/10 text-purple-300 hover:bg-purple-500/20"
+          title="将当前风格作为画布上的全局风格文本节点，连接到资产节点即可生效"
+        >
+          <Wand2 className="w-3 h-3" />
+          作为全局风格节点添加到画布
+        </button>
       </div>
 
       <div className="grid grid-cols-2 gap-2">

@@ -1,10 +1,13 @@
 import { memo, useRef, useState, useCallback } from 'react'
 import { Handle, Position, NodeResizer, useNodeId } from '@xyflow/react'
+import { toast } from 'sonner'
 import { NodeFloatingToolbar } from '../NodeFloatingToolbar'
 import { ImageIcon, Upload, Link as LinkIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { useLibtvTasksStore } from '@/stores/libtv-tasks-store'
+import { runCapability } from '@/lib/capabilities/client'
+import { VoiceFeedbackButton, type VoicePlan } from '@/components/canvas/VoiceFeedbackButton'
 
 export interface ImageNodeData {
   itemId: string;
@@ -45,6 +48,29 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
     setPromptOpen(false)
   }, [data.itemId, item?.content, updateItem])
 
+  const handleVoicePlanReady = useCallback(async (plan: VoicePlan) => {
+    const currentImage = item?.content && /^https?:|^data:/.test(item.content) ? item.content : ''
+    const refs = currentImage ? [currentImage] : []
+    try {
+      const result = await runCapability({
+        capability: 'text-to-image',
+        inputs: [
+          { kind: 'text', text: plan.newPrompt },
+          ...refs.map((url) => ({ kind: 'image' as const, url })),
+        ],
+        params: { aspect: '16:9' },
+      })
+      const url = result.outputs[0]?.url
+      if (!url) throw new Error('regen returned no image')
+      updateItem(data.itemId, { content: url, prompt: plan.newPrompt })
+      toast.success('图片已根据语音重生', { description: plan.userIntent?.slice(0, 120) })
+    } catch (err) {
+      toast.error('语音重生失败', {
+        description: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }, [data.itemId, item?.content, updateItem])
+
   if (!item) return null
 
   return (
@@ -67,6 +93,24 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
       <Handle id="l" type="target" position={Position.Left}   className="bragi-handle" />
       <Handle id="r" type="source" position={Position.Right}  className="bragi-handle" />
       <Handle id="b" type="source" position={Position.Bottom} className="bragi-handle" />
+
+      {/* Voice-feedback mic — top-left so it doesn't collide with the 替换 button */}
+      <div className="absolute top-1 left-1 z-20">
+        <VoiceFeedbackButton
+          elementKind="keyframe"
+          elementId={data.itemId}
+          label={item.name}
+          elementContext={{
+            id: data.itemId,
+            name: item.name,
+            prompt: item.prompt ?? '',
+            currentImage: item.content ?? '',
+            kind: item.kind,
+          }}
+          onPlanReady={handleVoicePlanReady}
+          compact
+        />
+      </div>
 
       {item.content ? (
         /\.(mp4|webm|mov)(\?|$)/i.test(item.content) ? (

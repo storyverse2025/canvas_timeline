@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import { createIdbStorage } from '@/lib/storage/idb-storage';
 import { v4 as uuid } from 'uuid';
 import { applyNodeChanges, applyEdgeChanges } from '@xyflow/react';
 import type { Node, Edge, NodeChange, EdgeChange } from '@xyflow/react';
@@ -143,6 +144,7 @@ export const useCanvasStore = create<CanvasState & CanvasActions>()(
     {
       name: 'canvas-store',
       partialize: (state) => ({ nodes: state.nodes, edges: state.edges }),
+      storage: createJSONStorage(() => createIdbStorage('canvas-store')),
     }
   )
 );

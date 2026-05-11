@@ -85,7 +85,7 @@ export const VisualAssetNode = memo(({ id, data, selected }: NodeProps) => {
           <video
             ref={videoRef}
             src={d.videoUrl}
-            poster={d.imageUrl}
+            poster={d.imageUrl || undefined}
             muted
             loop
             playsInline

@@ -18,6 +18,7 @@ import { parseAndValidateStoryboard } from '@/lib/storyboard-parser'
 import { useStoryboardStore } from '@/stores/storyboard-store'
 import { ensureElements, buildElementContext, type ElementInventory } from '@/lib/canvas-elements'
 import { useProjectDB } from '@/stores/project-db'
+import { useProjectStore } from '@/stores/project-store'
 import type { ClaudeMessage } from '@/lib/claude-client'
 
 const CHAT_SYSTEM_PROMPT = `You are StoryVerse AI, a creative assistant for animated video production.
@@ -212,9 +213,15 @@ export function ChatPanel() {
       // Check for intent match before calling Claude
       const intent = detectIntent(text)
       if (intent) {
-        addMessage('system', `Running: ${intent.label}...`)
+        // Most skills hit the StoryVerse backend at /api/v1/projects/{projectId}/...
+        // When no backend project is loaded, pass 'test' as a sentinel — the
+        // skill executor checks for it and short-circuits to the local demo
+        // path instead of firing a doomed fetch. With a real project loaded,
+        // calls go to the real /projects/{uuid}/... endpoints.
+        const backendProjectId = useProjectStore.getState().project?.id ?? 'test'
+        addMessage('system', `Running: ${intent.label}...${backendProjectId === 'test' ? '（本地模式）' : ''}`)
         try {
-          await executeIntent(intent, 'test', text)
+          await executeIntent(intent, backendProjectId, text)
         } catch (err) {
           addMessage('system', `Error: ${err instanceof Error ? err.message : 'Unknown'}`)
         }
@@ -249,7 +256,7 @@ export function ChatPanel() {
       let fullThinking = ''
 
       const canvasCtx = buildCanvasContext()
-      const elementCtx = elementInventory ? `\n\n## 已识别的画布元素\n${buildElementContext(elementInventory)}\n\nIMPORTANT: 在生成分镜表时，请将上面识别的角色、道具、场景填入每行的 character1/character2、prop1/prop2、scene 字段中。image 填入对应的图片URL，description 填入描述。` : ''
+      const elementCtx = elementInventory ? `\n\n## 已识别的画布元素\n${buildElementContext(elementInventory)}\n\nIMPORTANT: 在生成分镜表时，请将上面识别的角色、道具、场景填入每行的 character1/character2、prop1/prop2、scene 字段中。image 字段必须填入 [node:xxxxxx] 这种短ID（不要填URL，系统会自动解析为真实图片地址），description 填入描述。` : ''
       const systemWithCtx = `${CHAT_SYSTEM_PROMPT}\n\n## Canvas Context\n${canvasCtx}${elementCtx}`
 
       for await (const event of streamClaude(claudeMessages, { system: systemWithCtx })) {
