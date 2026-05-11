@@ -1,5 +1,6 @@
-import { User, MapPin, Package, Film, Trash2, ImageIcon, Type, Sparkles, LayoutGrid } from 'lucide-react'
+import { User, MapPin, Package, Film, Trash2, ImageIcon, Type, Sparkles, LayoutGrid, Palette } from 'lucide-react'
 import { useReactFlow } from '@xyflow/react'
+import { toast } from 'sonner'
 import { resolveOverlaps } from '@/lib/canvas-layout'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -7,6 +8,7 @@ import { useAssetStore } from '@/stores/asset-store'
 import { useCanvasStore } from '@/stores/canvas-store'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { useViewStore } from '@/stores/view-store'
+import { connectStyleToAllAssets } from '@/lib/global-style-node'
 import type { AssetType } from '@/types/asset'
 
 const ASSET_TYPES: { type: AssetType; label: string; Icon: React.ElementType }[] = [
@@ -36,13 +38,28 @@ export function AssetCanvasToolbar() {
   const clearSelection = useViewStore((s) => s.clearSelection)
 
   const handleAdd = (type: AssetType, label: string) => {
+    // Back every newly-added asset with a canvas-item so the node renders via
+    // the rich ImageCanvasNode (floating toolbar, right-click capabilities,
+    // resize, replace) — same code path as image-typed nodes. The assetId is
+    // patched onto the node's data so selection / voice-feedback / tables
+    // still resolve back to the asset.
     const assetId = addAsset({ type, name: label, tags: [] })
-    addNode(assetId, randomPosition())
+    const itemId = addItem({ kind: 'image', name: label, content: '' })
+    const nodeId = addItemNode(itemId, 'image', randomPosition(), { width: 260, height: 200 })
+    useCanvasStore.getState().updateNode(nodeId, { assetId } as Record<string, unknown>)
+    // Auto-link the new asset under the global style node, if one exists.
+    connectStyleToAllAssets()
   }
 
   const handleAddImage = () => {
     const id = addItem({ kind: 'image', name: '图片节点', content: '' })
     addItemNode(id, 'image', randomPosition())
+    connectStyleToAllAssets()
+  }
+
+  const handleSyncStyle = () => {
+    const { linked } = connectStyleToAllAssets()
+    toast.success(linked > 0 ? `已连接 ${linked} 个新资产到全局风格节点` : '全局风格节点已与所有资产连接')
   }
 
   const handleAddText = () => {
@@ -137,6 +154,14 @@ export function AssetCanvasToolbar() {
             </Button>
           </TooltipTrigger>
           <TooltipContent side="right">添加文本</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="secondary" size="icon" className="h-8 w-8 shadow-md" onClick={handleSyncStyle}>
+              <Palette className="w-4 h-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="right">全局风格 → 关联所有资产</TooltipContent>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>

@@ -312,18 +312,35 @@ export function StoryboardTable() {
   const handleVoicePlanReady = useCallback(async (plan: VoicePlan) => {
     const row = useStoryboardStore.getState().rows.find((r) => r.id === plan.elementId)
     if (!row) return
-    const refImages = [
-      row.character1?.image, row.character2?.image,
-      row.prop1?.image, row.prop2?.image,
-      row.scene?.image, row.reference_image,
-    ].filter((u): u is string => !!u && u.length > 0)
+    // Build ordered, role-labeled refs so the prompt can reference each one
+    // as "image1", "image2", … in the same order as the inputs array.
+    type Ref = { role: string; description: string; url: string }
+    const refs: Ref[] = []
+    const push = (role: string, description: string, url: string | undefined) => {
+      if (!url) return
+      if (refs.some((r) => r.url === url)) return
+      refs.push({ role, description, url })
+    }
+    push('角色1', row.character1?.description ?? '', row.character1?.image)
+    push('角色2', row.character2?.description ?? '', row.character2?.image)
+    push('道具1', row.prop1?.description ?? '',      row.prop1?.image)
+    push('道具2', row.prop2?.description ?? '',      row.prop2?.image)
+    push('场景',  row.scene?.description ?? '',      row.scene?.image)
+    push('参考',  '',                                row.reference_image)
+    const legend = refs.length
+      ? `Reference images (use them as labeled):\n` +
+        refs.map((r, i) =>
+          `- image${i + 1} = ${r.role}${r.description ? ` (${r.description})` : ''}`
+        ).join('\n')
+      : ''
+    const finalPrompt = legend ? `${plan.newPrompt}\n\n${legend}` : plan.newPrompt
     updateRow(row.id, { status: 'in_progress' })
     try {
       const result = await runCapability({
         capability: 'text-to-image',
         inputs: [
-          { kind: 'text', text: plan.newPrompt },
-          ...refImages.map((url) => ({ kind: 'image' as const, url })),
+          { kind: 'text', text: finalPrompt },
+          ...refs.map((r) => ({ kind: 'image' as const, url: r.url })),
         ],
         params: { aspect: '16:9' },
       })

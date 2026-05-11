@@ -9,6 +9,9 @@ import { useProjectDB } from '@/stores/project-db'
 import { buildCharacterMaterialPrompt, CHARACTER_MATERIAL_SYSTEM_PROMPT } from '@/lib/canvas-elements'
 import { runCapability } from '@/lib/capabilities/client'
 import { streamClaude } from '@/lib/claude-client'
+import { connectStyleToAllAssets } from '@/lib/global-style-node'
+import { useCanvasItemStore } from '@/stores/canvas-item-store'
+import { upsertKeyframeRow } from '@/lib/keyframe-sync'
 import type { Episode, Character, Scene, Prop, Keyframe } from '@/types/backend'
 
 /**
@@ -41,7 +44,14 @@ function addVisualAsset(
 ): string {
   const assetStore = useAssetStore.getState()
   const canvasStore = useCanvasStore.getState()
+  const itemStore = useCanvasItemStore.getState()
 
+  // Back every asset with a canvas-item so the node renders via the rich
+  // ImageCanvasNode (right-click capabilities menu, floating toolbar, resize,
+  // replace) instead of the lean AssetNode. The asset linkage is preserved
+  // on the node's data via assetId so selection tracking + the AssetTable
+  // + voice-feedback element-kind still resolve back to the asset.
+  const itemId = itemStore.addItem({ kind: 'image', name, content: imageUrl ?? '', prompt })
   const assetId = assetStore.addAsset({
     type,
     name,
@@ -51,7 +61,11 @@ function addVisualAsset(
     status: imageUrl ? 'completed' : 'pending',
     tags: [{ id: `t-${Date.now()}-${Math.random()}`, category: type, label: name }],
   })
-  canvasStore.addNode(assetId, autoLayout(index, type))
+  const nodeId = canvasStore.addItemNode(itemId, 'image', autoLayout(index, type), { width: 260, height: 200 })
+  canvasStore.updateNode(nodeId, { assetId } as Record<string, unknown>)
+  // Pull the new node under the global style node so users can see at a glance
+  // what art-style prompt informs every asset on the canvas.
+  connectStyleToAllAssets()
   return assetId
 }
 
@@ -361,6 +375,17 @@ function createKeyframeAssets(
     })
     itemIds.push(itemId)
     mappingStore.addLinkByAsset(assetId, itemId, 0.9, true)
+
+    // Storyboard table is the single source of truth for keyframe state.
+    // Mirror every chat-created keyframe back into the table so canvas + asset
+    // store + table stay aligned.
+    const nodeId = useCanvasStore.getState().getNodeByAssetId(assetId)?.id ?? ''
+    upsertKeyframeRow({
+      shotNumber: String(kf.beat_number),
+      prompt: kf.prompt ?? '',
+      imageUrl: kf.image_url ?? '',
+      nodeId,
+    })
   })
 
   useChatStore.getState().addMessage('action', `Created ${assetIds.length} keyframe assets with timeline links`, {
@@ -472,6 +497,15 @@ async function generateKeyframesLocal(userInput: string, count: number) {
         const url = result.outputs[0]?.url
         if (!url) throw new Error('no image url')
         assetStore.updateAsset(assetId, { imageUrl: url, status: 'completed' })
+        // Mirror the freshly-rendered URL back into the row that the placeholder
+        // upsert already created (matched by shot_number = beat_number).
+        const nodeId = useCanvasStore.getState().getNodeByAssetId(assetId)?.id ?? ''
+        upsertKeyframeRow({
+          shotNumber: String(i + 1),
+          prompt,
+          imageUrl: url,
+          nodeId,
+        })
       } catch (err) {
         assetStore.updateAsset(assetId, { status: 'failed' })
         chatStore.addMessage('system', `关键帧 ${i + 1} 渲染失败：${err instanceof Error ? err.message : String(err)}`)

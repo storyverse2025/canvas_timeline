@@ -16,6 +16,7 @@ import { detectIntent, executeIntent } from '@/lib/chat-intent'
 import { buildCanvasContext } from '@/lib/canvas-context'
 import { parseAndValidateStoryboard } from '@/lib/storyboard-parser'
 import { useStoryboardStore } from '@/stores/storyboard-store'
+import { upsertKeyframeRow } from '@/lib/keyframe-sync'
 import { ensureElements, buildElementContext, type ElementInventory } from '@/lib/canvas-elements'
 import { useProjectDB } from '@/stores/project-db'
 import { useProjectStore } from '@/stores/project-store'
@@ -126,7 +127,9 @@ export function ChatPanel() {
       return assetId
     }
 
-    // 1. Multiple [IMAGE_PROMPT]: lines → generate images via FAL
+    // 1. Multiple [IMAGE_PROMPT]: lines → generate keyframe images.
+    // Every keyframe must also land in the storyboard table — the table is
+    // the single source of truth, so we upsert it via the shared helper.
     const imagePrompts = [...fullText.matchAll(/\[IMAGE_PROMPT\]:\s*(.+?)(?:\n|$)/gi)]
     for (const match of imagePrompts) {
       const prompt = match[1].trim()
@@ -141,7 +144,8 @@ export function ChatPanel() {
           status: 'completed',
           tags: [],
         })
-        canvasStore.addNode(assetId, randomPos())
+        const nodeId = canvasStore.addNode(assetId, randomPos())
+        upsertKeyframeRow({ shotNumber: '', prompt, imageUrl: result.url, nodeId })
         created++
       } catch (err) {
         chatStore.addMessage('system', `Image failed: ${err instanceof Error ? err.message : 'error'}`)

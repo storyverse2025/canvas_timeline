@@ -3,6 +3,7 @@ import { useCanvasStore } from '@/stores/canvas-store'
 import { useTimelineStore } from '@/stores/timeline-store'
 import { useMappingStore } from '@/stores/mapping-store'
 import { useChatStore } from '@/stores/chat-store'
+import { upsertKeyframeRow } from '@/lib/keyframe-sync'
 
 const BASE = '/testdata'
 
@@ -113,8 +114,8 @@ export async function loadStep3_Keyframes(): Promise<{ nodeCount: number }> {
   for (let i = 0; i < frames.length; i++) {
     const frame = frames[i]
     const label = `KF ${frame.beat_number}: ${(frame.summary || '').slice(0, 50)}`
-    const assetId = addAsset('keyframe', label,
-      frame.image_url ? `${BASE}/${frame.image_url}` : undefined,
+    const imageUrl = frame.image_url ? `${BASE}/${frame.image_url}` : undefined
+    const assetId = addAsset('keyframe', label, imageUrl,
       frame.prompt, frame.id, randomPos(850, (frame.beat_number - 1) * 200))
     nodeCount++
 
@@ -127,6 +128,15 @@ export async function loadStep3_Keyframes(): Promise<{ nodeCount: number }> {
       timeline.updateItem(matchItem.id, { assetId })
       mapping.addLinkByAsset(assetId, matchItem.id, 0.9, true)
     }
+
+    // Mirror into the storyboard table (single source of truth).
+    const nodeId = useCanvasStore.getState().getNodeByAssetId(assetId)?.id ?? ''
+    upsertKeyframeRow({
+      shotNumber: String(frame.beat_number),
+      prompt: frame.prompt ?? '',
+      imageUrl: imageUrl ?? '',
+      nodeId,
+    })
   }
 
   useChatStore.getState().addMessage('system',

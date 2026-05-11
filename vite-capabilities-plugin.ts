@@ -224,7 +224,7 @@ function tokenRouterImageSize(aspect: string): string {
 
 async function runTokenRouterImage(prompt: string, aspect: string, numImages: number, refImages: string[] = []): Promise<string[]> {
   const key = process.env.TOKENROUTER_API_KEY
-  if (!key) return []
+  if (!key) throw new Error('TOKENROUTER_API_KEY 未配置 — 无法生成图片')
 
   const body: Record<string, unknown> = {
     model: process.env.TOKENROUTER_IMAGE_MODEL || TOKENROUTER_IMAGE_MODEL,
@@ -286,14 +286,19 @@ async function runFalFluxImage(prompt: string, aspect: string, numImages: number
 }
 
 async function runFluxImage(prompt: string, aspect: string, numImages: number, refImages: string[] = []): Promise<string[]> {
+  // TokenRouter is the only image backend — FAL is no longer used here.
+  // Opt back in to FAL with ENABLE_FAL_IMAGE_FALLBACK=1 (off by default).
   try {
-    const tokenRouterUrls = await runTokenRouterImage(prompt, aspect, numImages, refImages)
-    if (tokenRouterUrls.length) return tokenRouterUrls
+    const urls = await runTokenRouterImage(prompt, aspect, numImages, refImages)
+    if (urls.length) return urls
+    throw new Error('TokenRouter 返回空结果')
   } catch (error) {
-    console.warn(`[image] TokenRouter failed; falling back to FAL: ${(error as Error).message}`)
+    if (process.env.ENABLE_FAL_IMAGE_FALLBACK === '1') {
+      console.warn(`[image] TokenRouter failed; FAL fallback enabled: ${(error as Error).message}`)
+      return runFalFluxImage(prompt, aspect, numImages, refImages[0])
+    }
+    throw new Error(`图片生成失败 (TokenRouter): ${(error as Error).message}`)
   }
-  if (process.env.DISABLE_FAL_IMAGE_FALLBACK === '1') throw new Error('TokenRouter image generation failed and FAL fallback is disabled')
-  return runFalFluxImage(prompt, aspect, numImages, refImages[0])
 }
 
 async function textToImage(req: CapReq): Promise<CapRes> {

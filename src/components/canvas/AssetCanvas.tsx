@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ReactFlow,
   Background,
@@ -14,6 +14,7 @@ import {
 import '@xyflow/react/dist/style.css'
 import { useCanvasStore } from '@/stores/canvas-store'
 import { useAssetStore } from '@/stores/asset-store'
+import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { useViewStore } from '@/stores/view-store'
 import { AssetNode, type AssetNodeData } from './nodes/AssetNode'
 import { ImageCanvasNode } from './nodes/ImageCanvasNode'
@@ -43,22 +44,62 @@ export function AssetCanvas() {
   const selectedAssetIds = useViewStore((s) => s.selectedAssetIds)
   const setSelectedAssetIds = useViewStore((s) => s.setSelectedAssetIds)
 
+  // One-shot upgrade: legacy asset-only nodes have no `itemId`, so they get
+  // rendered as the lean AssetNode and miss the floating toolbar / right-click
+  // capabilities. Back-fill them with a canvas-item so they switch to the
+  // rich ImageCanvasNode rendering on next render. Idempotent — only acts on
+  // nodes still missing `itemId`.
+  useEffect(() => {
+    const itemStore = useCanvasItemStore.getState()
+    const canvas = useCanvasStore.getState()
+    const assetMap = new Map<string, Asset>(assets.map((a) => [a.id, a]))
+    let upgraded = 0
+    for (const n of canvas.nodes) {
+      const data = n.data as { itemId?: string; assetId?: string }
+      if (data.itemId || !data.assetId) continue
+      const asset = assetMap.get(data.assetId)
+      if (!asset) continue
+      const itemId = itemStore.addItem({
+        kind: 'image',
+        name: asset.name,
+        content: asset.imageUrl ?? '',
+        prompt: asset.prompt,
+      })
+      canvas.updateNode(n.id, { itemId } as Record<string, unknown>)
+      upgraded++
+    }
+    if (upgraded > 0) {
+      // eslint-disable-next-line no-console
+      console.info(`[AssetCanvas] upgraded ${upgraded} legacy asset nodes to image nodes`)
+    }
+    // Run once per assets-list identity change. Nodes added later already get
+    // backing items via addVisualAsset / handleAdd.
+  }, [assets])
+
   // Derive XYFlow nodes from canvas geometry + asset/item data
   const nodes = useMemo(() => {
     const assetMap = new Map<string, Asset>(assets.map((a) => [a.id, a]))
     return canvasNodes
       .map((n) => {
-        if (n.data.itemId) {
+        const data = n.data as { itemId?: string; assetId?: string }
+        if (data.itemId) {
+          // Image / text node — keep itemId AND any assetId backing so
+          // ImageCanvasNode can show a typed badge and selection still
+          // resolves to the asset for the AssetTable etc.
+          const assetId = data.assetId
+          const isSelected = assetId ? selectedAssetIds.includes(assetId) : undefined
           return {
             ...n,
             type: n.type ?? 'image',
-            data: { itemId: n.data.itemId },
+            ...(isSelected !== undefined ? { selected: isSelected } : {}),
+            data: assetId ? { itemId: data.itemId, assetId } : { itemId: data.itemId },
           }
         }
-        const assetId = n.data.assetId
+        const assetId = data.assetId
         if (!assetId) return null
         const asset = assetMap.get(assetId)
         if (!asset) return null
+        // Legacy fallback: render as AssetNode while the upgrader effect runs.
         return {
           ...n,
           type: 'asset',
