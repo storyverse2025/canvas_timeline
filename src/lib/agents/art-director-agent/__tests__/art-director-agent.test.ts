@@ -156,6 +156,33 @@ describe('generateAssetImages', () => {
     expect(mockedRunCapability).toHaveBeenCalledOnce()
   })
 
+  it('falls back to the prop-turnaround template when prop.image_prompt is empty', async () => {
+    mockedRunCapability.mockResolvedValue({ outputs: [{ kind: 'image', url: 'https://prop.png' }] })
+    const ctx = createMemoryContext({ llm: { complete: async () => '' } })
+    await driveAuto(
+      generateAssetImages({
+        artStyle: 'cinematic',
+        extraction: {
+          characters: [],
+          scenes: [],
+          props: [{ name: 'Pocketwatch', description: 'silver, 19th century', image_prompt: '' }],
+        },
+      }, ctx),
+    )
+    const sentPrompt = mockedRunCapability.mock.calls[0]![0].inputs[0]!.text!
+    // Multi-angle turnaround mandate from prop-image.md.
+    expect(sentPrompt).toContain('turnaround sheet')
+    expect(sentPrompt).toContain('front view')
+    expect(sentPrompt).toContain('side view')
+    expect(sentPrompt).toContain('back view')
+    expect(sentPrompt).toContain('extreme close-up')
+    expect(sentPrompt).toContain('100% consistent')
+    // Global art style flows through.
+    expect(sentPrompt).toContain('cinematic')
+    // Prop description threaded in.
+    expect(sentPrompt).toContain('Pocketwatch')
+  })
+
   it('respects maxPerKind caps', async () => {
     mockedRunCapability.mockResolvedValue({ outputs: [{ kind: 'image', url: 'https://x.png' }] })
     const ctx = createMemoryContext({ llm: { complete: async () => '' } })
