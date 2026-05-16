@@ -9,6 +9,10 @@ import { useStoryboardStore } from '@/stores/storyboard-store'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { ensureElements, extractElementsFromScript, buildElementContext, type ExtractionResult } from '@/lib/canvas-elements'
 import { fillPrompt } from '@/lib/prompts'
+import { scriptAgent } from '@/lib/agents/script-agent'
+import { driveAuto } from '@/lib/agents/_shared/runtime/runner'
+import { createMemoryContext } from '@/lib/agents/_shared/context/memory'
+import { createCapabilityLLM } from '@/lib/agents/_shared/llm/capability'
 
 export type StepStatus = 'pending' | 'running' | 'done' | 'error'
 
@@ -111,13 +115,24 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
     ? `\n现有分镜表（${storyboardRows.length}行）：\n${storyboardRows.map((r) => `${r.shot_number}: ${r.visual_description}`).join('\n')}`
     : ''
 
-  // Step 1-5: Script → Casting creative intelligence pass.
-  // One model pass reads the server-side project skills and returns the durable
-  // creative contract used by casting, asset generation, and storyboard design.
+  // Step 1-5: Script → Casting creative intelligence pass — routed through
+  // script-agent. The agent owns the framework calibration, expansion, doctor
+  // roundtable, dialogue diagnosis, and casting card synthesis as a single
+  // typed Dossier. The interview is auto-answered here (no UI yet); once
+  // ChatPanel surfaces InterviewCard, swap driveAuto for drive() with a real
+  // onQuestion handler.
   setStep(state, 0, 0, 'running'); onUpdate(state)
-  const scriptToCastingReport = await aiCall(fillPrompt('scriptToCastingFlow', {
-    scriptText, artStyle, canvasContext: canvasCtx, existingStoryboard,
-  }))
+  const agentCtx = createMemoryContext({
+    llm: createCapabilityLLM(),
+    snapshot: { style: { presetId: artDir.stylePreset, promptText: artStyle } },
+  })
+  const dossier = await driveAuto(
+    scriptAgent.run(
+      { scriptText, canvasContext: canvasCtx, existingStoryboard },
+      agentCtx,
+    ),
+  )
+  const scriptToCastingReport = JSON.stringify(dossier, null, 2)
   setStep(state, 0, 0, 'done', '已按 script-framework-qa 完成七层框架校准'); onUpdate(state)
   setStep(state, 0, 1, 'done', '已按 script-writing-expansion 生成/补齐完整剧本基准'); onUpdate(state)
   setStep(state, 0, 2, 'done', '已按 script-doctor-roundtable 完成结构会诊摘要'); onUpdate(state)

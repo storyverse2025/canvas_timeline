@@ -110,7 +110,7 @@ describe('Director Pipeline — PipelineState Structure', () => {
 
     mockedRunCapability.mockImplementation(async (request) => {
       const prompt = request.inputs[0]?.text ?? ''
-      if (prompt.includes('scriptToCastingFlow')) {
+      if (prompt.includes('script-agent / expand-script')) {
         return { outputs: [{ kind: 'text', text: JSON.stringify({
           framework_calibration: { main_risk: '动机偏薄' },
           expanded_script_baseline: { format: '标准影视', script_text: expanded, beat_summary: ['离家'] },
@@ -192,7 +192,7 @@ describe('Director Pipeline — PipelineState Structure', () => {
 
     mockedRunCapability.mockImplementation(async (request) => {
       const prompt = request.inputs[0]?.text ?? ''
-      if (prompt.includes('scriptToCastingFlow')) {
+      if (prompt.includes('script-agent / expand-script')) {
         return { outputs: [{ kind: 'text', text: JSON.stringify({
           framework_calibration: { main_risk: '追逐节奏可能过碎' },
           expanded_script_baseline: { script_text: '小夏把红伞交给阿澈，两人在晨雾码头穿过吊机阴影。', beat_summary: ['交伞', '躲避'] },
@@ -257,21 +257,16 @@ describe('Director Pipeline — Server Skill Files', () => {
     }
   })
 
-  it('director prompts reference the saved skills and preserve script-to-casting contract', () => {
-    const prompt = fillPrompt('scriptToCastingFlow', {
-      scriptText: '场景1：主角沉默。',
-      artStyle: 'cinematic',
-      canvasContext: '画布为空',
-      existingStoryboard: '',
-    })
-    expect(prompt).toContain('script-framework-qa')
-    expect(prompt).toContain('script-writing-expansion')
-    expect(prompt).toContain('script-doctor-roundtable')
-    expect(prompt).toContain('dialogue-doctor-diagnosis')
-    expect(prompt).toContain('Casting 角色卡')
-    expect(prompt).toContain('expanded_script_baseline')
-    expect(prompt).toContain('post_doctor_revised_script')
-    expect(prompt).toContain('只输出 JSON')
+  it('script-agent expand-script prompt preserves the script-to-casting contract', async () => {
+    const expandPrompt = (await import('@/lib/agents/script-agent/prompts/expand-script.md?raw')).default
+    expect(expandPrompt).toContain('script-agent / expand-script')
+    expect(expandPrompt).toContain('Casting 角色卡')
+    expect(expandPrompt).toContain('framework_calibration')
+    expect(expandPrompt).toContain('expanded_script_baseline')
+    expect(expandPrompt).toContain('casting_cards')
+    expect(expandPrompt).toContain('scene_cards')
+    expect(expandPrompt).toContain('prop_cards')
+    expect(expandPrompt).toContain('只输出 JSON')
   })
 
   it('character material prompt enforces the required three-view CG system prompt', () => {
