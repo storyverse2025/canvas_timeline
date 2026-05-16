@@ -82,12 +82,15 @@ export const PROMPTS: Record<string, PromptTemplate> = {
     label: '生成分镜表 JSON',
     template: `将以上所有分析整合，输出最终的分镜表 JSON 数组。
 
-【总时长硬约束（不可违反）】
+【时长硬约束（不可违反）】
 - 用户已指定本片总时长为 **{{totalDurationSeconds}} 秒**。
 - 所有分镜 row 的 duration 字段之和必须严格等于 {{totalDurationSeconds}} 秒（允许 0.5 秒以内的舍入误差）。
-- 在编辑每个 row 的 duration 之前先做整体规划：按节拍权重分配各 row 时长，最后核对总和。
-- 不准超时也不准欠时。如果剧本内容塞不下 {{totalDurationSeconds}} 秒，先压缩动作密度或合并 row；如果塞得太满，先扩长情绪 row 或加入情绪缓冲 row。
-- 输出最后请在心里复核一遍：Σ duration == {{totalDurationSeconds}}。
+- **每一行 row 的 duration 必须满足 2 ≤ duration ≤ 15 秒**。
+  - 任何 > 15s 的行必须立即拆分成多行（每行仍 2-15s）。
+  - 任何 < 2s 的行必须与相邻行合并。
+  - 想要长情绪段落？多行串联，每行最多 15s，主体/构图/节奏可以非常相近但必须有新动作或新情绪信息。
+- 在编辑每个 row 的 duration 之前先做整体规划：按节拍权重分配各 row 时长，确保总时长 == {{totalDurationSeconds}} 且每行落在 [2, 15] 区间内。
+- 输出前在心里逐行核对：每行 ∈ [2, 15]；Σ duration == {{totalDurationSeconds}}。违反任何一条则整张表作废。
 
 【小蔡剧本转分镜 Skill 基准】
 你不是单纯拆 shot list，而是把剧本先当作分镜前的创作基准：
@@ -134,6 +137,7 @@ scene 的 description 必须使用场景提取步骤中的详细描述。这样�
 }
 
 字段硬约束：
+- 每一行的 duration ∈ [2, 15]（秒）。任何超出区间的行都视为违反硬约束，整张表作废。
 - 所有 row 的 duration 字段之和必须等于 {{totalDurationSeconds}} 秒（容差 ±0.5s）。这是 hard constraint，违反则整张表作废。
 - emotion_atmosphere 不等于 lighting_atmosphere；前者是情绪/氛围目标，后者是光影实现。
 - character_motivation 必须回答“为什么这样表演/行动”。
@@ -169,7 +173,8 @@ scene 的 description 必须使用场景提取步骤中的详细描述。这样�
 - 空间是否一致（角色不能瞬移）
 - 因果关系是否成立
 - 道具连续性（前一镜出现的物品后续是否还在）
-- 是否把本该合并多个分镜的连续动作拆得过碎；同一地点/同一动作链/同一情绪推进应倾向合并为 10-15秒 长视频 row。
+- **每行 duration 必须 ∈ [2, 15] 秒**。任何 < 2s 的行需合并；任何 > 15s 的行需拆分。
+- 是否把本该合并多个分镜的连续动作拆得过碎；同一地点/同一动作链/同一情绪推进应倾向合并为 10-15秒 长视频 row（≤ 15s）。
 - 允许轻微重复：连续动作中的姿态、空间方向、道具位置轻微重复不是问题，前提是强一致动作情节、因果与情绪递进成立。
 
 分镜表：
@@ -197,10 +202,11 @@ scene 的 description 必须使用场景提取步骤中的详细描述。这样�
 
 修复规则：
 - 只修改有问题的镜头，不要改动正确的部分
-- **总时长锁定为 {{totalDurationSeconds}} 秒**。修复后所有 row 的 duration 字段之和必须等于 {{totalDurationSeconds}} 秒（容差 ±0.5s）。若问题列表中包含总时长偏差项，必须重新分配每行 duration。
+- **每一行 row 的 duration 必须 ∈ [2, 15] 秒。** 任何 > 15s 的行必须拆分；任何 < 2s 的行必须与相邻行合并。修复后再次自检。
+- **总时长锁定为 {{totalDurationSeconds}} 秒**。修复后所有 row 的 duration 字段之和必须等于 {{totalDurationSeconds}} 秒（容差 ±0.5s）。若问题列表中包含总时长或单行超界项，必须重新分配每行 duration。
 - 确保修复后的景别分布合理
 - 保持角色和场景的连续性
-- 优先把同一地点、同一动作链、同一情绪推进的碎镜合并多个分镜到单个 10-15秒 row，并在 storyboard_prompts 中写成多格导演分镜图。
+- 优先把同一地点、同一动作链、同一情绪推进的碎镜合并多个分镜到单个 10-15秒 row（仍然 ≤ 15s），并在 storyboard_prompts 中写成多格导演分镜图。
 - 允许轻微重复；不要为了避免重复而破坏强一致动作情节、空间轴线、视线方向和情绪递进。
 
 输出修复后的完整分镜表 JSON 数组（\`\`\`json ... \`\`\`），不要其他文字。`,

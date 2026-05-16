@@ -215,34 +215,60 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
     visualStrategy: visualStrategy.slice(0, 400),
     elementContext: elementCtx,
   }))
-  const durationMismatch = summarizeDurationDrift(storyboardJson, totalDurationSeconds)
-  if (durationMismatch) state.issues.push(durationMismatch)
+  for (const issue of collectDurationIssues(storyboardJson, totalDurationSeconds)) {
+    state.issues.push(issue)
+  }
   setStep(state, 0, 10, 'done', storyboardJson); onUpdate(state)
 
   return storyboardJson
 }
 
+/** Per-row bounds enforced by both the prompts and post-validation. */
+export const MIN_ROW_DURATION_SECONDS = 2
+export const MAX_ROW_DURATION_SECONDS = 15
+
 /**
- * Sum the `duration` field across every storyboard row. Returns a one-line
- * issue string when the total drifts more than 0.5s from the requested total,
- * otherwise null. The director's runSelfCheck appends this to its issue list
- * so the fix stage can request a re-balance.
+ * Audit the generated storyboard JSON against the duration contract:
+ *   - every row's duration ∈ [MIN, MAX]
+ *   - sum of durations ≈ expectedTotal (±0.5s)
+ *
+ * Returns one issue line per violation, ready to push onto state.issues so
+ * runFix can request a re-balance. Empty array when the storyboard is clean.
  */
-function summarizeDurationDrift(storyboardJson: string, expectedTotal: number): string | null {
+export function collectDurationIssues(storyboardJson: string, expectedTotal: number): string[] {
   let parsed: unknown
   try {
     const m = storyboardJson.match(/\[[\s\S]*\]/)
-    if (!m) return null
+    if (!m) return []
     parsed = JSON.parse(m[0])
   } catch {
-    return null
+    return []
   }
-  if (!Array.isArray(parsed)) return null
+  if (!Array.isArray(parsed)) return []
   const rows = parsed as Array<{ duration?: number; shot_number?: string }>
+  const issues: string[] = []
+
+  for (const row of rows) {
+    const d = typeof row.duration === 'number' ? row.duration : NaN
+    const shot = row.shot_number ?? '?'
+    if (!Number.isFinite(d)) {
+      issues.push(`${shot}: duration 缺失或非数字 → 补齐 duration，必须 ∈ [${MIN_ROW_DURATION_SECONDS}, ${MAX_ROW_DURATION_SECONDS}] 秒`)
+      continue
+    }
+    if (d < MIN_ROW_DURATION_SECONDS) {
+      issues.push(`${shot}: duration ${d}s 过短 (<${MIN_ROW_DURATION_SECONDS}s) → 与相邻行合并`)
+    } else if (d > MAX_ROW_DURATION_SECONDS) {
+      issues.push(`${shot}: duration ${d}s 过长 (>${MAX_ROW_DURATION_SECONDS}s) → 拆分为多行，每行仍 ∈ [${MIN_ROW_DURATION_SECONDS}, ${MAX_ROW_DURATION_SECONDS}] 秒`)
+    }
+  }
+
   const sum = rows.reduce((acc, r) => acc + (typeof r.duration === 'number' ? r.duration : 0), 0)
   const drift = Math.abs(sum - expectedTotal)
-  if (drift <= 0.5) return null
-  return `ALL: 分镜总时长 ${sum.toFixed(1)}s 与目标 ${expectedTotal}s 偏差 ${drift.toFixed(1)}s → 重新分配每行 duration 使总和等于 ${expectedTotal}s`
+  if (drift > 0.5) {
+    issues.push(`ALL: 分镜总时长 ${sum.toFixed(1)}s 与目标 ${expectedTotal}s 偏差 ${drift.toFixed(1)}s → 重新分配每行 duration 使总和等于 ${expectedTotal}s`)
+  }
+
+  return issues
 }
 
 // ─── Stage 2: 自检 ──────────────────────────────────────────────────
