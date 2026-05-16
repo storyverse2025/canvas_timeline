@@ -4,10 +4,12 @@ import { toast } from 'sonner'
 import { useProjectDB } from '@/stores/project-db'
 import { useStoryboardStore } from '@/stores/storyboard-store'
 import { useViewStore } from '@/stores/view-store'
+import { useChatStore } from '@/stores/chat-store'
 import { runDirectorPipeline, type PipelineState } from '@/lib/director-assistant'
 import { parseAndValidateStoryboard } from '@/lib/storyboard-parser'
 import { ArtDirectionPanel } from './ArtDirectionPanel'
 import { DirectorPipelineProgress } from './DirectorPipelineProgress'
+import { InterviewCard } from '@/components/chat/InterviewCard'
 
 interface Props {
   onClose: () => void
@@ -16,6 +18,8 @@ interface Props {
 export function ScriptInputDialog({ onClose }: Props) {
   const script = useProjectDB((s) => s.script)
   const updateScript = useProjectDB((s) => s.updateScript)
+  const pendingQuestion = useChatStore((s) => s.pendingQuestion)
+  const answerQuestion = useChatStore((s) => s.answerQuestion)
   const [text, setText] = useState(script.text)
   const [showArt, setShowArt] = useState(false)
   const [phase, setPhase] = useState<'input' | 'running' | 'done' | 'error'>('input')
@@ -118,6 +122,17 @@ export function ScriptInputDialog({ onClose }: Props) {
                 {showArt && <ArtDirectionPanel />}
               </div>
             </>
+          )}
+
+          {/* Agent interview — surfaces in-dialog so the modal backdrop
+              doesn't trap the user. When an agent yields a Question turn the
+              card appears here; submitting it resumes the pipeline. */}
+          {phase === 'running' && pendingQuestion && (
+            <InterviewCard
+              question={pendingQuestion.question}
+              askedBy={pendingQuestion.agentLabel}
+              onSubmit={(answer) => answerQuestion(pendingQuestion.id, answer)}
+            />
           )}
 
           {/* Pipeline progress */}
