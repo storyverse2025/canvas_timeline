@@ -55,15 +55,16 @@ IMPORTANT: When the user mentions any of these keywords — 分镜, 表格, stor
     "sound_effects": "...",
     "dialogue": "对白文本",
     "dialogue_audio": "",
-    "storyboard_prompts": "english prompt for keyframe image",
-    "motion_prompts": "english prompt for beat video motion",
+    "storyboard_prompts": "english prompt for a 多格导演分镜图 / multi-panel director storyboard sheet/grid, not a single still; choose panel count 根据时长和节奏; for continuous action/emotion, 尽量合并 into one 10-15秒 row; each panel includes timing slice, composition, camera angle/lens/aperture/movement, blocking, eye-line/axis, depth of field, transition, and new visual/emotional information; 不要理解为最终视频的分屏",
+    "motion_prompts": "english prompt for beat video motion that follows the storyboard_prompts panel progression sequentially; allow slight continuity repetition; keep strong action/story consistency; not a literal split-screen",
     "bgm": "BGM description",
     "bgm_audio": ""
   }
 ]
 \`\`\`
-Required fields: shot_number (string), duration (positive number in seconds). Element slots (character1/2, prop1/2, scene) have {image, description} sub-fields. emotion_atmosphere, character_motivation, character_psychology, and performance_guidance must be filled from the script beat so the table can guide lens/camera/motion choices and actor performance. All other fields default to empty string if unknown. If a validator error is fed back, fix ONLY the listed fields and resend the complete JSON array.
+Required fields: shot_number (string), duration (positive number in seconds). Element slots (character1/2, prop1/2, scene) have {image, description} sub-fields. emotion_atmosphere, character_motivation, character_psychology, and performance_guidance must be filled from the script beat so the table can guide lens/camera/motion choices and actor performance. storyboard_prompts must describe a multi-panel director storyboard grid; motion_prompts must consume that grid as sequential video timing, not final split-screen. All other fields default to empty string if unknown. If a validator error is fed back, fix ONLY the listed fields and resend the complete JSON array.
 When generating storyboard/table rows, follow 小蔡剧本转分镜 Skill as the baseline: use the script before storyboard as the creative reference, map each shot to an emotion anchor, translate abstract psychology into playable visible behavior, and avoid decorative cuts.
+When generating storyboard/table rows, do not mechanically split continuous action into many 2-3s rows. For the same location/action chain/emotional progression, prefer fewer 10-15秒 rows, each with 多格导演分镜图. 允许轻微重复 for continuity, but maintain 强一致动作情节, spatial axis, eye-line, and emotional progression.
 When they ask you to write a script, structure it with numbered beats.
 
 When writing scripts, use this format:

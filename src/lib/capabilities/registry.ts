@@ -403,5 +403,5 @@ export function getCapabilitiesByCategory(category: CapabilitySpec['category']):
 }
 
 export function getCapabilitiesForNodeType(nodeType: string): CapabilitySpec[] {
-  return CAPABILITIES.filter((c) => c.nodeTypes.includes(nodeType as 'image' | 'text'))
+  return CAPABILITIES.filter((c) => c.nodeTypes.includes(nodeType as 'image' | 'text' | 'video' | 'audio'))
 }

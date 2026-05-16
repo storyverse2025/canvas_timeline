@@ -255,6 +255,8 @@ export function useStoryboardGenerate() {
   const generateBeatVideo = useCallback(async (row: StoryboardRow) => {
     const baseDescription = [
       row.motion_prompts,
+      row.storyboard_prompts ? `导演分镜格信息 / director storyboard panel progression (read sequentially over time, not a literal split-screen): ${row.storyboard_prompts}` : '',
+      'Use the storyboard grid as temporal guidance for Seedance 2: each panel is a beat in the video progression, not a literal split-screen layout.',
       row.visual_description,
       row.character_actions,
       row.emotion_mood,
@@ -298,6 +300,7 @@ export function useStoryboardGenerate() {
       const prompt = legend
         ? `${baseDescription || 'cinematic motion'}\n\n${legend}`
         : baseDescription || 'cinematic motion'
+      const seedanceDuration = String(Math.min(Math.max(Math.round(row.duration), 5), 15))
 
       const result = await runCapability({
         capability: 'text-to-video',
@@ -306,7 +309,7 @@ export function useStoryboardGenerate() {
           ...bvRefs.map((r) => ({ kind: 'image' as const, url: r.url })),
         ],
         params: {
-          duration: String(Math.min(Math.max(Math.round(row.duration), 5), 10)),
+          duration: seedanceDuration,
           aspect: '16:9',
         },
       })
@@ -321,13 +324,13 @@ export function useStoryboardGenerate() {
       const baseY = rowIdx * 300
 
       const vidItemId = useCanvasItemStore.getState().addItem({
-        kind: 'image', // renders in image node (video URL displayed)
+        kind: 'video',
         name: `BV-${row.shot_number}`,
         content: url,
         prompt,
       })
       const vidNodeId = useCanvasStore.getState().addItemNode(
-        vidItemId, 'image',
+        vidItemId, 'video',
         { x: baseX, y: baseY },
         { width: 360, height: 200 },
       )
@@ -343,6 +346,7 @@ export function useStoryboardGenerate() {
     } catch (e) {
       updateTask(taskId, { status: 'failed', error: String((e as Error).message ?? e) })
       toast.error('Beat Video 生成失败', { description: String((e as Error).message).slice(0, 200) })
+      throw e
     }
   }, [updateRow, startTask, updateTask])
 

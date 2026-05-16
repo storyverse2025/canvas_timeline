@@ -30,6 +30,7 @@ export function TrackItemClip({ item, zoom, asset, onDelete, onResize, onMove }:
   const x = timeToPixels(item.startTime, zoom)
   const width = Math.max(timeToPixels(item.duration, zoom), 20)
   const colorClass = TRACK_COLORS[item.type] ?? TRACK_COLORS.video
+  const storyboardImageUrl = typeof item.data?.imageUrl === 'string' ? item.data.imageUrl.trim() : ''
 
   const dragStartX = useRef(0)
   const dragStartTime = useRef(0)
@@ -109,9 +110,9 @@ export function TrackItemClip({ item, zoom, asset, onDelete, onResize, onMove }:
       )}
 
       {/* Storyboard reference image (data-backed, e.g. 分镜 track items) */}
-      {!asset?.thumbnailUrl && typeof item.data?.imageUrl === 'string' && (
+      {!asset?.thumbnailUrl && storyboardImageUrl && (
         <img
-          src={item.data.imageUrl as string}
+          src={storyboardImageUrl}
           alt=""
           className="h-full object-cover shrink-0 opacity-80"
           style={{ width: Math.min(width - 30, 80) }}

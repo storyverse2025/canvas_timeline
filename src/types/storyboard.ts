@@ -4,11 +4,18 @@ import { z } from 'zod'
  * Each "element slot" (character, prop, scene) is an image + text description pair
  * that references a canvas node for cross-tab sync.
  */
+export const EMPTY_ELEMENT_SLOT = { image: '', description: '', nodeId: '' }
+
 export const ElementSlotSchema = z.object({
   image: z.string().default(''),
   description: z.string().default(''),
   nodeId: z.string().default(''),
 })
+
+const NullableElementSlotSchema = z.preprocess(
+  (value) => (value === null ? { ...EMPTY_ELEMENT_SLOT } : value),
+  ElementSlotSchema,
+).default({ ...EMPTY_ELEMENT_SLOT })
 
 export type ElementSlot = z.infer<typeof ElementSlotSchema>
 
@@ -45,11 +52,11 @@ export const StoryboardRowSchema = z.object({
   /** Visual anchor: a reference point for visual consistency across shots */
   visual_anchor: z.string().default(''),
   // Element slots
-  character1: ElementSlotSchema.default({ image: '', description: '', nodeId: '' }),
-  character2: ElementSlotSchema.default({ image: '', description: '', nodeId: '' }),
-  prop1: ElementSlotSchema.default({ image: '', description: '', nodeId: '' }),
-  prop2: ElementSlotSchema.default({ image: '', description: '', nodeId: '' }),
-  scene: ElementSlotSchema.default({ image: '', description: '', nodeId: '' }),
+  character1: NullableElementSlotSchema,
+  character2: NullableElementSlotSchema,
+  prop1: NullableElementSlotSchema,
+  prop2: NullableElementSlotSchema,
+  scene: NullableElementSlotSchema,
 })
 
 export type StoryboardRowInput = z.infer<typeof StoryboardRowSchema>

@@ -26,18 +26,60 @@ export function resolveCanvasReference(shortId: string): { url?: string; nodeId?
   return { nodeId: node.id }
 }
 
+/** Try every balanced JSON-array-looking span, ignoring brackets inside strings. */
+function parseFirstBalancedJsonArray(text: string): unknown[] | null {
+  for (let start = 0; start < text.length; start++) {
+    if (text[start] !== '[') continue
+
+    let depth = 0
+    let inString = false
+    let escaped = false
+
+    for (let i = start; i < text.length; i++) {
+      const ch = text[i]
+
+      if (inString) {
+        if (escaped) {
+          escaped = false
+        } else if (ch === '\\') {
+          escaped = true
+        } else if (ch === '"') {
+          inString = false
+        }
+        continue
+      }
+
+      if (ch === '"') {
+        inString = true
+      } else if (ch === '[') {
+        depth++
+      } else if (ch === ']') {
+        depth--
+        if (depth === 0) {
+          try {
+            const parsed = JSON.parse(text.slice(start, i + 1))
+            if (Array.isArray(parsed)) return parsed
+          } catch {
+            // Not the storyboard array; continue scanning later '[' chars.
+          }
+          break
+        }
+      }
+    }
+  }
+  return null
+}
+
 /** Extract the first JSON array of storyboard rows from a model response. */
 function extractJsonArray(text: string): unknown | null {
-  // Prefer fenced ```json ... ``` blocks
+  // Prefer fenced ```json ... ``` blocks, but still scan robustly because retries
+  // often include prose like “fixed [S1]” before the corrected array.
   const fence = text.match(/```json\s*([\s\S]+?)\s*```/i) ?? text.match(/```\s*([\s\S]+?)\s*```/)
   const candidates = [fence?.[1], text]
   for (const c of candidates) {
     if (!c) continue
-    const start = c.indexOf('[')
-    const end = c.lastIndexOf(']')
-    if (start < 0 || end < 0 || end <= start) continue
-    const slice = c.slice(start, end + 1)
-    try { return JSON.parse(slice) } catch { /* keep trying */ }
+    const parsed = parseFirstBalancedJsonArray(c)
+    if (parsed) return parsed
   }
   return null
 }
@@ -90,7 +132,7 @@ export function parseAndValidateStoryboard(response: string): ParseResult {
       if (!sm) continue
       const ref = resolveCanvasReference(sm[1])
       out[slotKey] = {
-        image: ref.url ?? '',
+        image: ref.url ?? img,
         description: slot.description ?? '',
         nodeId: ref.nodeId ?? slot.nodeId ?? '',
       }

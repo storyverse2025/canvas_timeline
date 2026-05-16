@@ -291,6 +291,15 @@ export const PROMPTS: Record<string, PromptTemplate> = {
 - 表格必须补充角色动机、心理状态、表演指导：演员为什么这样演、此刻面对什么处境、内在纠结是什么。
 - 角色心理描写要来自剧本上下文，但输出要能指导表演和镜头，不能只写空泛文学句。
 
+【多格导演分镜图与长视频 row 规则】
+- 不要把连续动作机械拆成一堆 2-3 秒碎镜；对同一地点、同一动作链、同一情绪推进的内容，尽量合并为单个 10-15秒 长视频 row。
+- 每个 row 的 storyboard_prompts 必须生成一张“多格导演分镜图 / multi-panel director storyboard sheet/grid”，而不是单张电影 still。
+- 多格数量必须根据时长和节奏自动决定：短镜头可少格，10-15秒 或动作/情绪信息密集的 row 需要更多格，覆盖完整起承转合。
+- 每格必须写清 timing slice、构图、机位/焦段/光圈、运镜、角色调度、视线/轴线、景深、转场，以及这一格新增的视觉信息或情绪信息。
+- 允许轻微重复：为了保持连续性，角色姿态、空间方向、道具位置可以轻微重复；不要把这种连续性误判为单调。
+- 合并后的 row 必须保持强一致动作情节：动作因果、角色目标、视线方向、空间轴线和情绪递进要连续，不得跳戏。
+- 生成 keyframe 时把多格图当作“导演分镜板”；生成视频时要按格子顺序理解为时间推进，不要理解为最终视频的分屏。
+
 重要：每行的 character1/character2 的 description 和 image_prompt 必须使用前面角色提取步骤中的详细描述，
 scene 的 description 必须使用场景提取步骤中的详细描述。这样才能确保后续生成图片时角色和场景一致。
 
@@ -309,8 +318,8 @@ scene 的 description 必须使用场景提取步骤中的详细描述。这样�
   "performance_guidance": "表演指导：演员可执行的眼神/呼吸/手部/姿态/节奏",
   "lighting_atmosphere": "光影氛围",
   "dialogue": "对白",
-  "storyboard_prompts": "english keyframe generation prompt (include style: {{artStyle}})",
-  "motion_prompts": "english video motion prompt; include camera movement motivated by emotion_atmosphere and character_motivation",
+  "storyboard_prompts": "english prompt for a multi-panel director storyboard sheet/grid, not a single still; include style: {{artStyle}}; choose panel count by duration/rhythm; each panel includes timing slice, composition, camera angle/lens/aperture/movement, blocking, eye-line/axis, depth of field, transition, and new visual/emotional information; this is storyboard guidance, not final split-screen video",
+  "motion_prompts": "english video motion prompt following the panel progression from storyboard_prompts; include camera movement motivated by emotion_atmosphere and character_motivation; interpret the storyboard grid sequentially, not as a literal split-screen",
   "character1": { "image": "", "description": "从角色提取结果复制完整描述" },
   "character2": { "image": "", "description": "从角色提取结果复制完整描述" },
   "prop1": { "image": "", "description": "道具描述" },
@@ -323,6 +332,8 @@ scene 的 description 必须使用场景提取步骤中的详细描述。这样�
 - character_motivation 必须回答“为什么这样表演/行动”。
 - character_psychology 必须回答“心理纠结/潜台词/处境压力”。
 - performance_guidance 必须是演员能演出来的身体细节，不要写抽象鸡汤。
+- storyboard_prompts 必须明确是多格导演分镜图，并包含每格的时间切片和动作/情绪推进；不要只写单帧 keyframe prompt。
+- motion_prompts 必须引用 storyboard_prompts 的格子顺序，让 Seedance 2 视频按多格时间推进生成，不要把多格图当最终分屏画面。
 
 角色设计：
 {{characterDesigns}}
@@ -351,6 +362,8 @@ scene 的 description 必须使用场景提取步骤中的详细描述。这样�
 - 空间是否一致（角色不能瞬移）
 - 因果关系是否成立
 - 道具连续性（前一镜出现的物品后续是否还在）
+- 是否把本该合并多个分镜的连续动作拆得过碎；同一地点/同一动作链/同一情绪推进应倾向合并为 10-15秒 长视频 row。
+- 允许轻微重复：连续动作中的姿态、空间方向、道具位置轻微重复不是问题，前提是强一致动作情节、因果与情绪递进成立。
 
 分镜表：
 {{storyboardJson}}
@@ -365,9 +378,10 @@ scene 的 description 必须使用场景提取步骤中的详细描述。这样�
     template: `你是视觉平衡审查员。扫描分镜表的视觉平衡：
 - 景别分布是否合理（不能连续5个特写）
 - 色调变化是否有节奏
-- 镜头时长是否合理（不能太短<1s或太长>15s连续出现）
+- 镜头时长是否合理：不要太短<1s；连续动作/情绪推进优先合并多个分镜到 10-15秒 长视频 row；>15s 才需要重点拆分。
 - 构图多样性（是否过于单调）
 - 角色出镜均衡性
+- 不要把服务连续性的轻微重复误判成单调；只要多格导演分镜图内部有清晰新信息和强一致动作情节，就可保留。
 
 分镜表：
 {{storyboardJson}}
@@ -394,6 +408,8 @@ scene 的 description 必须使用场景提取步骤中的详细描述。这样�
 - 保持总时长大致不变
 - 确保修复后的景别分布合理
 - 保持角色和场景的连续性
+- 优先把同一地点、同一动作链、同一情绪推进的碎镜合并多个分镜到单个 10-15秒 row，并在 storyboard_prompts 中写成多格导演分镜图。
+- 允许轻微重复；不要为了避免重复而破坏强一致动作情节、空间轴线、视线方向和情绪递进。
 
 输出修复后的完整分镜表 JSON 数组（\`\`\`json ... \`\`\`），不要其他文字。`,
   },

@@ -230,7 +230,7 @@ export function NodeContextMenu({ menu, onClose }: Props) {
         <CreateAssetDialog
           itemName={item.name}
           itemContent={item.content}
-          itemKind={item.kind}
+          itemKind={item.kind === 'video' ? 'image' : item.kind}
           onClose={() => setCreateAssetOpen(false)}
         />
       )}

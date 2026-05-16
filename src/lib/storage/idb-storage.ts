@@ -19,12 +19,18 @@ const DB_NAME = 'canvas-timeline-store'
 const STORE = 'kv'
 const VERSION = 1
 
+const memoryStorage = new Map<string, string>()
+
 let dbPromise: Promise<IDBDatabase> | null = null
+
+function hasIndexedDB(): boolean {
+  return typeof indexedDB !== 'undefined'
+}
 
 function openDB(): Promise<IDBDatabase> {
   if (dbPromise) return dbPromise
   dbPromise = new Promise((resolve, reject) => {
-    if (typeof indexedDB === 'undefined') {
+    if (!hasIndexedDB()) {
       reject(new Error('IndexedDB unavailable'))
       return
     }
@@ -80,6 +86,18 @@ async function migrateFromLocalStorageOnce(name: string): Promise<void> {
 }
 
 export function createIdbStorage(name: string): StateStorage {
+  if (!hasIndexedDB()) {
+    return {
+      getItem: async (key) => memoryStorage.get(key) ?? null,
+      setItem: async (key, value) => {
+        memoryStorage.set(key, value)
+      },
+      removeItem: async (key) => {
+        memoryStorage.delete(key)
+      },
+    }
+  }
+
   // Kick off migration eagerly so the first hydration call sees the carried
   // value if any. The Zustand persist hydration is async, so a fire-and-forget
   // here is safe — getItem awaits the same dbPromise.

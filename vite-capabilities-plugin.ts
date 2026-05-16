@@ -542,9 +542,23 @@ async function poseEdit(req: CapReq): Promise<CapRes> {
 
 // ─── Video capabilities ──────────────────────────────────────────────
 
-/** Only absolute http(s) or data: URLs are valid for remote APIs. */
+function isSupportedRasterDataUrl(url: string): boolean {
+  const match = /^data:image\/(png|jpe?g|webp);base64,([A-Za-z0-9+/]+={0,2})$/i.exec(url.trim())
+  if (!match) return false
+  const payload = match[2]
+  return payload.length > 0 && payload.length % 4 !== 1
+}
+
+function isSeedanceImageUrl(url: string): boolean {
+  const trimmed = url.trim()
+  if (trimmed.length <= 10) return false
+  if (/^https?:\/\//i.test(trimmed)) return true
+  return isSupportedRasterDataUrl(trimmed)
+}
+
+/** Only Seedance-supported absolute http(s) URLs or raster data URLs are valid for remote video APIs. */
 function filterValidRefs(urls: string[]): string[] {
-  return urls.filter((u) => u && u.length > 10 && (/^https?:\/\//i.test(u) || u.startsWith('data:')))
+  return urls.filter(isSeedanceImageUrl).map((u) => u.trim())
 }
 
 // ─── Seedance video generation type helpers (inlined for Node server) ──
@@ -612,7 +626,10 @@ function buildContentParts(
 
 /** Convert a local /uploads/ path to a file:// readable buffer, or fetch remote URL as base64 data URL */
 async function resolveImageToDataUrl(imageUrl: string): Promise<string> {
-  if (imageUrl.startsWith('data:')) return imageUrl
+  if (imageUrl.startsWith('data:')) {
+    if (!isSupportedRasterDataUrl(imageUrl)) throw new Error('unsupported image data URL for Seedance')
+    return imageUrl
+  }
   if (imageUrl.startsWith('/')) {
     const { readFileSync } = await import('fs')
     const { join } = await import('path')
@@ -626,6 +643,9 @@ async function resolveImageToDataUrl(imageUrl: string): Promise<string> {
   if (!r.ok) throw new Error(`fetch image failed: ${r.status}`)
   const buf = Buffer.from(await r.arrayBuffer())
   const contentType = r.headers.get('content-type') || 'image/png'
+  if (!/^image\/(png|jpe?g|webp)$/i.test(contentType)) {
+    throw new Error(`unsupported fetched image type for Seedance: ${contentType}`)
+  }
   return `data:${contentType};base64,${buf.toString('base64')}`
 }
 
@@ -662,16 +682,23 @@ export function createSeedanceGridOverlayImageUrl(imageUrl: string): string {
 export function buildSeedanceGridRetryContentParts(
   contentParts: Array<Record<string, unknown>>,
 ): Array<Record<string, unknown>> {
+  // The historical grid retry returned SVG data URLs. Doubao/Seedance rejects
+  // those as image_url, so keep the original parts until this can rasterize to
+  // PNG/JPEG/WebP or upload a real image URL.
   return contentParts.map((part) => {
-    const imageUrl = (part.image_url as { url?: unknown } | undefined)?.url
-    if (part.type !== 'image_url' || typeof imageUrl !== 'string') return part
-    return {
-      ...part,
-      image_url: {
-        ...(part.image_url as Record<string, unknown>),
-        url: createSeedanceGridOverlayImageUrl(imageUrl),
-      },
-    }
+    return part
+  })
+}
+
+function hasGridRetryChangedImageParts(
+  original: Array<Record<string, unknown>>,
+  retry: Array<Record<string, unknown>>,
+): boolean {
+  return retry.some((part, index) => {
+    if (part.type !== 'image_url') return false
+    const originalUrl = (original[index]?.image_url as { url?: unknown } | undefined)?.url
+    const retryUrl = (part.image_url as { url?: unknown } | undefined)?.url
+    return typeof retryUrl === 'string' && retryUrl !== originalUrl
   })
 }
 
@@ -742,6 +769,7 @@ async function submitSeedanceTask(opts: {
       ...opts,
       contentParts: buildSeedanceGridRetryContentParts(opts.contentParts),
     }
+    if (!hasGridRetryChangedImageParts(opts.contentParts, retryOpts.contentParts)) throw firstError
 
     try {
       return await submitSeedanceTaskOnce(retryOpts)
