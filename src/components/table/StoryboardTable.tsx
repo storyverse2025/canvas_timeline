@@ -1,5 +1,6 @@
-import { useCallback, useRef, useState } from 'react'
-import { Image as ImageIcon, Video, Wand2, Upload, Play, Volume2 } from 'lucide-react'
+import { useCallback, useState } from 'react'
+import { Image as ImageIcon, Video, Wand2, Play, Volume2, FolderInput } from 'lucide-react'
+import { CanvasNodePickerDialog, type PickedNode } from './CanvasNodePickerDialog'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { useStoryboardStore } from '@/stores/storyboard-store'
@@ -85,11 +86,15 @@ function NumberCell({ value, onChange }: { value: number; onChange: (v: number) 
   )
 }
 
-function MediaCell({ url, onChange, onGenerate, busy, kind }: {
-  url?: string; onChange: (v: string) => void; onGenerate?: () => void; busy?: boolean
+function MediaCell({ url, onPick, onGenerate, busy, kind }: {
+  url?: string
+  /** Receives the picked canvas node (or just the URL if you don't need the id). */
+  onPick: (node: PickedNode) => void
+  onGenerate?: () => void
+  busy?: boolean
   kind: 'image' | 'video'
 }) {
-  const fileRef = useRef<HTMLInputElement>(null)
+  const [pickerOpen, setPickerOpen] = useState(false)
   const Placeholder = kind === 'image' ? ImageIcon : Video
   return (
     <div className="relative w-full h-[56px] rounded bg-zinc-800/70 border border-zinc-700 overflow-hidden flex items-center justify-center group">
@@ -111,23 +116,26 @@ function MediaCell({ url, onChange, onGenerate, busy, kind }: {
             <Wand2 className="w-3 h-3" />
           </button>
         )}
-        <button title="上传" className="p-1 rounded bg-zinc-700 hover:bg-zinc-600 text-zinc-100" onClick={() => fileRef.current?.click()}>
-          <Upload className="w-3 h-3" />
+        <button
+          title={`从画布选取${kind === 'image' ? '图片' : '视频'}节点`}
+          className="p-1 rounded bg-zinc-700 hover:bg-zinc-600 text-zinc-100"
+          onClick={() => setPickerOpen(true)}
+        >
+          <FolderInput className="w-3 h-3" />
         </button>
       </div>
-      <input
-        ref={fileRef} type="file" accept={kind === 'image' ? 'image/*' : 'video/*'} className="hidden"
-        onChange={(e) => {
-          const f = e.target.files?.[0]; if (!f) return
-          const r = new FileReader(); r.onload = () => { if (typeof r.result === 'string') onChange(r.result) }; r.readAsDataURL(f)
-        }}
+      <CanvasNodePickerDialog
+        open={pickerOpen}
+        kind={kind}
+        onClose={() => setPickerOpen(false)}
+        onPick={onPick}
       />
     </div>
   )
 }
 
-function AudioCell({ url, onChange }: { url?: string; onChange: (v: string) => void }) {
-  const fileRef = useRef<HTMLInputElement>(null)
+function AudioCell({ url, onPick }: { url?: string; onPick: (node: PickedNode) => void }) {
+  const [pickerOpen, setPickerOpen] = useState(false)
   return (
     <div className="relative w-full h-[40px] rounded bg-zinc-800/70 border border-zinc-700 overflow-hidden flex items-center justify-center group">
       {url ? (
@@ -136,16 +144,19 @@ function AudioCell({ url, onChange }: { url?: string; onChange: (v: string) => v
         <Volume2 className="w-4 h-4 text-zinc-600" />
       )}
       <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition bg-black/60 flex items-center justify-center">
-        <button title="上传" className="p-1 rounded bg-zinc-700 hover:bg-zinc-600 text-zinc-100" onClick={() => fileRef.current?.click()}>
-          <Upload className="w-3 h-3" />
+        <button
+          title="从画布选取音频节点"
+          className="p-1 rounded bg-zinc-700 hover:bg-zinc-600 text-zinc-100"
+          onClick={() => setPickerOpen(true)}
+        >
+          <FolderInput className="w-3 h-3" />
         </button>
       </div>
-      <input
-        ref={fileRef} type="file" accept="audio/*" className="hidden"
-        onChange={(e) => {
-          const f = e.target.files?.[0]; if (!f) return
-          const r = new FileReader(); r.onload = () => { if (typeof r.result === 'string') onChange(r.result) }; r.readAsDataURL(f)
-        }}
+      <CanvasNodePickerDialog
+        open={pickerOpen}
+        kind="audio"
+        onClose={() => setPickerOpen(false)}
+        onPick={onPick}
       />
     </div>
   )
@@ -161,7 +172,7 @@ function ElementCell({ slot: rawSlot, onChange }: {
     description: String((rawSlot as ElementSlot)?.description ?? ''),
     nodeId: String((rawSlot as ElementSlot)?.nodeId ?? ''),
   }
-  const fileRef = useRef<HTMLInputElement>(null)
+  const [pickerOpen, setPickerOpen] = useState(false)
   return (
     <div className="flex flex-col gap-1">
       <div className="relative w-full h-[40px] rounded bg-zinc-800/70 border border-zinc-700 overflow-hidden flex items-center justify-center group">
@@ -171,23 +182,26 @@ function ElementCell({ slot: rawSlot, onChange }: {
           <ImageIcon className="w-3.5 h-3.5 text-zinc-600" />
         )}
         <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition bg-black/60 flex items-center justify-center">
-          <button className="p-1 rounded bg-zinc-700 hover:bg-zinc-600 text-zinc-100" onClick={() => fileRef.current?.click()}>
-            <Upload className="w-3 h-3" />
+          <button
+            title="从画布选取图片节点"
+            className="p-1 rounded bg-zinc-700 hover:bg-zinc-600 text-zinc-100"
+            onClick={() => setPickerOpen(true)}
+          >
+            <FolderInput className="w-3 h-3" />
           </button>
         </div>
-        <input
-          ref={fileRef} type="file" accept="image/*" className="hidden"
-          onChange={(e) => {
-            const f = e.target.files?.[0]; if (!f) return
-            const r = new FileReader(); r.onload = () => { if (typeof r.result === 'string') onChange({ image: r.result }) }; r.readAsDataURL(f)
-          }}
-        />
       </div>
       <input
         className="w-full bg-transparent outline-none text-[10px] text-zinc-300 focus:bg-zinc-800 px-1 py-0.5 rounded"
         value={slot.description}
         onChange={(e) => onChange({ description: e.target.value })}
         placeholder="描述…"
+      />
+      <CanvasNodePickerDialog
+        open={pickerOpen}
+        kind="image"
+        onClose={() => setPickerOpen(false)}
+        onPick={(picked) => onChange({ image: picked.url, nodeId: picked.nodeId })}
       />
     </div>
   )
@@ -469,7 +483,7 @@ export function StoryboardTable() {
                     {/* 参考 / Keyframe */}
                     <td className="px-2 py-2 border-b border-zinc-900">
                       <MediaCell kind="image" url={r.keyframeUrl || r.reference_image} busy={kfBusy}
-                        onChange={(v) => updateRow(r.id, { reference_image: v, keyframeUrl: v })}
+                        onPick={(picked) => updateRow(r.id, { reference_image: picked.url, keyframeUrl: picked.url, keyframeNodeId: picked.nodeId })}
                         onGenerate={() => generateKeyframe(r)} />
                     </td>
                     {/* 景别 */}
@@ -535,7 +549,7 @@ export function StoryboardTable() {
                     </td>
                     {/* 对白音频 */}
                     <td className="px-2 py-2 border-b border-zinc-900">
-                      <AudioCell url={r.dialogue_audio} onChange={(v) => updateRow(r.id, { dialogue_audio: v })} />
+                      <AudioCell url={r.dialogue_audio} onPick={(picked) => updateRow(r.id, { dialogue_audio: picked.url })} />
                     </td>
                     {/* 音效 */}
                     <td className="px-2 py-2 border-b border-zinc-900">
@@ -555,12 +569,12 @@ export function StoryboardTable() {
                     </td>
                     {/* BGM 音频 */}
                     <td className="px-2 py-2 border-b border-zinc-900">
-                      <AudioCell url={r.bgm_audio} onChange={(v) => updateRow(r.id, { bgm_audio: v })} />
+                      <AudioCell url={r.bgm_audio} onPick={(picked) => updateRow(r.id, { bgm_audio: picked.url })} />
                     </td>
                     {/* Beat Video */}
                     <td className="px-2 py-2 border-b border-zinc-900">
                       <MediaCell kind="video" url={r.beatVideoUrl} busy={bvBusy}
-                        onChange={(v) => updateRow(r.id, { beatVideoUrl: v })}
+                        onPick={(picked) => updateRow(r.id, { beatVideoUrl: picked.url })}
                         onGenerate={() => generateBeatVideo(r)} />
                     </td>
                   </tr>
