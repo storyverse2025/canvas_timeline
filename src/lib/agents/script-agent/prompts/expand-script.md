@@ -29,6 +29,7 @@ output: ScriptDossier (JSON only)
 ═══ 关键设定（已锁定，必须严格遵守）═══
 
 - 项目类型: {{projectType}}
+- **总时长: {{totalDuration}}**
 - 目标平台 / 受众: {{platformAudience}}
 - 视觉风格: {{visualStyle}}
 - 故事目标 / 核心情绪: {{storyGoal}}
@@ -54,7 +55,7 @@ output: ScriptDossier (JSON only)
 {
   "framework_calibration": {
     "logline": "一句话故事核心",
-    "duration_or_episode_type": "时长/集型（必须匹配项目类型 {{projectType}}）",
+    "duration_or_episode_type": "时长/集型（必须匹配项目类型 {{projectType}} 与总时长 {{totalDuration}}）",
     "platform_bias": "平台倾向（必须匹配 {{platformAudience}}）",
     "core_emotion": "核心情绪（必须匹配故事目标 {{storyGoal}}）",
     "main_risk": "至少一个真实问题，不捧杀；如有禁忌冲突，必须在此点出"
@@ -110,6 +111,7 @@ output: ScriptDossier (JSON only)
 
 ═══ 硬约束 ═══
 
+- 总时长锁定为 {{totalDuration}}。beat_summary 的拍数与 storyboard_directives 必须能在该总时长内完成；不要写出会撑爆/欠满该总时长的结构。
 - 必须包含 Casting 角色卡，不允许只写角色名。
 - 角色数量必须匹配 "{{characterCount}}"。如果原剧本角色多于此上限，必须合并；少于则只列实际数量。
 - 每个 casting_cards.performance_anchors 必须是演员可执行动作（眼神/呼吸/手部/姿态/节奏），不要抽象鸡汤。

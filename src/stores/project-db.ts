@@ -108,6 +108,9 @@ export interface ArtDirection {
 export interface Script {
   text: string
   optimizedText: string
+  /** Total duration (seconds) the storyboard rows must sum to. Required by
+   *  the director-assistant pipeline; the LLM treats it as a hard constraint. */
+  totalDurationSeconds: number
   updatedAt: number
 }
 
@@ -190,6 +193,7 @@ const DEFAULT_ART_DIRECTION: ArtDirection = {
 const DEFAULT_SCRIPT: Script = {
   text: '',
   optimizedText: '',
+  totalDurationSeconds: 30,
   updatedAt: 0,
 }
 

@@ -185,4 +185,8 @@ export interface ScriptRequest {
   canvasContext?: string
   /** Optional existing storyboard block to preserve. */
   existingStoryboard?: string
+  /** Total duration the final storyboard must sum to (seconds). Required by
+   *  the director pipeline; the dossier's duration_or_episode_type and the
+   *  downstream storyboardGeneration prompt both enforce it. */
+  totalDurationSeconds?: number
 }

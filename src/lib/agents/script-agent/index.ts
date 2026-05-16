@@ -447,6 +447,11 @@ export function createScriptAgent(deps: ScriptAgentDeps = {}): AgentModule<
       ? '无'
       : taboos.map((t) => labelOf(t, TABOO_OPTIONS)).join('；')
 
+    const totalDurationText =
+      request.totalDurationSeconds && request.totalDurationSeconds > 0
+        ? `${request.totalDurationSeconds} 秒（最终分镜表每行时长之和必须等于此总时长）`
+        : '未指定（由项目类型推断）'
+
     const filled = fillTemplate(expandScriptTemplate, {
       scriptText: request.scriptText,
       artStyle: ctx.project.style.get().promptText || ctx.project.style.get().presetId,
@@ -459,6 +464,7 @@ export function createScriptAgent(deps: ScriptAgentDeps = {}): AgentModule<
       characterCount: labelOf(characterCount, CHARACTER_COUNT_OPTIONS),
       taboos: taboosText,
       inputShape: labelOf(inputShape, INPUT_SHAPE_OPTIONS),
+      totalDuration: totalDurationText,
     })
 
     const llmResponse = await ctx.llm.complete(

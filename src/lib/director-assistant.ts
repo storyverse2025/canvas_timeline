@@ -111,6 +111,10 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
     .filter((it) => it.kind === 'text' && it.content)
     .map((it) => `[${it.name}]: ${it.content}`)
     .join('\n\n')
+  const totalDurationSeconds = db.script.totalDurationSeconds
+  if (!totalDurationSeconds || totalDurationSeconds <= 0) {
+    throw new Error('director pipeline: 必须先在导演助手输入总时长 (script.totalDurationSeconds)')
+  }
   const artDir = db.artDirection
   const artStyle = artDir.customStyle || artDir.stylePreset
   const canvasCtx = buildCanvasContext()
@@ -133,7 +137,7 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   const dossier = await runAgentWithChatBridge(
     'script-agent',
     scriptAgent.run(
-      { scriptText, canvasContext: canvasCtx, existingStoryboard },
+      { scriptText, canvasContext: canvasCtx, existingStoryboard, totalDurationSeconds },
       agentCtx,
     ),
     { verb: 'expand-script', interactive: true },
@@ -202,6 +206,7 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   setStep(state, 0, 10, 'running'); onUpdate(state)
   const storyboardJson = await aiCall(fillPrompt('storyboardGeneration', {
     artStyle,
+    totalDurationSeconds: String(totalDurationSeconds),
     characterDesigns: characterDesigns.slice(0, 800),
     sceneDesigns: sceneDesigns.slice(0, 800),
     propDesigns: propDesigns.slice(0, 400),
@@ -210,9 +215,34 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
     visualStrategy: visualStrategy.slice(0, 400),
     elementContext: elementCtx,
   }))
+  const durationMismatch = summarizeDurationDrift(storyboardJson, totalDurationSeconds)
+  if (durationMismatch) state.issues.push(durationMismatch)
   setStep(state, 0, 10, 'done', storyboardJson); onUpdate(state)
 
   return storyboardJson
+}
+
+/**
+ * Sum the `duration` field across every storyboard row. Returns a one-line
+ * issue string when the total drifts more than 0.5s from the requested total,
+ * otherwise null. The director's runSelfCheck appends this to its issue list
+ * so the fix stage can request a re-balance.
+ */
+function summarizeDurationDrift(storyboardJson: string, expectedTotal: number): string | null {
+  let parsed: unknown
+  try {
+    const m = storyboardJson.match(/\[[\s\S]*\]/)
+    if (!m) return null
+    parsed = JSON.parse(m[0])
+  } catch {
+    return null
+  }
+  if (!Array.isArray(parsed)) return null
+  const rows = parsed as Array<{ duration?: number; shot_number?: string }>
+  const sum = rows.reduce((acc, r) => acc + (typeof r.duration === 'number' ? r.duration : 0), 0)
+  const drift = Math.abs(sum - expectedTotal)
+  if (drift <= 0.5) return null
+  return `ALL: 分镜总时长 ${sum.toFixed(1)}s 与目标 ${expectedTotal}s 偏差 ${drift.toFixed(1)}s → 重新分配每行 duration 使总和等于 ${expectedTotal}s`
 }
 
 // ─── Stage 2: 自检 ──────────────────────────────────────────────────
@@ -256,6 +286,8 @@ async function runSelfCheck(state: PipelineState, storyboardJson: string, onUpda
 // ─── Stage 3: 修复 ──────────────────────────────────────────────────
 
 async function runFix(state: PipelineState, storyboardJson: string, issues: string[], onUpdate: OnUpdate): Promise<string> {
+  const { useProjectDB } = await import('@/stores/project-db')
+  const totalDurationSeconds = useProjectDB.getState().script.totalDurationSeconds
   if (issues.length === 0) {
     setStep(state, 2, 0, 'done', '无需修复')
     setStep(state, 2, 1, 'done', '使用优化结果作为最终结果')
@@ -267,6 +299,7 @@ async function runFix(state: PipelineState, storyboardJson: string, issues: stri
   const fixResult = await aiCall(fillPrompt('applyFixes', {
     issuesList: issues.map((i, idx) => `${idx + 1}. ${i}`).join('\n'),
     storyboardJson: storyboardJson.slice(0, 3000),
+    totalDurationSeconds: String(totalDurationSeconds || 0),
   }))
   state.fixes = issues.map((i) => `已修复: ${i}`)
   setStep(state, 2, 0, 'done', `已修复 ${issues.length} 个问题`); onUpdate(state)

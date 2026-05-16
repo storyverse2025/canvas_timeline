@@ -82,6 +82,13 @@ export const PROMPTS: Record<string, PromptTemplate> = {
     label: '生成分镜表 JSON',
     template: `将以上所有分析整合，输出最终的分镜表 JSON 数组。
 
+【总时长硬约束（不可违反）】
+- 用户已指定本片总时长为 **{{totalDurationSeconds}} 秒**。
+- 所有分镜 row 的 duration 字段之和必须严格等于 {{totalDurationSeconds}} 秒（允许 0.5 秒以内的舍入误差）。
+- 在编辑每个 row 的 duration 之前先做整体规划：按节拍权重分配各 row 时长，最后核对总和。
+- 不准超时也不准欠时。如果剧本内容塞不下 {{totalDurationSeconds}} 秒，先压缩动作密度或合并 row；如果塞得太满，先扩长情绪 row 或加入情绪缓冲 row。
+- 输出最后请在心里复核一遍：Σ duration == {{totalDurationSeconds}}。
+
 【小蔡剧本转分镜 Skill 基准】
 你不是单纯拆 shot list，而是把剧本先当作分镜前的创作基准：
 - 先依据剧本动作建立情绪锚点，再生成每个镜头；禁止为切而切。
@@ -127,6 +134,7 @@ scene 的 description 必须使用场景提取步骤中的详细描述。这样�
 }
 
 字段硬约束：
+- 所有 row 的 duration 字段之和必须等于 {{totalDurationSeconds}} 秒（容差 ±0.5s）。这是 hard constraint，违反则整张表作废。
 - emotion_atmosphere 不等于 lighting_atmosphere；前者是情绪/氛围目标，后者是光影实现。
 - character_motivation 必须回答“为什么这样表演/行动”。
 - character_psychology 必须回答“心理纠结/潜台词/处境压力”。
@@ -189,7 +197,7 @@ scene 的 description 必须使用场景提取步骤中的详细描述。这样�
 
 修复规则：
 - 只修改有问题的镜头，不要改动正确的部分
-- 保持总时长大致不变
+- **总时长锁定为 {{totalDurationSeconds}} 秒**。修复后所有 row 的 duration 字段之和必须等于 {{totalDurationSeconds}} 秒（容差 ±0.5s）。若问题列表中包含总时长偏差项，必须重新分配每行 duration。
 - 确保修复后的景别分布合理
 - 保持角色和场景的连续性
 - 优先把同一地点、同一动作链、同一情绪推进的碎镜合并多个分镜到单个 10-15秒 row，并在 storyboard_prompts 中写成多格导演分镜图。

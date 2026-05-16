@@ -21,10 +21,17 @@ export function ScriptInputDialog({ onClose }: Props) {
   const pendingQuestion = useChatStore((s) => s.pendingQuestion)
   const answerQuestion = useChatStore((s) => s.answerQuestion)
   const [text, setText] = useState(script.text)
+  const [totalDurationStr, setTotalDurationStr] = useState(
+    script.totalDurationSeconds > 0 ? String(script.totalDurationSeconds) : '30',
+  )
   const [showArt, setShowArt] = useState(false)
   const [phase, setPhase] = useState<'input' | 'running' | 'done' | 'error'>('input')
   const [pipelineState, setPipelineState] = useState<PipelineState | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+
+  const totalDurationSeconds = Number(totalDurationStr)
+  const totalDurationValid =
+    Number.isFinite(totalDurationSeconds) && totalDurationSeconds > 0 && totalDurationSeconds <= 7200
 
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]
@@ -42,8 +49,9 @@ export function ScriptInputDialog({ onClose }: Props) {
 
   const handleOptimize = async () => {
     if (!text.trim()) { toast.error('请输入或上传剧本'); return }
+    if (!totalDurationValid) { toast.error('请输入有效的总时长（1-7200 秒）'); return }
     setPhase('running')
-    updateScript({ text: text.trim() })
+    updateScript({ text: text.trim(), totalDurationSeconds })
 
     try {
       const { state, storyboardJson } = await runDirectorPipeline((s) => {
@@ -110,6 +118,27 @@ export function ScriptInputDialog({ onClose }: Props) {
                 />
               </div>
 
+              <div>
+                <label className="text-[10px] text-muted-foreground uppercase block mb-1">
+                  总时长（秒） <span className="text-destructive">*</span>
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={7200}
+                  step={1}
+                  value={totalDurationStr}
+                  onChange={(e) => setTotalDurationStr(e.target.value)}
+                  className={`w-full text-xs bg-background border rounded px-3 py-2 outline-none ${
+                    totalDurationValid ? 'border-border' : 'border-destructive'
+                  }`}
+                  placeholder="例如 30 / 60 / 600"
+                />
+                <p className="mt-1 text-[10px] text-muted-foreground">
+                  分镜表每行时长之和必须等于此总时长，LLM 会被强制约束。
+                </p>
+              </div>
+
               {/* Art direction (collapsible) */}
               <div>
                 <button
@@ -162,7 +191,7 @@ export function ScriptInputDialog({ onClose }: Props) {
               <button className="px-3 py-1.5 text-xs rounded border border-border hover:bg-accent" onClick={onClose}>取消</button>
               <button
                 className="px-4 py-1.5 text-xs rounded bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-40 inline-flex items-center gap-1.5"
-                disabled={!text.trim()}
+                disabled={!text.trim() || !totalDurationValid}
                 onClick={handleOptimize}
               >
                 <Clapperboard className="w-3 h-3" />
