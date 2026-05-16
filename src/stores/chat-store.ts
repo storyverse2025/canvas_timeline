@@ -1,8 +1,10 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import { v4 as uuid } from 'uuid';
 import type { ChatMessage, AgentAction, SkillProgress } from '@/types/chat';
 import type { Answer, Question } from '@/lib/agents/_shared/runtime/types';
+import { createIdbStorage } from '@/lib/storage/idb-storage';
 
 /**
  * An interview question that an agent has yielded and is waiting on. ChatPanel
@@ -45,7 +47,8 @@ interface ChatActions {
 const pendingResolvers = new Map<string, (answer: Answer) => void>();
 
 export const useChatStore = create<ChatState & ChatActions>()(
-  immer((set) => ({
+  persist(
+    immer((set) => ({
     messages: [
       {
         id: 'welcome',
@@ -116,5 +119,28 @@ export const useChatStore = create<ChatState & ChatActions>()(
       });
       resolve?.(answer);
     },
-  }))
+    })),
+    {
+      name: 'chat-store',
+      // Image data URLs or long agent recap strings can blow past localStorage's
+      // ~5 MB cap; IDB has plenty. Same backend as canvas-item-store.
+      storage: createJSONStorage(() => createIdbStorage('chat-store')),
+      // Don't persist transient runtime state — pendingQuestion's resolver
+      // lives in a module-level Map that gets reset on reload, so a "frozen"
+      // pendingQuestion in localStorage would hang the UI forever.
+      partialize: (state) => ({
+        messages: state.messages,
+        // isLoading, activeSkill, skillProgress, pendingQuestion all reset on reload.
+      }),
+      onRehydrateStorage: () => (state) => {
+        // After hydration, clear any stale in-flight question + transient flags.
+        if (state) {
+          state.pendingQuestion = null;
+          state.isLoading = false;
+          state.activeSkill = null;
+          state.skillProgress = null;
+        }
+      },
+    }
+  )
 );

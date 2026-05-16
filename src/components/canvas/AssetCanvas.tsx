@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ReactFlow,
   Background,
@@ -7,6 +7,7 @@ import {
   Controls,
   MarkerType,
   MiniMap,
+  useReactFlow,
   type NodeChange,
   type EdgeChange,
   type OnSelectionChangeParams,
@@ -163,6 +164,11 @@ export function AssetCanvas() {
         fitView
         className="bg-background"
       >
+        {/* Auto-fits the viewport when new nodes appear (e.g., agent-added
+            scene/character/prop/keyframe nodes that would otherwise land
+            off-screen at y=500-950+). Lives inside ReactFlow so useReactFlow()
+            has the provider context. */}
+        <NewNodeAutoFit nodeCount={canvasNodes.length} />
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} className="opacity-30" />
         <Controls className="!bottom-4 !left-4" />
         <MiniMap
@@ -183,6 +189,30 @@ export function AssetCanvas() {
       <EditPanelMount />
     </div>
   )
+}
+
+/**
+ * Tracks the canvas node count and triggers a soft fitView whenever it grows.
+ * Without this, agent-added nodes (characters at y=50, scenes at y=500,
+ * props at y=950, keyframes at y=rowIdx*300) land outside the user's
+ * current zoom and feel "missing" even though they're in the canvas store.
+ *
+ * Why not the <ReactFlow fitView/> prop? That fires only on initial mount —
+ * subsequent additions don't refit.
+ */
+function NewNodeAutoFit({ nodeCount }: { nodeCount: number }) {
+  const reactFlow = useReactFlow()
+  const prevCount = useRef(nodeCount)
+  useEffect(() => {
+    if (nodeCount > prevCount.current) {
+      // Defer one frame so the new nodes are measured before we fit.
+      requestAnimationFrame(() => {
+        reactFlow.fitView({ duration: 400, padding: 0.2 })
+      })
+    }
+    prevCount.current = nodeCount
+  }, [nodeCount, reactFlow])
+  return null
 }
 
 function EditPanelMount() {
