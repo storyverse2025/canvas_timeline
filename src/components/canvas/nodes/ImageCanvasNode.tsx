@@ -2,7 +2,7 @@ import { memo, useRef, useState, useCallback } from 'react'
 import { Handle, Position, NodeResizer, useNodeId } from '@xyflow/react'
 import { toast } from 'sonner'
 import { NodeFloatingToolbar } from '../NodeFloatingToolbar'
-import { ImageIcon, Upload, Link as LinkIcon, User, MapPin, Package, Film } from 'lucide-react'
+import { ImageIcon, Upload, Link as LinkIcon, User, MapPin, Package, Film, Mic } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { useLibtvTasksStore } from '@/stores/libtv-tasks-store'
@@ -149,13 +149,25 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
       )}
 
       {item.content ? (
-        /\.(mp4|webm|mov)(\?|$)/i.test(item.content) ? (
+        // Render decision order: item.kind beats URL regex (signed URLs like
+        // s3.amazonaws.com/...?X-Amz-Signature=... carry no extension), then
+        // fall back to URL pattern matching for legacy items that stored a
+        // video as kind='image'.
+        item.kind === 'video' || /\.(mp4|webm|mov)(\?|$)/i.test(item.content) ? (
           <video
             src={item.content}
             className="w-full h-full object-contain bg-black"
             controls
             playsInline
           />
+        ) : item.kind === 'audio' ? (
+          <div className="w-full h-full flex flex-col items-center justify-center gap-2 bg-gradient-to-br from-amber-950/40 to-zinc-900 p-3">
+            <Mic className="w-6 h-6 text-amber-400/70" />
+            <audio src={item.content} controls className="w-full" />
+            <div className="text-[10px] text-zinc-400 truncate w-full text-center" title={item.name}>
+              {item.name}
+            </div>
+          </div>
         ) : asset?.type === 'scene' ? (
           // Scene assets are 360° equirectangular panoramas — use the draggable
           // PanoramaViewer so the user can pan to different viewpoints inside

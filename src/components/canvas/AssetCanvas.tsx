@@ -31,7 +31,18 @@ import { CapabilityDialogMount } from './CapabilityDialog'
 import { useEditPanelStore } from '@/stores/edit-panel-store'
 import type { Asset } from '@/types/asset'
 
-const nodeTypes = { asset: AssetNode, image: ImageCanvasNode, text: TextCanvasNode }
+// Reuse ImageCanvasNode for image / video / audio — the renderer dispatches
+// on item.kind internally, so all three media types get the same wrapper
+// (resize handles, floating toolbar, voice-feedback button, type badge).
+// Without these registrations, React Flow renders unknown node types as a
+// blank fallback (the symptom: 画布的视频 node 是纯白).
+const nodeTypes = {
+  asset: AssetNode,
+  image: ImageCanvasNode,
+  video: ImageCanvasNode,
+  audio: ImageCanvasNode,
+  text: TextCanvasNode,
+}
 
 export function AssetCanvas() {
   const canvasNodes = useCanvasStore((s) => s.nodes)
