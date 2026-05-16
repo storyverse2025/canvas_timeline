@@ -131,7 +131,11 @@ interface AssetImageContext {
   artStyle: string
   template: string
   buildDescription: (e: ExtractedCharacter | ExtractedScene | ExtractedProp) => string
+  /** Aspect ratio. Scenes use '16:9' for canvas display but the underlying
+   *  panorama is rendered as a 2:1 equirectangular by the prompt body. */
   aspect: '1:1' | '16:9'
+  /** Extra capability params (e.g., quality / resolution) for this asset kind. */
+  extraParams?: Record<string, unknown>
 }
 
 async function generateOneImage(
@@ -151,7 +155,7 @@ async function generateOneImage(
   const r = await runCapability({
     capability: 'text-to-image',
     inputs: [{ kind: 'text', text: prompt }],
-    params: { aspect: imgCtx.aspect },
+    params: { aspect: imgCtx.aspect, ...(imgCtx.extraParams ?? {}) },
   })
   return { url: r.outputs[0]?.url, prompt }
 }
@@ -200,7 +204,10 @@ export async function* generateAssetImages(
   for (let i = 0; i < Math.min(out.scenes.length, sceneLimit); i++) {
     const sc = out.scenes[i]!
     if (skipIfDone && sc.img_url) continue
-    yield { type: 'progress', message: `art-director: generating scene image ${sc.name}` }
+    yield {
+      type: 'progress',
+      message: `art-director: generating 360° 4K panorama for scene ${sc.name}`,
+    }
     try {
       const { url, prompt } = await generateOneImage(
         sc,
@@ -212,6 +219,10 @@ export async function* generateAssetImages(
             return `${s.name}, ${s.location}, ${s.lighting}, ${s.mood}`
           },
           aspect: '16:9',
+          // Scene panoramas request 4K + HD quality. The scene-image.md template
+          // instructs the model to render as a 2:1 equirectangular wrap; the
+          // canvas <PanoramaViewer> reads it as a draggable 360° image.
+          extraParams: { quality: 'hd', resolution: '4k' },
         },
         ctx,
       )

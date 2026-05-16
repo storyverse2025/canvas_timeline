@@ -4,7 +4,6 @@ import { join } from 'node:path'
 import { useProjectDB } from '@/stores/project-db'
 import { useCanvasStore } from '@/stores/canvas-store'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
-import { fillPrompt } from '@/lib/prompts'
 import { runCapability } from '@/lib/capabilities/client'
 
 vi.mock('@/lib/capabilities/client', () => ({

@@ -11,7 +11,7 @@ export function LibtvTasksPanel() {
   return (
     <div className="absolute bottom-16 right-4 z-10 w-[280px] max-h-[260px] overflow-auto rounded-md border border-border bg-card/95 backdrop-blur shadow-lg text-xs">
       <div className="px-3 py-2 border-b border-border font-medium flex items-center justify-between">
-        <span>LibTV 任务 ({entries.length})</span>
+        <span>后台任务 ({entries.length})</span>
       </div>
       {entries.map((t) => (
         <div key={t.id} className="px-3 py-2 border-b border-border last:border-0 flex items-start gap-2">

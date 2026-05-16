@@ -146,6 +146,28 @@ function recommendProjectType(text: string): ProjectType {
   return 'short-drama-episode'
 }
 
+/**
+ * When the caller has already locked `totalDurationSeconds`, infer the
+ * project type from the duration. The keyword-based recommendation still
+ * overrides if it's a more specific type (MV, commercial, educational) —
+ * those carry information the duration alone can't capture.
+ */
+function inferProjectTypeFromKnown(
+  totalDurationSeconds: number,
+  keywordRecommendation: ProjectType,
+): ProjectType {
+  // Specific types beat duration-based inference because they encode genre,
+  // not just length.
+  const specific: ProjectType[] = ['ai-comic-series', 'mv', 'commercial', 'educational']
+  if (specific.includes(keywordRecommendation)) return keywordRecommendation
+
+  if (totalDurationSeconds <= 30) return 'short-video-30s'
+  if (totalDurationSeconds <= 60) return 'short-video-60s'
+  if (totalDurationSeconds <= 300) return 'mv' // 1-5 minutes default to MV-length
+  if (totalDurationSeconds <= 1800) return 'short-drama-episode'
+  return 'feature-film'
+}
+
 function recommendPlatformAudience(projectType: ProjectType): PlatformAudience {
   if (projectType === 'feature-film') return 'cinema'
   if (projectType === 'educational') return 'youtube'
@@ -297,18 +319,39 @@ export function createScriptAgent(deps: ScriptAgentDeps = {}): AgentModule<
       throw new Error('script-agent: scriptText is required')
     }
 
+    // Merge legacy top-level totalDurationSeconds into knownContext.
+    const knownContext = {
+      ...(request.knownContext ?? {}),
+      totalDurationSeconds:
+        request.totalDurationSeconds ?? request.knownContext?.totalDurationSeconds,
+    }
+    const skippedFromContext: string[] = []
+
     // Q1: 项目类型 (题材 + 时长)
+    // Skip when totalDurationSeconds is already known — derive the project
+    // type from the duration + keyword hints so the contract is locked.
     const recProjectType = recommendProjectType(request.scriptText)
-    const projectTypeAns = (yield {
-      type: 'question',
-      question: {
-        q: '项目类型？(题材 + 时长)',
-        header: '项目类型',
-        options: PROJECT_TYPE_OPTIONS,
-        recommended: recProjectType,
-      },
-    }) as Answer | undefined
-    const projectType = pickFirst<ProjectType>(projectTypeAns, recProjectType)
+    let projectType: ProjectType
+    if (knownContext.totalDurationSeconds && knownContext.totalDurationSeconds > 0) {
+      projectType = inferProjectTypeFromKnown(
+        knownContext.totalDurationSeconds,
+        recProjectType,
+      )
+      skippedFromContext.push(
+        `项目类型: ${labelOf(projectType, PROJECT_TYPE_OPTIONS)} (从总时长 ${knownContext.totalDurationSeconds}s 推断)`,
+      )
+    } else {
+      const projectTypeAns = (yield {
+        type: 'question',
+        question: {
+          q: '项目类型？(题材 + 时长)',
+          header: '项目类型',
+          options: PROJECT_TYPE_OPTIONS,
+          recommended: recProjectType,
+        },
+      }) as Answer | undefined
+      projectType = pickFirst<ProjectType>(projectTypeAns, recProjectType)
+    }
 
     // Q2: 平台 + 受众
     const recPlatform = recommendPlatformAudience(projectType)
@@ -326,16 +369,31 @@ export function createScriptAgent(deps: ScriptAgentDeps = {}): AgentModule<
     const platformAudience = pickFirst<PlatformAudience>(platformAns, recPlatform)
 
     // Q3: 视觉风格
-    const visualStyleAns = (yield {
-      type: 'question',
-      question: {
-        q: '视觉风格？(默认跟随画布的全局美术风格)',
-        header: '视觉风格',
-        options: VISUAL_STYLE_OPTIONS,
-        recommended: 'follow-canvas-style',
-      },
-    }) as Answer | undefined
-    const visualStyle = pickFirst<VisualStyle>(visualStyleAns, 'follow-canvas-style')
+    // Skip when the canvas already carries a global visual style — the
+    // expand-script prompt receives that style verbatim via {{artStyle}},
+    // so we just lock visualStyle to 'follow-canvas-style'.
+    let visualStyle: VisualStyle
+    if (knownContext.visualStyle && knownContext.visualStyle.trim().length > 0) {
+      visualStyle = 'follow-canvas-style'
+      skippedFromContext.push(`视觉风格: 跟随画布美术 (${knownContext.visualStyle})`)
+    } else {
+      const visualStyleAns = (yield {
+        type: 'question',
+        question: {
+          q: '视觉风格？(默认跟随画布的全局美术风格)',
+          header: '视觉风格',
+          options: VISUAL_STYLE_OPTIONS,
+          recommended: 'follow-canvas-style',
+        },
+      }) as Answer | undefined
+      visualStyle = pickFirst<VisualStyle>(visualStyleAns, 'follow-canvas-style')
+    }
+
+    // Aspect ratio isn't part of the 8-question interview today, but if the
+    // canvas has one set, record it for the recap so the user sees it.
+    if (knownContext.aspectRatio) {
+      skippedFromContext.push(`画面比例: ${knownContext.aspectRatio} (沿用画布设置)`)
+    }
 
     // Q4: 故事目标 / 核心情绪
     const recStoryGoal = recommendStoryGoal(request.scriptText)
@@ -409,21 +467,24 @@ export function createScriptAgent(deps: ScriptAgentDeps = {}): AgentModule<
 
     // Recap (per SKILL: "生成长稿前，要求模型复述关键设定并等待确认").
     // The recap surfaces in chat as a system message via the chat bridge so
-    // the user can see what's locked in before the LLM call.
-    yield {
-      type: 'progress',
-      message: [
-        '关键设定已锁定 (按 SKILL 八步清单):',
-        `- 项目类型: ${labelOf(projectType, PROJECT_TYPE_OPTIONS)}`,
-        `- 平台/受众: ${labelOf(platformAudience, PLATFORM_AUDIENCE_OPTIONS)}`,
-        `- 视觉风格: ${labelOf(visualStyle, VISUAL_STYLE_OPTIONS)}`,
-        `- 故事目标: ${labelOf(storyGoal, STORY_GOAL_OPTIONS)}`,
-        `- 角色数量: ${labelOf(characterCount, CHARACTER_COUNT_OPTIONS)}`,
-        `- 禁忌: ${taboos.length === 0 ? '无' : taboos.map((t) => labelOf(t, TABOO_OPTIONS)).join(' / ')}`,
-        `- 输入形态: ${labelOf(inputShape, INPUT_SHAPE_OPTIONS)}`,
-        `- 工作流: ${labelOf(subAgent, SUB_AGENT_OPTIONS)}`,
-      ].join('\n'),
+    // the user can see what's locked in before the LLM call. We separate the
+    // facts auto-skipped from canvas context (so the user can spot any
+    // inferred-wrong) from the answers they typed in interview cards.
+    const recapLines: string[] = ['关键设定已锁定 (按 SKILL 八步清单):']
+    if (skippedFromContext.length > 0) {
+      recapLines.push('  · 已从画布上下文推断 (未弹问题):')
+      for (const skip of skippedFromContext) recapLines.push(`    - ${skip}`)
+      recapLines.push('  · 通过 interview 收集:')
     }
+    recapLines.push(`    - 项目类型: ${labelOf(projectType, PROJECT_TYPE_OPTIONS)}`)
+    recapLines.push(`    - 平台/受众: ${labelOf(platformAudience, PLATFORM_AUDIENCE_OPTIONS)}`)
+    recapLines.push(`    - 视觉风格: ${labelOf(visualStyle, VISUAL_STYLE_OPTIONS)}`)
+    recapLines.push(`    - 故事目标: ${labelOf(storyGoal, STORY_GOAL_OPTIONS)}`)
+    recapLines.push(`    - 角色数量: ${labelOf(characterCount, CHARACTER_COUNT_OPTIONS)}`)
+    recapLines.push(`    - 禁忌: ${taboos.length === 0 ? '无' : taboos.map((t) => labelOf(t, TABOO_OPTIONS)).join(' / ')}`)
+    recapLines.push(`    - 输入形态: ${labelOf(inputShape, INPUT_SHAPE_OPTIONS)}`)
+    recapLines.push(`    - 工作流: ${labelOf(subAgent, SUB_AGENT_OPTIONS)}`)
+    yield { type: 'progress', message: recapLines.join('\n') }
 
     if (subAgent !== 'default') {
       const runner = deps.subAgents?.[subAgent]

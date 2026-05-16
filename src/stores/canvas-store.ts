@@ -33,7 +33,16 @@ interface CanvasActions {
   onNodesChange: (changes: NodeChange<Node<CanvasNodeGeometry>>[]) => void;
   onEdgesChange: (changes: EdgeChange<Edge>[]) => void;
   setSelectedNodeIds: (ids: string[]) => void;
-  addEdge: (sourceId: string, targetId: string) => void;
+  addEdge: (
+    sourceId: string,
+    targetId: string,
+    /** Source handle id. Defaults to 'r' (the right-side source handle on
+     *  ImageCanvasNode + TextCanvasNode). Pass null only when connecting
+     *  to nodes that don't declare named handles. */
+    sourceHandle?: string | null,
+    /** Target handle id. Defaults to 'l' (left-side target on image/text). */
+    targetHandle?: string | null,
+  ) => void;
   getNodeById: (id: string) => Node<CanvasNodeGeometry> | undefined;
   getNodeByAssetId: (assetId: string) => Node<CanvasNodeGeometry> | undefined;
   removeNodeByAssetId: (assetId: string) => void;
@@ -119,11 +128,29 @@ export const useCanvasStore = create<CanvasState & CanvasActions>()(
 
       setSelectedNodeIds: (ids) => set({ selectedNodeIds: ids }),
 
-      addEdge: (sourceId, targetId) => {
+      addEdge: (sourceId, targetId, sourceHandle, targetHandle) => {
+        // Defaults match the handle ids declared on ImageCanvasNode +
+        // TextCanvasNode — the two node types most edges connect. Without
+        // these, ReactFlow logs "Couldn't create edge for source handle id
+        // null" and the edge fails to render.
+        const sh = sourceHandle === undefined ? 'r' : sourceHandle;
+        const th = targetHandle === undefined ? 'l' : targetHandle;
         set((state) => {
-          const exists = state.edges.some((e) => e.source === sourceId && e.target === targetId);
+          const exists = state.edges.some(
+            (e) =>
+              e.source === sourceId &&
+              e.target === targetId &&
+              (e.sourceHandle ?? null) === (sh ?? null) &&
+              (e.targetHandle ?? null) === (th ?? null),
+          );
           if (!exists) {
-            state.edges.push({ id: `e-${uuid()}`, source: sourceId, target: targetId });
+            state.edges.push({
+              id: `e-${uuid()}`,
+              source: sourceId,
+              target: targetId,
+              ...(sh !== null ? { sourceHandle: sh } : {}),
+              ...(th !== null ? { targetHandle: th } : {}),
+            });
           }
         });
       },

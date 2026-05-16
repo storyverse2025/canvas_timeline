@@ -232,15 +232,20 @@ export async function ensureElements(
     onStatus(`提取完成：${extraction.characters.length} 角色, ${extraction.scenes.length} 场景, ${extraction.props.length} 道具`)
   }
 
-  // Generate missing characters + scenes — image generation routed through
-  // art-director-agent.generateAssetImages, then results are written back to
-  // the canvas stores here (the agent stays pure of side effects).
+  // Generate missing characters + scenes + props — image generation routed
+  // through art-director-agent.generateAssetImages, then results are written
+  // back to the canvas stores here (the agent stays pure of side effects).
   const needCharacters = inventory.characters.length === 0 && (extraction?.characters?.length ?? 0) > 0
   const needScenes = inventory.scenes.length === 0 && (extraction?.scenes?.length ?? 0) > 0
+  const needProps = inventory.props.length === 0 && (extraction?.props?.length ?? 0) > 0
 
-  if (extraction && (needCharacters || needScenes)) {
-    // Wrap AI-generated character image_prompts with the three-view material
-    // system prompt before sending; the agent forwards them as-is.
+  if (extraction && (needCharacters || needScenes || needProps)) {
+    // Wrap AI-generated image_prompts with global-style guidance before
+    // sending; the agent forwards them as-is.
+    //   characters → three-view material system prompt
+    //   scenes     → append art style
+    //   props      → append art style (the prop-image.md template owns the
+    //                turnaround layout; we only ensure the style flows in)
     const preppedExtraction = {
       ...extraction,
       characters: extraction.characters.map((c) => ({
@@ -253,7 +258,10 @@ export async function ensureElements(
         ...s,
         image_prompt: s.image_prompt ? `${s.image_prompt}. ${artStyle}` : '',
       })),
-      // Props are not generated here (legacy behavior); cap to 0 below.
+      props: extraction.props.map((p) => ({
+        ...p,
+        image_prompt: p.image_prompt ? `${p.image_prompt}. ${artStyle}` : '',
+      })),
     }
 
     const agentCtx = createMemoryContext({
@@ -268,7 +276,11 @@ export async function ensureElements(
         maxPerKind: {
           characters: needCharacters ? 2 : 0,
           scenes: needScenes ? 2 : 0,
-          props: 0,
+          // Props are typically 0-5 per script (the extract-props prompt
+          // caps the extractor at 5); generate up to 3 here so we keep
+          // image-gen cost bounded but the storyboard table has real prop
+          // refs to bind to.
+          props: needProps ? 3 : 0,
         },
       }, agentCtx),
       { verb: 'generate-asset-images' },
@@ -303,6 +315,22 @@ export async function ensureElements(
         nodeId, itemId, name: scene.name,
         imageUrl: scene.img_url, role: 'scene',
         description: `${scene.location}, ${scene.mood}`,
+      })
+    }
+
+    for (const prop of generated.props) {
+      if (!prop.img_url) continue
+      onStatus(`正在生成道具: ${prop.name}…`)
+      const itemId = useCanvasItemStore.getState().addItem({
+        kind: 'image', name: prop.name, content: prop.img_url, prompt: prop.generation_prompt ?? '',
+      })
+      const nodeId = useCanvasStore.getState().addItemNode(
+        itemId, 'image', { x: 50, y: 950 + inventory.props.length * 220 }, { width: 200, height: 200 },
+      )
+      inventory.props.push({
+        nodeId, itemId, name: prop.name,
+        imageUrl: prop.img_url, role: 'prop',
+        description: prop.description,
       })
     }
   }

@@ -4,14 +4,14 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import { v4 as uuid } from 'uuid';
 import { createIdbStorage } from '@/lib/storage/idb-storage';
 
-export type CanvasItemKind = 'image' | 'text' | 'video';
+export type CanvasItemKind = 'image' | 'text' | 'video' | 'audio';
 export type CanvasItemRole = 'style' | 'system';
 
 export interface CanvasItem {
   id: string;
   kind: CanvasItemKind;
   name: string;
-  /** image/video: url, text: content */
+  /** image/video/audio: url, text: content */
   content: string;
   /** Semantic tag for text items. 'style' = global art style, 'system' = system prompt. */
   role?: CanvasItemRole;

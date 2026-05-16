@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { validateStoryboard } from '@/types/storyboard'
-import { fillPrompt } from '@/lib/prompts'
+import generateTableSource from '@/lib/agents/director-agent/prompts/generate-storyboard-table.md?raw'
 
 describe('XiaoCai storyboard table fields', () => {
   it('defaults the actor motivation and emotion atmosphere fields for every storyboard row', () => {
@@ -22,24 +22,14 @@ describe('XiaoCai storyboard table fields', () => {
   })
 
   it('asks storyboard generation to use XiaoCai script-to-storyboard rules and output the new table columns', () => {
-    const prompt = fillPrompt('storyboardGeneration', {
-      artStyle: 'cinematic',
-      characterDesigns: '[]',
-      sceneDesigns: '[]',
-      propDesigns: '[]',
-      shotAllocation: '[]',
-      shotComposition: '[]',
-      visualStrategy: '',
-      elementContext: '',
-    })
-
-    expect(prompt).toContain('小蔡剧本转分镜 Skill')
-    expect(prompt).toContain('情绪锚点')
-    expect(prompt).toContain('角色动机')
-    expect(prompt).toContain('心理状态')
-    expect(prompt).toContain('emotion_atmosphere')
-    expect(prompt).toContain('character_motivation')
-    expect(prompt).toContain('character_psychology')
-    expect(prompt).toContain('performance_guidance')
+    // storyboardGeneration migrated to director-agent/prompts/generate-storyboard-table.md.
+    expect(generateTableSource).toContain('小蔡剧本转分镜 Skill')
+    expect(generateTableSource).toContain('情绪锚点')
+    expect(generateTableSource).toContain('角色动机')
+    expect(generateTableSource).toContain('心理状态')
+    expect(generateTableSource).toContain('emotion_atmosphere')
+    expect(generateTableSource).toContain('character_motivation')
+    expect(generateTableSource).toContain('character_psychology')
+    expect(generateTableSource).toContain('performance_guidance')
   })
 })
