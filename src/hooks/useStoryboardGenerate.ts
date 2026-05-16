@@ -1,7 +1,6 @@
 import { useCallback } from 'react'
 import { v4 as uuid } from 'uuid'
 import { toast } from 'sonner'
-import { runCapability } from '@/lib/capabilities/client'
 import { useStoryboardStore } from '@/stores/storyboard-store'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { useCanvasStore } from '@/stores/canvas-store'
@@ -17,6 +16,8 @@ import type {
   KeyframePropRef,
   KeyframeSceneRef,
 } from '@/lib/agents/director-agent'
+import { shoot as cinematographerShoot } from '@/lib/agents/cinematographer-agent'
+import type { BeatVideoRef } from '@/lib/agents/cinematographer-agent'
 import { runAgentWithChatBridge } from '@/lib/agents/chat-bridge'
 import { createMemoryContext } from '@/lib/agents/_shared/context/memory'
 import { createCapabilityLLM } from '@/lib/agents/_shared/llm/capability'
@@ -279,21 +280,16 @@ export function useStoryboardGenerate() {
   }, [updateRow, startTask, updateTask])
 
   const generateBeatVideo = useCallback(async (row: StoryboardRow) => {
-    const baseDescription = [
-      row.motion_prompts,
-      row.storyboard_prompts ? `导演分镜格信息 / director storyboard panel progression (read sequentially over time, not a literal split-screen): ${row.storyboard_prompts}` : '',
-      'Use the storyboard grid as temporal guidance for Seedance 2: each panel is a beat in the video progression, not a literal split-screen layout.',
-      row.visual_description,
-      row.character_actions,
-      row.emotion_mood,
-      row.emotion_atmosphere,
-      row.character_motivation ? `character motivation: ${row.character_motivation}` : '',
-      row.character_psychology ? `inner psychology: ${row.character_psychology}` : '',
-      row.performance_guidance ? `performance guidance: ${row.performance_guidance}` : '',
-      row.lighting_atmosphere,
-      row.shot_size ? `${row.shot_size} shot` : '',
-    ].filter(Boolean).join('. ')
-    if (!baseDescription.trim() && !row.keyframeUrl) { toast.error('缺少运动提示词或 keyframe'); return }
+    const hasMotion = Boolean(
+      row.motion_prompts?.trim() ||
+        row.storyboard_prompts?.trim() ||
+        row.visual_description?.trim() ||
+        row.character_actions?.trim(),
+    )
+    if (!hasMotion && !row.keyframeUrl) {
+      toast.error('缺少运动提示词或 keyframe')
+      return
+    }
 
     const taskId = uuid()
     startTask({ id: taskId, nodeId: `sb-bv-${row.id}`, itemId: row.id, prompt: 'Beat Video' })
@@ -302,12 +298,11 @@ export function useStoryboardGenerate() {
     try {
       // Ordered, labeled references — keyframe first (most important),
       // then per-role slots, then loose reference image.
-      type BvRef = { role: string; description: string; url: string }
-      const bvRefs: BvRef[] = []
+      const refs: BeatVideoRef[] = []
       const pushRef = (role: string, description: string, url: string | undefined) => {
         if (!url) return
-        if (bvRefs.some((r) => r.url === url)) return
-        bvRefs.push({ role, description, url })
+        if (refs.some((r) => r.imageUrl === url)) return
+        refs.push({ role, description, imageUrl: url })
       }
       pushRef('Keyframe', '', row.keyframeUrl)
       pushRef('角色1', row.character1?.description ?? '', row.character1?.image)
@@ -317,31 +312,24 @@ export function useStoryboardGenerate() {
       pushRef('场景',  row.scene?.description ?? '',      row.scene?.image)
       pushRef('参考',  '',                                row.reference_image)
 
-      const legend = bvRefs.length
-        ? `Reference images (use them as labeled):\n` +
-          bvRefs.map((r, i) =>
-            `- image${i + 1} = ${r.role}${r.description ? ` (${r.description})` : ''}`
-          ).join('\n')
-        : ''
-      const prompt = legend
-        ? `${baseDescription || 'cinematic motion'}\n\n${legend}`
-        : baseDescription || 'cinematic motion'
-      const seedanceDuration = String(Math.min(Math.max(Math.round(row.duration), 5), 15))
+      const db = useProjectDB.getState()
+      const visualStyle = db.artDirection.customStyle || db.artDirection.stylePreset
 
-      const result = await runCapability({
-        capability: 'text-to-video',
-        inputs: [
-          { kind: 'text', text: prompt },
-          ...bvRefs.map((r) => ({ kind: 'image' as const, url: r.url })),
-        ],
-        params: {
-          duration: seedanceDuration,
-          aspect: '16:9',
-        },
-      })
-
-      const url = result.outputs[0]?.url
-      if (!url) throw new Error('no video result')
+      const agentCtx = createMemoryContext({ llm: createCapabilityLLM() })
+      const result = await runAgentWithChatBridge(
+        'cinematographer-agent',
+        cinematographerShoot(
+          {
+            row,
+            visualStyle,
+            refs,
+            aspect: '16:9',
+          },
+          agentCtx,
+        ),
+        { verb: 'shoot' },
+      )
+      const url = result.url
 
       // Create beat video node on canvas, connected to keyframe
       const rows = useStoryboardStore.getState().rows
@@ -353,7 +341,7 @@ export function useStoryboardGenerate() {
         kind: 'video',
         name: `BV-${row.shot_number}`,
         content: url,
-        prompt,
+        prompt: result.prompt,
       })
       const vidNodeId = useCanvasStore.getState().addItemNode(
         vidItemId, 'video',
