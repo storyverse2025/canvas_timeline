@@ -28,7 +28,7 @@ describe('createCapabilityLLM', () => {
     mockedRunCapability.mockResolvedValue({ outputs: [{ kind: 'text', text: '' }] })
     const llm = createCapabilityLLM()
     await llm.complete([{ role: 'user', content: 'body' }], { system: 'SYS' })
-    const sent = mockedRunCapability.mock.calls[0][0].inputs[0].text
+    const sent = mockedRunCapability.mock.calls[0][0].inputs[0]!.text!
     expect(sent.startsWith('SYS\n\n')).toBe(true)
     expect(sent).toContain('body')
   })
@@ -41,7 +41,7 @@ describe('createCapabilityLLM', () => {
       { role: 'assistant', content: 'B' },
       { role: 'user', content: 'C' },
     ])
-    const sent = mockedRunCapability.mock.calls[0][0].inputs[0].text
+    const sent = mockedRunCapability.mock.calls[0][0].inputs[0]!.text!
     expect(sent).toContain('A')
     expect(sent).toContain('【prior assistant reply】\nB')
     expect(sent).toContain('C')
