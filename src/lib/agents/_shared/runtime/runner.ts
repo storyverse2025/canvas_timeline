@@ -2,7 +2,7 @@
  * Helpers for driving and composing agent generators.
  */
 
-import type { Answer, AgentGenerator, Turn } from './types'
+import type { Answer, AgentGenerator, Question, Turn } from './types'
 
 export interface RunOptions {
   /** Called with each Question yielded by the agent; must resolve to an Answer. */
@@ -46,6 +46,52 @@ export async function drive<TResult>(
       continue
     }
   }
+}
+
+/**
+ * Pick the recommended option for a Question, or the first option if no
+ * recommendation was supplied. Used by `driveAuto` and as a default when
+ * non-interactive callers don't override question handling.
+ */
+export function pickRecommendedAnswer(question: Question): Answer {
+  if (question.recommended) return { selected: [question.recommended] }
+  const first = question.options[0]?.value
+  if (first) return { selected: [first] }
+  return { selected: [] }
+}
+
+export interface DriveAutoOptions {
+  /** Optional progress sink. */
+  onProgress?: (turn: Turn<unknown> & { type: 'progress' }) => void
+  /**
+   * Optional answer override. Return undefined to fall back to the recommended
+   * option. Useful for tests that want to assert a specific path through the
+   * interview tree, and for legacy call sites that want to pre-supply known
+   * answers without rebuilding the full RunOptions surface.
+   */
+  override?: (question: Question) => Answer | undefined
+}
+
+/**
+ * Drive an agent generator to completion without a human in the loop. Every
+ * Question turn is auto-answered with its recommended option (or the first
+ * option). This is the entry point for legacy non-interactive call sites
+ * during the agent migration — the UI-less equivalent of `drive()`.
+ *
+ * Once the InterviewCard UI ships, prefer `drive()` with a real
+ * onQuestion handler.
+ */
+export async function driveAuto<TResult>(
+  gen: AgentGenerator<TResult>,
+  opts: DriveAutoOptions = {},
+): Promise<TResult> {
+  return drive(gen, {
+    onProgress: opts.onProgress,
+    onQuestion: async (turn) => {
+      const overridden = opts.override?.(turn.question)
+      return overridden ?? pickRecommendedAnswer(turn.question)
+    },
+  })
 }
 
 /**

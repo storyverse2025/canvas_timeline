@@ -1,5 +1,10 @@
 import { describe, it, expect, vi } from 'vitest'
-import { drive, delegate } from '@/lib/agents/_shared/runtime/runner'
+import {
+  drive,
+  driveAuto,
+  delegate,
+  pickRecommendedAnswer,
+} from '@/lib/agents/_shared/runtime/runner'
 import type {
   AgentGenerator,
   Answer,
@@ -55,6 +60,76 @@ describe('runtime.drive', () => {
     await expect(
       drive(agent(), { onQuestion: async () => ({ selected: [] }) }),
     ).rejects.toThrow(/without yielding a result/)
+  })
+})
+
+describe('pickRecommendedAnswer', () => {
+  it('returns the recommended option when set', () => {
+    expect(pickRecommendedAnswer(makeQuestion('q', 'no'))).toEqual({ selected: ['no'] })
+  })
+
+  it('falls back to the first option when there is no recommendation', () => {
+    const q: Question = {
+      q: 'q?',
+      options: [
+        { value: 'a', label: 'A' },
+        { value: 'b', label: 'B' },
+      ],
+      recommended: null,
+    }
+    expect(pickRecommendedAnswer(q)).toEqual({ selected: ['a'] })
+  })
+
+  it('returns an empty selection when no options exist', () => {
+    expect(
+      pickRecommendedAnswer({ q: 'free text only', options: [], recommended: null }),
+    ).toEqual({ selected: [] })
+  })
+})
+
+describe('driveAuto', () => {
+  it('auto-picks the recommended answer for every question', async () => {
+    async function* agent(): AgentGenerator<string[]> {
+      const a1 = (yield {
+        type: 'question',
+        question: makeQuestion('one?', 'yes'),
+      }) as Answer
+      const a2 = (yield {
+        type: 'question',
+        question: makeQuestion('two?', 'no'),
+      }) as Answer
+      yield { type: 'result', payload: [a1.selected[0], a2.selected[0]] }
+    }
+    const result = await driveAuto(agent())
+    expect(result).toEqual(['yes', 'no'])
+  })
+
+  it('honors override for specific questions and falls back to recommended otherwise', async () => {
+    async function* agent(): AgentGenerator<string[]> {
+      const a1 = (yield {
+        type: 'question',
+        question: { ...makeQuestion('first?'), header: 'first' },
+      }) as Answer
+      const a2 = (yield {
+        type: 'question',
+        question: { ...makeQuestion('second?'), header: 'second' },
+      }) as Answer
+      yield { type: 'result', payload: [a1.selected[0], a2.selected[0]] }
+    }
+    const result = await driveAuto(agent(), {
+      override: (q) => (q.header === 'first' ? { selected: ['no'] } : undefined),
+    })
+    expect(result).toEqual(['no', 'yes'])
+  })
+
+  it('forwards progress turns to the supplied onProgress callback', async () => {
+    async function* agent(): AgentGenerator<string> {
+      yield { type: 'progress', message: 'starting' }
+      yield { type: 'result', payload: 'done' }
+    }
+    const onProgress = vi.fn()
+    await driveAuto(agent(), { onProgress })
+    expect(onProgress).toHaveBeenCalledOnce()
   })
 })
 
