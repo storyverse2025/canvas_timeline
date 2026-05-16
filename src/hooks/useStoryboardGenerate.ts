@@ -6,9 +6,20 @@ import { useStoryboardStore } from '@/stores/storyboard-store'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { useCanvasStore } from '@/stores/canvas-store'
 import { useAssetStore } from '@/stores/asset-store'
+import { useProjectDB } from '@/stores/project-db'
 import { useLibtvTasksStore } from '@/stores/libtv-tasks-store'
 import type { StoryboardRow, ElementSlot } from '@/types/storyboard'
 import type { AssetType } from '@/types/asset'
+import { generateKeyframe as directorGenerateKeyframe } from '@/lib/agents/director-agent'
+import type {
+  GenerateKeyframeRequest,
+  KeyframeCharacterRef,
+  KeyframePropRef,
+  KeyframeSceneRef,
+} from '@/lib/agents/director-agent'
+import { runAgentWithChatBridge } from '@/lib/agents/chat-bridge'
+import { createMemoryContext } from '@/lib/agents/_shared/context/memory'
+import { createCapabilityLLM } from '@/lib/agents/_shared/llm/capability'
 
 /**
  * Resolve a slot to the canvas node that should feed the keyframe.
@@ -139,18 +150,10 @@ export function useStoryboardGenerate() {
   const updateTask = useLibtvTasksStore((s) => s.updateTask)
 
   const generateKeyframe = useCallback(async (row: StoryboardRow) => {
-    const baseDescription = [
-      row.storyboard_prompts,
-      row.visual_description,
-      row.lighting_atmosphere,
-      row.emotion_mood,
-      row.emotion_atmosphere,
-      row.character_motivation ? `character motivation: ${row.character_motivation}` : '',
-      row.character_psychology ? `inner psychology: ${row.character_psychology}` : '',
-      row.performance_guidance ? `performance guidance: ${row.performance_guidance}` : '',
-      row.shot_size ? `${row.shot_size} shot` : '',
-    ].filter(Boolean).join('. ')
-    if (!baseDescription.trim()) { toast.error('缺少画面描述或分镜提示词'); return }
+    if (!row.storyboard_prompts?.trim() && !row.visual_description?.trim()) {
+      toast.error('缺少画面描述或分镜提示词')
+      return
+    }
 
     const taskId = uuid()
     startTask({ id: taskId, nodeId: `sb-kf-${row.id}`, itemId: row.id, prompt: 'Keyframe' })
@@ -165,13 +168,13 @@ export function useStoryboardGenerate() {
     const baseY = rowIdx * 300
 
     // Resolve every populated slot to a real canvas node (asset node preferred),
-    // collect the canonical image URL for each one, and keep them in stable
-    // order so the prompt's "imageN" labels match the inputs array.
+    // collect the canonical image URL for each one. Track nodeId per imageUrl
+    // so we can wire canvas edges after the agent returns.
     const slotRefs = collectSlotRefs(row)
     const offsetByKey: Record<SlotRef['slotKey'], number> = {
       character1: -140, character2: -70, prop1: 70, prop2: 140, scene: 0,
     }
-    const refs: Array<{ role: string; description: string; nodeId: string; imageUrl: string; slotKey: SlotRef['slotKey']; slot: ElementSlot }> = []
+    const resolved: Array<{ slotKey: SlotRef['slotKey']; role: string; description: string; nodeId: string; imageUrl: string; slot: ElementSlot }> = []
     for (const sr of slotRefs) {
       const { nodeId, imageUrl } = resolveSlotNode(
         sr.slot, sr.preferredTypes,
@@ -179,45 +182,70 @@ export function useStoryboardGenerate() {
         baseX - 300, baseY + offsetByKey[sr.slotKey],
       )
       if (!nodeId && !imageUrl) continue
-      refs.push({ role: sr.role, description: sr.description, nodeId, imageUrl, slotKey: sr.slotKey, slot: sr.slot })
-    }
-    // Include row.reference_image as a tail "image" entry only if it's not
-    // already represented by one of the slot images.
-    if (row.reference_image && !refs.some((r) => r.imageUrl === row.reference_image)) {
-      refs.push({
-        role: '参考', description: '', nodeId: '',
-        imageUrl: row.reference_image, slotKey: 'scene', slot: { image: row.reference_image, description: '', nodeId: '' },
-      })
+      resolved.push({ slotKey: sr.slotKey, role: sr.role, description: sr.description, nodeId, imageUrl, slot: sr.slot })
     }
 
-    // Build prompt: base description + ordered "imageN" legend.
-    const imageInputs = refs.filter((r) => r.imageUrl)
-    const legend = imageInputs.length
-      ? `Reference images (use them as labeled):\n` +
-        imageInputs.map((r, i) =>
-          `- image${i + 1} = ${r.role}${r.description ? ` (${r.description})` : ''}`
-        ).join('\n')
-      : ''
-    const prompt = legend ? `${baseDescription}\n\n${legend}` : baseDescription
+    // Map resolved slots into director-agent's structured input.
+    // imageUrls is an array because a single character/scene/prop may have
+    // multiple reference images (three-view, multiple angles, etc.). The
+    // current storyboard schema is one image per slot, so we send [url] for
+    // now; the agent's API is ready for the day a slot grows to N angles.
+    const characters: KeyframeCharacterRef[] = resolved
+      .filter((r) => r.slotKey === 'character1' || r.slotKey === 'character2')
+      .map((r) => ({
+        name: r.slot.description?.split(/[，,。\n]/)[0]?.trim() || r.role,
+        description: r.description,
+        imageUrls: r.imageUrl ? [r.imageUrl] : [],
+      }))
+    const sceneSlot = resolved.find((r) => r.slotKey === 'scene')
+    const scene: KeyframeSceneRef | undefined = sceneSlot
+      ? {
+          name: sceneSlot.slot.description?.split(/[，,。\n]/)[0]?.trim() || '场景',
+          description: sceneSlot.description,
+          imageUrls: sceneSlot.imageUrl ? [sceneSlot.imageUrl] : [],
+        }
+      : undefined
+    const props: KeyframePropRef[] = resolved
+      .filter((r) => r.slotKey === 'prop1' || r.slotKey === 'prop2')
+      .map((r) => ({
+        name: r.slot.description?.split(/[，,。\n]/)[0]?.trim() || r.role,
+        description: r.description,
+        imageUrls: r.imageUrl ? [r.imageUrl] : [],
+      }))
+
+    // Pull project-level metadata from the project DB for the header bar.
+    const db = useProjectDB.getState()
+    const artDir = db.artDirection
+    const visualStyle = artDir.customStyle || artDir.stylePreset
+
+    const req: GenerateKeyframeRequest = {
+      row,
+      shotDurationSeconds: Math.max(1, Math.round(row.duration ?? 5)),
+      projectTitle: db.script.text?.split('\n')[0]?.slice(0, 40) || `Shot ${row.shot_number}`,
+      visualStyle,
+      characters: characters.slice(0, 2),
+      scene,
+      props,
+      refs: row.reference_image && !resolved.some((r) => r.imageUrl === row.reference_image)
+        ? [{ role: '参考 / Prior reference', imageUrl: row.reference_image }]
+        : [],
+      aspect: '16:9',
+    }
 
     try {
-      const result = await runCapability({
-        capability: 'text-to-image',
-        inputs: [
-          { kind: 'text', text: prompt },
-          ...imageInputs.map((r) => ({ kind: 'image' as const, url: r.imageUrl })),
-        ],
-        params: { aspect: '16:9' },
-      })
-
-      const url = result.outputs[0]?.url
-      if (!url) throw new Error('no keyframe result')
+      const agentCtx = createMemoryContext({ llm: createCapabilityLLM() })
+      const result = await runAgentWithChatBridge(
+        'director-agent',
+        directorGenerateKeyframe(req, agentCtx),
+        { verb: 'generate-keyframe' },
+      )
+      const url = result.url
 
       const kfItemId = useCanvasItemStore.getState().addItem({
         kind: 'image',
         name: `KF-${row.shot_number}`,
         content: url,
-        prompt,
+        prompt: result.prompt,
       })
       const kfNodeId = useCanvasStore.getState().addItemNode(
         kfItemId, 'image',
@@ -228,12 +256,10 @@ export function useStoryboardGenerate() {
       // Wire edges from each resolved ref node into the keyframe and persist
       // the resolved nodeId back into the slot so future regens reuse it.
       const updatedSlots: Partial<Pick<StoryboardRow, 'character1' | 'character2' | 'prop1' | 'prop2' | 'scene'>> = {}
-      for (const r of refs) {
+      for (const r of resolved) {
         if (!r.nodeId) continue
         useCanvasStore.getState().addEdge(r.nodeId, kfNodeId)
-        if (r.slotKey && r.role !== '参考') {
-          updatedSlots[r.slotKey] = { ...r.slot, nodeId: r.nodeId, image: r.imageUrl || r.slot.image }
-        }
+        updatedSlots[r.slotKey] = { ...r.slot, nodeId: r.nodeId, image: r.imageUrl || r.slot.image }
       }
 
       updateRow(row.id, {

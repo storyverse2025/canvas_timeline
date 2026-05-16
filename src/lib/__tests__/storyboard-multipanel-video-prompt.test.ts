@@ -1,40 +1,32 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { fillPrompt } from '@/lib/prompts'
+
+import generateTableSource from '@/lib/agents/director-agent/prompts/generate-storyboard-table.md?raw'
+import critiqueTimelineSource from '@/lib/agents/director-agent/prompts/critique-timeline.md?raw'
+import applyTimelineFixesSource from '@/lib/agents/director-agent/prompts/apply-timeline-fixes.md?raw'
+import critiqueCompositionSource from '@/lib/agents/art-director-agent/prompts/critique-composition.md?raw'
 
 const storyboardGenerateSource = readFileSync('src/hooks/useStoryboardGenerate.ts', 'utf8')
 const chatPanelSource = readFileSync('src/components/chat/ChatPanel.tsx', 'utf8')
 
 describe('multi-panel director storyboard and Seedance prompt contract', () => {
   it('asks storyboard generation to merge continuous beats into 10-15s rows with multi-panel director grids', () => {
-    const prompt = fillPrompt('storyboardGeneration', {
-      artStyle: 'Final Fantasy CG',
-      characterDesigns: '[]',
-      sceneDesigns: '[]',
-      propDesigns: '[]',
-      shotAllocation: '[]',
-      shotComposition: '[]',
-      visualStrategy: '',
-      elementContext: '',
-    })
-
-    expect(prompt).toContain('10-15秒')
-    expect(prompt).toContain('尽量合并')
-    expect(prompt).toContain('多格导演分镜图')
-    expect(prompt).toContain('根据时长和节奏')
-    expect(prompt).toContain('允许轻微重复')
-    expect(prompt).toContain('强一致动作情节')
-    expect(prompt).toContain('不要理解为最终视频的分屏')
+    // storyboardGeneration migrated to director-agent/prompts/generate-storyboard-table.md.
+    expect(generateTableSource).toContain('10-15秒')
+    expect(generateTableSource).toContain('尽量合并')
+    expect(generateTableSource).toContain('多格导演分镜图')
+    expect(generateTableSource).toContain('根据时长和节奏')
+    expect(generateTableSource).toContain('允许轻微重复')
+    expect(generateTableSource).toContain('强一致动作情节')
+    expect(generateTableSource).toContain('不要理解为最终视频的分屏')
   })
 
-  it('makes self-check/fix prompts prefer fewer long video rows and not flag harmless repetition', async () => {
-    const timelineCheck = fillPrompt('timelineCheck', { storyboardJson: '[]' })
-    // visualBalanceCheck migrated to art-director-agent/prompts/critique-composition.md.
-    const critiquePromptSource = (
-      await import('@/lib/agents/art-director-agent/prompts/critique-composition.md?raw')
-    ).default
-    const applyFixes = fillPrompt('applyFixes', { storyboardJson: '[]', issuesList: 'none' })
-    const combined = [timelineCheck, critiquePromptSource, applyFixes].join('\n')
+  it('makes self-check/fix prompts prefer fewer long video rows and not flag harmless repetition', () => {
+    const combined = [
+      critiqueTimelineSource,
+      critiqueCompositionSource,
+      applyTimelineFixesSource,
+    ].join('\n')
 
     expect(combined).toContain('10-15秒')
     expect(combined).toContain('合并多个分镜')

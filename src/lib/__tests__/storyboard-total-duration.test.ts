@@ -1,50 +1,37 @@
 import { describe, it, expect } from 'vitest'
-import { fillPrompt } from '@/lib/prompts'
+
+import generateTableSource from '@/lib/agents/director-agent/prompts/generate-storyboard-table.md?raw'
+import applyTimelineFixesSource from '@/lib/agents/director-agent/prompts/apply-timeline-fixes.md?raw'
+import critiqueTimelineSource from '@/lib/agents/director-agent/prompts/critique-timeline.md?raw'
 import {
   collectDurationIssues,
   MAX_ROW_DURATION_SECONDS,
   MIN_ROW_DURATION_SECONDS,
 } from '@/lib/director-assistant'
 
-describe('storyboardGeneration total-duration constraint', () => {
-  it('embeds the requested total duration as a hard rule the LLM must satisfy', () => {
-    const prompt = fillPrompt('storyboardGeneration', {
-      artStyle: 'cinematic',
-      totalDurationSeconds: '60',
-      characterDesigns: '[]',
-      sceneDesigns: '[]',
-      propDesigns: '[]',
-      shotAllocation: '[]',
-      shotComposition: '[]',
-      visualStrategy: '',
-      elementContext: '',
-    })
-    expect(prompt).toContain('时长硬约束')
-    expect(prompt).toContain('60 秒')
-    expect(prompt).toContain('Σ duration == 60')
-    expect(prompt).toContain('容差 ±0.5s')
-    // Per-row bounds also embedded.
-    expect(prompt).toContain('2 ≤ duration ≤ 15')
-    expect(prompt).toContain('> 15s 的行必须立即拆分')
-    expect(prompt).toContain('< 2s 的行必须与相邻行合并')
+describe('director-agent duration constraint contract', () => {
+  it('generate-storyboard-table prompt embeds the total-duration rule and per-row bounds', () => {
+    expect(generateTableSource).toContain('时长硬约束')
+    // Template variable {{totalDurationSeconds}} appears multiple times — verify
+    // the placeholder is wired in (substitution happens at runtime via fillTemplate).
+    expect(generateTableSource).toContain('{{totalDurationSeconds}} 秒')
+    expect(generateTableSource).toContain('Σ duration == {{totalDurationSeconds}}')
+    expect(generateTableSource).toContain('容差 ±0.5s')
+    expect(generateTableSource).toContain('2 ≤ duration ≤ 15')
+    expect(generateTableSource).toContain('> 15s 的行必须立即拆分')
+    expect(generateTableSource).toContain('< 2s 的行必须与相邻行合并')
   })
 
-  it('applyFixes also receives the total duration AND the per-row bounds so re-balancing stays inside them', () => {
-    const prompt = fillPrompt('applyFixes', {
-      storyboardJson: '[]',
-      issuesList: '1. 偏差 5s',
-      totalDurationSeconds: '90',
-    })
-    expect(prompt).toContain('总时长锁定为 90 秒')
-    expect(prompt).toContain('容差 ±0.5s')
-    expect(prompt).toContain('duration 必须 ∈ [2, 15] 秒')
-    expect(prompt).toContain('> 15s 的行必须拆分')
-    expect(prompt).toContain('< 2s 的行必须与相邻行合并')
+  it('apply-timeline-fixes prompt re-locks both bounds so a fix pass never drifts back', () => {
+    expect(applyTimelineFixesSource).toContain('总时长锁定为 {{totalDurationSeconds}} 秒')
+    expect(applyTimelineFixesSource).toContain('容差 ±0.5s')
+    expect(applyTimelineFixesSource).toContain('duration 必须 ∈ [2, 15] 秒')
+    expect(applyTimelineFixesSource).toContain('> 15s 的行必须拆分')
+    expect(applyTimelineFixesSource).toContain('< 2s 的行必须与相邻行合并')
   })
 
-  it('timelineCheck mentions the per-row duration bounds', () => {
-    const prompt = fillPrompt('timelineCheck', { storyboardJson: '[]' })
-    expect(prompt).toContain('每行 duration 必须 ∈ [2, 15] 秒')
+  it('critique-timeline prompt mentions the per-row duration bounds', () => {
+    expect(critiqueTimelineSource).toContain('每行 duration 必须 ∈ [2, 15] 秒')
   })
 })
 

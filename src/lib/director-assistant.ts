@@ -3,17 +3,22 @@
  * Three-stage pipeline: 优化 → 自检 → 修复
  */
 
-import { runCapability } from '@/lib/capabilities/client'
 import { buildCanvasContext } from '@/lib/canvas-context'
 import { useStoryboardStore } from '@/stores/storyboard-store'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { ensureElements, extractElementsFromScript, buildElementContext, type ExtractionResult } from '@/lib/canvas-elements'
-import { fillPrompt } from '@/lib/prompts'
 import { scriptAgent } from '@/lib/agents/script-agent'
 import {
   critiqueComposition as artDirectorCritique,
   generateStyleBible,
 } from '@/lib/agents/art-director-agent'
+import {
+  allocateShots as directorAllocateShots,
+  applyTimelineFixes as directorApplyTimelineFixes,
+  composeShots as directorComposeShots,
+  critiqueTimeline as directorCritiqueTimeline,
+  generateStoryboardTable as directorGenerateStoryboardTable,
+} from '@/lib/agents/director-agent'
 import { runAgentWithChatBridge } from '@/lib/agents/chat-bridge'
 import { createMemoryContext } from '@/lib/agents/_shared/context/memory'
 import { createCapabilityLLM } from '@/lib/agents/_shared/llm/capability'
@@ -83,14 +88,6 @@ export function createDirectorInitialState(): PipelineState {
 }
 
 type OnUpdate = (state: PipelineState) => void
-
-async function aiCall(prompt: string): Promise<string> {
-  const r = await runCapability({
-    capability: 'element-extraction',
-    inputs: [{ kind: 'text', text: prompt }],
-  })
-  return r.outputs[0]?.text ?? ''
-}
 
 function setStep(state: PipelineState, stageIdx: number, stepIdx: number, status: StepStatus, result?: string) {
   state.stages[stageIdx].steps[stepIdx].status = status
@@ -186,35 +183,47 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   setStep(state, 0, 6, 'done', visualAnchor); onUpdate(state)
   setStep(state, 0, 7, 'done', visualStrategy); onUpdate(state)
 
-  // Step 9: 镜头分配计划
+  // Step 9: 镜头分配计划 — director-agent.allocateShots
   setStep(state, 0, 8, 'running'); onUpdate(state)
-  const shotAllocation = await aiCall(fillPrompt('shotAllocation', {
-    scriptAnalysis: scriptAnalysis.slice(0, 500),
-    visualStrategy: visualStrategy.slice(0, 500),
-  }))
+  const shotAllocation = await runAgentWithChatBridge(
+    'director-agent',
+    directorAllocateShots(
+      { scriptAnalysis, visualStrategy, totalDurationSeconds },
+      agentCtx,
+    ),
+    { verb: 'allocate-shots' },
+  )
   setStep(state, 0, 8, 'done', shotAllocation); onUpdate(state)
 
-  // Step 10: 镜头构图设计
+  // Step 10: 镜头构图设计 — director-agent.composeShots
   setStep(state, 0, 9, 'running'); onUpdate(state)
-  const shotComposition = await aiCall(fillPrompt('shotComposition', {
-    shotAllocation: shotAllocation.slice(0, 800),
-    visualAnchor: visualAnchor.slice(0, 500),
-  }))
+  const shotComposition = await runAgentWithChatBridge(
+    'director-agent',
+    directorComposeShots({ shotAllocation, visualAnchor }, agentCtx),
+    { verb: 'compose-shots' },
+  )
   setStep(state, 0, 9, 'done', shotComposition); onUpdate(state)
 
-  // Step 11: 生成分镜表 JSON
+  // Step 11: 生成分镜表 JSON — director-agent.generateStoryboardTable
   setStep(state, 0, 10, 'running'); onUpdate(state)
-  const storyboardJson = await aiCall(fillPrompt('storyboardGeneration', {
-    artStyle,
-    totalDurationSeconds: String(totalDurationSeconds),
-    characterDesigns: characterDesigns.slice(0, 800),
-    sceneDesigns: sceneDesigns.slice(0, 800),
-    propDesigns: propDesigns.slice(0, 400),
-    shotAllocation: shotAllocation.slice(0, 600),
-    shotComposition: shotComposition.slice(0, 600),
-    visualStrategy: visualStrategy.slice(0, 400),
-    elementContext: elementCtx,
-  }))
+  const storyboardJson = await runAgentWithChatBridge(
+    'director-agent',
+    directorGenerateStoryboardTable(
+      {
+        artStyle,
+        totalDurationSeconds,
+        characterDesigns,
+        sceneDesigns,
+        propDesigns,
+        shotAllocation,
+        shotComposition,
+        visualStrategy,
+        elementContext: elementCtx,
+      },
+      agentCtx,
+    ),
+    { verb: 'generate-storyboard-table' },
+  )
   for (const issue of collectDurationIssues(storyboardJson, totalDurationSeconds)) {
     state.issues.push(issue)
   }
@@ -274,35 +283,29 @@ export function collectDurationIssues(storyboardJson: string, expectedTotal: num
 // ─── Stage 2: 自检 ──────────────────────────────────────────────────
 
 async function runSelfCheck(state: PipelineState, storyboardJson: string, onUpdate: OnUpdate): Promise<string[]> {
-  setStep(state, 1, 0, 'running'); onUpdate(state)
-  const timelineCheck = await aiCall(fillPrompt('timelineCheck', { storyboardJson: storyboardJson.slice(0, 3000) }))
-  setStep(state, 1, 0, 'done', timelineCheck); onUpdate(state)
-
-  // Visual balance check is now routed through art-director-agent.critiqueComposition
-  // which returns typed CompositionIssue[] directly — no more regex JSON parsing.
-  setStep(state, 1, 1, 'running'); onUpdate(state)
   const agentCtx = createMemoryContext({ llm: createCapabilityLLM() })
+
+  // Timeline / continuity check — director-agent.critiqueTimeline
+  setStep(state, 1, 0, 'running'); onUpdate(state)
+  const timelineIssues = await runAgentWithChatBridge(
+    'director-agent',
+    directorCritiqueTimeline({ storyboardJson }, agentCtx),
+    { verb: 'critique-timeline' },
+  )
+  setStep(state, 1, 0, 'done', JSON.stringify(timelineIssues, null, 2)); onUpdate(state)
+
+  // Composition check — art-director-agent.critiqueComposition (typed)
+  setStep(state, 1, 1, 'running'); onUpdate(state)
   const compositionIssues = await runAgentWithChatBridge(
     'art-director-agent',
     artDirectorCritique({ storyboardJson }, agentCtx),
     { verb: 'critique-composition' },
   )
-  const visualCheck = JSON.stringify(compositionIssues, null, 2)
-  setStep(state, 1, 1, 'done', visualCheck); onUpdate(state)
+  setStep(state, 1, 1, 'done', JSON.stringify(compositionIssues, null, 2)); onUpdate(state)
 
   const issues: string[] = []
-  // Timeline check still uses the raw-text → regex path.
-  try {
-    const m = timelineCheck.match(/\[[\s\S]*\]/)
-    if (m) {
-      const arr = JSON.parse(m[0]) as { shot: string; issue: string; fix: string }[]
-      for (const a of arr) issues.push(`${a.shot}: ${a.issue} → ${a.fix}`)
-    }
-  } catch { /* no valid JSON */ }
-  // Composition issues come pre-parsed from the agent.
-  for (const a of compositionIssues) {
-    issues.push(`${a.shot}: ${a.issue} → ${a.fix}`)
-  }
+  for (const a of timelineIssues) issues.push(`${a.shot}: ${a.issue} → ${a.fix}`)
+  for (const a of compositionIssues) issues.push(`${a.shot}: ${a.issue} → ${a.fix}`)
 
   state.issues = issues
   onUpdate(state)
@@ -322,11 +325,19 @@ async function runFix(state: PipelineState, storyboardJson: string, issues: stri
   }
 
   setStep(state, 2, 0, 'running'); onUpdate(state)
-  const fixResult = await aiCall(fillPrompt('applyFixes', {
-    issuesList: issues.map((i, idx) => `${idx + 1}. ${i}`).join('\n'),
-    storyboardJson: storyboardJson.slice(0, 3000),
-    totalDurationSeconds: String(totalDurationSeconds || 0),
-  }))
+  const agentCtx = createMemoryContext({ llm: createCapabilityLLM() })
+  const fixResult = await runAgentWithChatBridge(
+    'director-agent',
+    directorApplyTimelineFixes(
+      {
+        storyboardJson,
+        issues,
+        totalDurationSeconds: totalDurationSeconds || 0,
+      },
+      agentCtx,
+    ),
+    { verb: 'apply-timeline-fixes' },
+  )
   state.fixes = issues.map((i) => `已修复: ${i}`)
   setStep(state, 2, 0, 'done', `已修复 ${issues.length} 个问题`); onUpdate(state)
 
