@@ -39,4 +39,5 @@ public/samples/libtv-skills/
 public/uploads/
 .env
 .env.local
+.env.bak*
 .gstack/

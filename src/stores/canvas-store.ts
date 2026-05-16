@@ -6,6 +6,7 @@ import { v4 as uuid } from 'uuid';
 import { applyNodeChanges, applyEdgeChanges } from '@xyflow/react';
 import type { Node, Edge, NodeChange, EdgeChange } from '@xyflow/react';
 import type { CanvasNodeData, CanvasNodeType } from '@/types/canvas';
+import type { CanvasItemKind } from '@/stores/canvas-item-store';
 
 /** Data stored per canvas node — reference to asset or free-form item */
 export interface CanvasNodeGeometry extends Record<string, unknown> {
@@ -24,7 +25,7 @@ interface CanvasActions {
     (assetId: string, position: { x: number; y: number }): string;
     (type: CanvasNodeType, data: CanvasNodeData, position: { x: number; y: number }): string;
   };
-  addItemNode: (itemId: string, kind: 'image' | 'text', position: { x: number; y: number }, size?: { width: number; height: number }) => string;
+  addItemNode: (itemId: string, kind: CanvasItemKind, position: { x: number; y: number }, size?: { width: number; height: number }) => string;
   removeNode: (id: string) => void;
   updateNode: (id: string, data: Partial<CanvasNodeGeometry>) => void;
   setNodes: (nodes: Node<CanvasNodeGeometry>[]) => void;
@@ -70,8 +71,8 @@ export const useCanvasStore = create<CanvasState & CanvasActions>()(
 
       addItemNode: (itemId, kind, position, size) => {
         const id = uuid();
-        const width = size?.width ?? (kind === 'image' ? 240 : 260);
-        const height = size?.height ?? (kind === 'image' ? 180 : 140);
+        const width = size?.width ?? (kind === 'video' ? 360 : kind === 'image' ? 240 : 260);
+        const height = size?.height ?? (kind === 'video' ? 200 : kind === 'image' ? 180 : 140);
         set((state) => {
           state.nodes.push({
             id,

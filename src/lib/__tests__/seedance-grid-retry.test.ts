@@ -19,7 +19,7 @@ describe('Seedance grid-overlay retry helpers', () => {
     expect(svg).toContain('data-grid="6x6"')
   })
 
-  it('only rewrites Seedance image_url parts and preserves their frame roles', () => {
+  it('does not rewrite Seedance image_url parts to unsupported SVG data URLs', () => {
     const parts = [
       { type: 'text', text: 'animate this' },
       { type: 'image_url', image_url: { url: 'https://example.com/first.png' }, role: 'first_frame' },
@@ -29,17 +29,9 @@ describe('Seedance grid-overlay retry helpers', () => {
     const retryParts = buildSeedanceGridRetryContentParts(parts)
 
     expect(retryParts[0]).toBe(parts[0])
-    expect(retryParts[1]).toMatchObject({ type: 'image_url', role: 'first_frame' })
-    expect(retryParts[2]).toMatchObject({ type: 'image_url', role: 'last_frame' })
-
-    const firstUrl = (retryParts[1].image_url as { url: string }).url
-    const lastUrl = (retryParts[2].image_url as { url: string }).url
-    expect(firstUrl).not.toBe('https://example.com/first.png')
-    expect(lastUrl).not.toBe('https://example.com/last.png')
-
-    const firstSvg = Buffer.from(firstUrl.split(',')[1], 'base64').toString('utf8')
-    const lastSvg = Buffer.from(lastUrl.split(',')[1], 'base64').toString('utf8')
-    expect(firstSvg).toContain('href="https://example.com/first.png"')
-    expect(lastSvg).toContain('href="https://example.com/last.png"')
+    expect(retryParts[1]).toEqual(parts[1])
+    expect(retryParts[2]).toEqual(parts[2])
+    expect((retryParts[1].image_url as { url: string }).url).not.toMatch(/^data:image\/svg\+xml/)
+    expect((retryParts[2].image_url as { url: string }).url).not.toMatch(/^data:image\/svg\+xml/)
   })
 })

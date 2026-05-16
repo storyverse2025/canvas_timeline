@@ -69,6 +69,10 @@ export function useBatchGenerate() {
             await generateKeyframe(row)
           } else {
             await generateBeatVideo(row)
+            const updatedRow = useStoryboardStore.getState().rows.find((r) => r.id === job.rowId)
+            if (type === 'beat-video' && !updatedRow?.beatVideoUrl) {
+              throw new Error('missing beat video result')
+            }
           }
           updateJob(job.rowId, { status: 'done' })
         } catch (e) {
@@ -91,7 +95,6 @@ export function useBatchGenerate() {
     await Promise.all(workers)
 
     setBatch((prev) => prev ? { ...prev, isRunning: false } : null)
-    const finalJobs = useStoryboardStore.getState().rows
     const label = type === 'keyframe' ? 'Keyframe' : 'Beat Video'
     toast.success(`批量 ${label} 生成完成`)
   }, [generateKeyframe, generateBeatVideo])

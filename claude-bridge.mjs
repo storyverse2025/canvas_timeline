@@ -3,7 +3,7 @@
  * hermes-bridge.mjs
  *
  * Local HTTP bridge: accepts POST /v1/messages in Anthropic API format,
- * spawns `hermes chat -p`,
+ * spawns `hermes chat -q` in quiet single-query mode,
  * and converts plain text output back into Anthropic-compatible JSON/SSE.
  *
  * Skills/capabilities are handled by Hermes itself; this bridge no longer passes
@@ -225,7 +225,7 @@ const server = http.createServer((req, res) => {
     const { messages = [], system, stream } = reqBody
     const prompt = buildPrompt(messages, system)
 
-    const args = ['chat', '-p', prompt]
+    const args = ['chat', '-Q', '-q', prompt, '--max-turns', '30', '--source', 'director-bridge']
 
     const env = {
       ...process.env,
@@ -233,7 +233,7 @@ const server = http.createServer((req, res) => {
       LIBTV_ACCESS_KEY: process.env.LIBTV_ACCESS_KEY || 'sk-libtv-f60919a34eac47a18cb5424ea3519d7d',
     }
 
-    console.log(`[bridge] → hermes chat -p | msgs=${messages.length} plugins=${PLUGIN_DIRS.length} stream=${!!stream}`)
+    console.log(`[bridge] → hermes chat -Q -q | msgs=${messages.length} plugins=${PLUGIN_DIRS.length} stream=${!!stream}`)
 
     const child = spawn(HERMES_BIN, args, { env, cwd: PROJECT_ROOT, stdio: ['ignore', 'pipe', 'pipe'] })
 

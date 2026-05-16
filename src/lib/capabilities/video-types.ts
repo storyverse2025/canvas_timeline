@@ -100,7 +100,22 @@ export function buildContentParts(
   return parts
 }
 
-/** Filter URLs to only http(s) and data: URLs that remote APIs can access. */
+function isSupportedRasterDataUrl(url: string): boolean {
+  const match = /^data:image\/(png|jpe?g|webp);base64,([A-Za-z0-9+/]+={0,2})$/i.exec(url.trim())
+  if (!match) return false
+  const payload = match[2]
+  // Base64 length modulo 1 is always invalid; allow omitted padding for provider-tolerant payloads.
+  return payload.length > 0 && payload.length % 4 !== 1
+}
+
+function isSeedanceImageUrl(url: string): boolean {
+  const trimmed = url.trim()
+  if (trimmed.length <= 10) return false
+  if (/^https?:\/\//i.test(trimmed)) return true
+  return isSupportedRasterDataUrl(trimmed)
+}
+
+/** Filter image URLs to only Seedance-supported remote refs or raster data URLs. */
 export function filterAccessible(urls: string[]): string[] {
-  return urls.filter((u) => u && u.length > 10 && (/^https?:\/\//i.test(u) || u.startsWith('data:')))
+  return urls.filter(isSeedanceImageUrl).map((u) => u.trim())
 }

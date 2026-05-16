@@ -237,7 +237,7 @@ export function StoryboardTable() {
         .filter((a) => !!a.imageUrl)
         .map<Cand>((a) => ({ kind: a.type, name: a.name, description: a.description ?? '', imageUrl: a.imageUrl ?? '' })),
       ...nodes
-        .map((n) => {
+        .map<Cand | null>((n) => {
           const itemId = (n.data as { itemId?: string }).itemId
           if (!itemId) return null
           const it = items[itemId]

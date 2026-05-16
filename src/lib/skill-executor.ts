@@ -34,14 +34,14 @@ function autoLayout(index: number, category: string): { x: number; y: number } {
   return { x: columns[category] ?? 100, y: index * 180 }
 }
 
-function addVisualAsset(
+function addVisualAssetWithNode(
   type: 'character' | 'scene' | 'prop' | 'keyframe',
   name: string,
   imageUrl: string | undefined,
   prompt: string | undefined,
   sourceId: string | undefined,
   index: number
-): string {
+): { assetId: string; nodeId: string } {
   const assetStore = useAssetStore.getState()
   const canvasStore = useCanvasStore.getState()
   const itemStore = useCanvasItemStore.getState()
@@ -66,7 +66,18 @@ function addVisualAsset(
   // Pull the new node under the global style node so users can see at a glance
   // what art-style prompt informs every asset on the canvas.
   connectStyleToAllAssets()
-  return assetId
+  return { assetId, nodeId }
+}
+
+function addVisualAsset(
+  type: 'character' | 'scene' | 'prop' | 'keyframe',
+  name: string,
+  imageUrl: string | undefined,
+  prompt: string | undefined,
+  sourceId: string | undefined,
+  index: number
+): string {
+  return addVisualAssetWithNode(type, name, imageUrl, prompt, sourceId, index).assetId
 }
 
 export const skills = {
@@ -287,10 +298,43 @@ function toCharacterMaterialPrompt(char: Character): string {
   return buildCharacterMaterialPrompt(basePrompt, getCharacterMaterialArtStyle())
 }
 
-function createCharacterAssets(characters: Character[]) {
-  const assetIds = characters.map((char, i) =>
-    addVisualAsset('character', char.asset_identifier, char.img_url, toCharacterMaterialPrompt(char), char.asset_id, i)
+function formatCharacterBio(char: Character, materialPrompt: string): string {
+  return [
+    `角色设定：${char.asset_identifier}`,
+    `asset_id: ${char.asset_id}`,
+    '',
+    '人物小传 / Bio:',
+    char.description || '(未提供)',
+    '',
+    '角色视觉提示 / Visual prompt:',
+    materialPrompt,
+  ].join('\n')
+}
+
+function createCharacterBioNode(char: Character, materialPrompt: string, index: number): string {
+  const itemId = useCanvasItemStore.getState().addItem({
+    kind: 'text',
+    name: `角色设定：${char.asset_identifier}`,
+    content: formatCharacterBio(char, materialPrompt),
+    role: 'system',
+  })
+  const imagePos = autoLayout(index, 'character')
+  return useCanvasStore.getState().addItemNode(
+    itemId,
+    'text',
+    { x: imagePos.x, y: imagePos.y - 170 },
+    { width: 320, height: 140 },
   )
+}
+
+function createCharacterAssets(characters: Character[]) {
+  const assetIds = characters.map((char, i) => {
+    const materialPrompt = toCharacterMaterialPrompt(char)
+    const bioNodeId = createCharacterBioNode(char, materialPrompt, i)
+    const { assetId, nodeId } = addVisualAssetWithNode('character', char.asset_identifier, char.img_url, materialPrompt, char.asset_id, i)
+    useCanvasStore.getState().addEdge(bioNodeId, nodeId)
+    return assetId
+  })
   useChatStore.getState().addMessage('action', `Created ${assetIds.length} character assets`, {
     type: 'generate_characters', status: 'success',
   })

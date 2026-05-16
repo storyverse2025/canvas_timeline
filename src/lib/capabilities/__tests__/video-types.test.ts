@@ -93,12 +93,46 @@ describe('buildContentParts', () => {
 })
 
 describe('filterAccessible', () => {
-  it('allows http(s) and data: URLs', () => {
-    expect(filterAccessible(['https://example.com/x.jpg', 'http://a.com/b.png', 'data:image/png;base64,abc'])).toHaveLength(3)
+  it('allows https URLs and valid raster image data URLs', () => {
+    const png1x1 = 'data:image/png;base64,iVBORw0KGgo='
+    const jpg = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ=='
+    const webp = 'data:image/webp;base64,UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA'
+
+    expect(filterAccessible(['https://example.com/x.jpg', 'http://a.com/b.png', png1x1, jpg, webp])).toEqual([
+      'https://example.com/x.jpg',
+      'http://a.com/b.png',
+      png1x1,
+      jpg,
+      webp,
+    ])
   })
 
-  it('rejects relative paths and empty strings', () => {
-    expect(filterAccessible(['/uploads/x.png', '', '  '])).toHaveLength(0)
+  it('rejects malformed or provider-unsupported image refs before request construction', () => {
+    expect(filterAccessible([
+      '/uploads/x.png',
+      '',
+      '  ',
+      '[node:abcdef12]',
+      'data:image/png;base64,not valid base64 ***',
+      'data:image/svg+xml;base64,PHN2Zy8+',
+      'data:text/plain;base64,aGVsbG8=',
+    ])).toEqual([])
+  })
+
+  it('does not send invalid image refs into Seedance image_url content parts', () => {
+    const refs = filterAccessible([
+      'https://example.com/ok.png',
+      '[node:abcdef12]',
+      '/uploads/x.png',
+      'data:image/svg+xml;base64,PHN2Zy8+',
+      'data:image/png;base64,not valid base64 ***',
+    ])
+    const type = detectVideoType({ images: refs, videos: [], audios: [] })
+    const parts = buildContentParts('animate', { images: refs, videos: [], audios: [] }, type)
+
+    expect(parts.filter((part) => part.type === 'image_url')).toEqual([
+      { type: 'image_url', image_url: { url: 'https://example.com/ok.png' }, role: 'first_frame' },
+    ])
   })
 
   it('rejects URLs shorter than 11 chars', () => {
