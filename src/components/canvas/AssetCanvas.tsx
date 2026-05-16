@@ -177,6 +177,12 @@ export function AssetCanvas() {
         onSelectionChange={handleSelectionChange}
         connectionMode={ConnectionMode.Loose}
         connectionRadius={36}
+        // ReactFlow defaults are [0.5, 2]; user asked for 10x larger range
+        // on each end (without changing the per-click step) so the
+        // Controls +/- can zoom much further in to inspect detail and
+        // much further out to see the whole production board.
+        minZoom={0.05}
+        maxZoom={20}
         defaultEdgeOptions={{
           type: 'default',
           animated: false,
