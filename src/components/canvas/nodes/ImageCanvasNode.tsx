@@ -9,6 +9,7 @@ import { useLibtvTasksStore } from '@/stores/libtv-tasks-store'
 import { useAssetStore } from '@/stores/asset-store'
 import { runCapability } from '@/lib/capabilities/client'
 import { VoiceFeedbackButton, type VoicePlan, type VoiceElementKind } from '@/components/canvas/VoiceFeedbackButton'
+import { PanoramaViewer } from '@/components/canvas/PanoramaViewer'
 
 export interface ImageNodeData {
   itemId: string;
@@ -155,6 +156,11 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
             controls
             playsInline
           />
+        ) : asset?.type === 'scene' ? (
+          // Scene assets are 360° equirectangular panoramas — use the draggable
+          // PanoramaViewer so the user can pan to different viewpoints inside
+          // the canvas node. Non-scene image assets stay as plain <img>.
+          <PanoramaViewer src={item.content} alt={item.name} />
         ) : (
           <img src={item.content} alt={item.name} className="w-full h-full object-contain bg-black/40" />
         )

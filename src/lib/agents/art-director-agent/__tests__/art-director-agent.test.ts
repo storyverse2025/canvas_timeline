@@ -156,6 +156,33 @@ describe('generateAssetImages', () => {
     expect(mockedRunCapability).toHaveBeenCalledOnce()
   })
 
+  it('renders scenes as 360° equirectangular 4K panoramas (prompt + capability params)', async () => {
+    mockedRunCapability.mockResolvedValue({ outputs: [{ kind: 'image', url: 'https://scene.png' }] })
+    const ctx = createMemoryContext({ llm: { complete: async () => '' } })
+    await driveAuto(
+      generateAssetImages({
+        artStyle: 'cinematic',
+        extraction: {
+          characters: [],
+          scenes: [{ name: 'Rooftop', location: 'old town', lighting: 'dusk', mood: 'tense', image_prompt: '' }],
+          props: [],
+        },
+      }, ctx),
+    )
+    const call = mockedRunCapability.mock.calls[0]![0]
+    const sentPrompt = call.inputs[0]!.text!
+    // Scene-image.md mandates the 360° panorama treatment.
+    expect(sentPrompt).toContain('360° immersive equirectangular panorama')
+    expect(sentPrompt).toContain('4K ultra-high definition')
+    expect(sentPrompt).toContain('2:1 aspect ratio')
+    expect(sentPrompt).toContain('Seamless seam-free wraparound')
+    // Global art style threaded in.
+    expect(sentPrompt).toContain('cinematic')
+    // Capability params request HD + 4K for scene assets.
+    expect(call.params?.quality).toBe('hd')
+    expect(call.params?.resolution).toBe('4k')
+  })
+
   it('falls back to the prop-turnaround template when prop.image_prompt is empty', async () => {
     mockedRunCapability.mockResolvedValue({ outputs: [{ kind: 'image', url: 'https://prop.png' }] })
     const ctx = createMemoryContext({ llm: { complete: async () => '' } })
