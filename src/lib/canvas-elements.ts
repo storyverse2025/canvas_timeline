@@ -1,7 +1,13 @@
 import { useCanvasStore } from '@/stores/canvas-store'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { runCapability } from '@/lib/capabilities/client'
-import { fillPrompt } from '@/lib/prompts'
+import {
+  extractElements as artDirectorExtractElements,
+  generateAssetImages as artDirectorGenerateAssetImages,
+} from '@/lib/agents/art-director-agent'
+import { driveAuto } from '@/lib/agents/_shared/runtime/runner'
+import { createMemoryContext } from '@/lib/agents/_shared/context/memory'
+import { createCapabilityLLM } from '@/lib/agents/_shared/llm/capability'
 
 export type ElementRole = 'character' | 'prop' | 'scene' | 'keyframe' | 'unknown'
 
@@ -134,35 +140,28 @@ async function aiCall(prompt: string): Promise<string> {
   return r.outputs[0]?.text ?? ''
 }
 
-function parseJsonArray<T>(text: string): T[] {
-  try {
-    const m = text.match(/\[[\s\S]*\]/)
-    if (m) return JSON.parse(m[0])
-  } catch { /* ignore */ }
-  return []
-}
-
 /**
  * Extract characters, scenes, props from script using dedicated AI prompts.
  * Returns structured data with image generation prompts.
+ *
+ * Routed through art-director-agent.extractElements — the agent owns the
+ * extraction prompts and Zod-validates each element.
  */
 export async function extractElementsFromScript(
   scriptAnalysis: string,
   artStyle: string,
 ): Promise<ExtractionResult> {
-  // Extract characters
-  const charText = await aiCall(fillPrompt('characterExtraction', { scriptAnalysis, artStyle }))
-  const characters = parseJsonArray<ExtractedCharacter>(charText)
-
-  // Extract scenes
-  const sceneText = await aiCall(fillPrompt('sceneExtraction', { scriptAnalysis, artStyle }))
-  const scenes = parseJsonArray<ExtractedScene>(sceneText)
-
-  // Extract props
-  const propText = await aiCall(fillPrompt('propExtraction', { scriptAnalysis, artStyle }))
-  const props = parseJsonArray<ExtractedProp>(propText)
-
-  return { characters, scenes, props }
+  const ctx = createMemoryContext({ llm: createCapabilityLLM() })
+  const result = await driveAuto(
+    artDirectorExtractElements({ scriptAnalysis, artStyle }, ctx),
+  )
+  // The legacy types are a subset of the agent's schema — Zod-validated fields
+  // map 1:1 onto ExtractedCharacter/ExtractedScene/ExtractedProp.
+  return {
+    characters: result.characters as ExtractedCharacter[],
+    scenes: result.scenes as ExtractedScene[],
+    props: result.props as ExtractedProp[],
+  }
 }
 
 // ─── Ensure elements with proper prompts ────────────────────────────
@@ -231,76 +230,76 @@ export async function ensureElements(
     onStatus(`提取完成：${extraction.characters.length} 角色, ${extraction.scenes.length} 场景, ${extraction.props.length} 道具`)
   }
 
-  // Generate missing characters
-  if (inventory.characters.length === 0 && extraction?.characters?.length) {
-    for (const char of extraction.characters.slice(0, 2)) { // max 2 characters
-      onStatus(`正在生成角色: ${char.name}…`)
-      try {
-        const basePrompt = char.image_prompt || fillPrompt('characterImageGen', {
-          characterDescription: `${char.name}, ${char.gender}, ${char.appearance}, wearing ${char.clothing}, ${char.expression}`,
-          artStyle,
-        })
-        // Always ensure artStyle and the required three-view character material
-        // system prompt are present, because AI-generated image_prompt can omit both.
-        const prompt = char.image_prompt ? buildCharacterMaterialPrompt(basePrompt, artStyle) : basePrompt
-        console.log('[ensureElements] Character prompt:', prompt)
-        const r = await runCapability({
-          capability: 'text-to-image',
-          inputs: [{ kind: 'text', text: prompt }],
-          params: { aspect: '1:1' },
-        })
-        if (r.outputs[0]?.url) {
-          const itemId = useCanvasItemStore.getState().addItem({
-            kind: 'image', name: char.name, content: r.outputs[0].url, prompt,
-          })
-          const nodeId = useCanvasStore.getState().addItemNode(
-            itemId, 'image', { x: 50, y: 50 + inventory.characters.length * 220 }, { width: 200, height: 200 },
-          )
-          inventory.characters.push({
-            nodeId, itemId, name: char.name,
-            imageUrl: r.outputs[0].url, role: 'character',
-            description: `${char.appearance}, ${char.clothing}`,
-          })
-        }
-      } catch (e) {
-        onStatus(`角色 ${char.name} 生成失败: ${(e as Error).message}`)
-      }
-    }
-  }
+  // Generate missing characters + scenes — image generation routed through
+  // art-director-agent.generateAssetImages, then results are written back to
+  // the canvas stores here (the agent stays pure of side effects).
+  const needCharacters = inventory.characters.length === 0 && (extraction?.characters?.length ?? 0) > 0
+  const needScenes = inventory.scenes.length === 0 && (extraction?.scenes?.length ?? 0) > 0
 
-  // Generate missing scenes
-  if (inventory.scenes.length === 0 && extraction?.scenes?.length) {
-    for (const scene of extraction.scenes.slice(0, 2)) { // max 2 scenes
+  if (extraction && (needCharacters || needScenes)) {
+    // Wrap AI-generated character image_prompts with the three-view material
+    // system prompt before sending; the agent forwards them as-is.
+    const preppedExtraction = {
+      ...extraction,
+      characters: extraction.characters.map((c) => ({
+        ...c,
+        image_prompt: c.image_prompt
+          ? buildCharacterMaterialPrompt(c.image_prompt, artStyle)
+          : '',
+      })),
+      scenes: extraction.scenes.map((s) => ({
+        ...s,
+        image_prompt: s.image_prompt ? `${s.image_prompt}. ${artStyle}` : '',
+      })),
+      // Props are not generated here (legacy behavior); cap to 0 below.
+    }
+
+    const agentCtx = createMemoryContext({
+      llm: createCapabilityLLM(),
+      log: (m) => onStatus(m),
+    })
+    const generated = await driveAuto(
+      artDirectorGenerateAssetImages({
+        artStyle,
+        extraction: preppedExtraction,
+        maxPerKind: {
+          characters: needCharacters ? 2 : 0,
+          scenes: needScenes ? 2 : 0,
+          props: 0,
+        },
+      }, agentCtx),
+    )
+
+    for (const char of generated.characters) {
+      if (!char.img_url) continue
+      onStatus(`正在生成角色: ${char.name}…`)
+      const itemId = useCanvasItemStore.getState().addItem({
+        kind: 'image', name: char.name, content: char.img_url, prompt: char.generation_prompt ?? '',
+      })
+      const nodeId = useCanvasStore.getState().addItemNode(
+        itemId, 'image', { x: 50, y: 50 + inventory.characters.length * 220 }, { width: 200, height: 200 },
+      )
+      inventory.characters.push({
+        nodeId, itemId, name: char.name,
+        imageUrl: char.img_url, role: 'character',
+        description: `${char.appearance}, ${char.clothing}`,
+      })
+    }
+
+    for (const scene of generated.scenes) {
+      if (!scene.img_url) continue
       onStatus(`正在生成场景: ${scene.name}…`)
-      try {
-        const basePrompt = scene.image_prompt || fillPrompt('sceneImageGen', {
-          sceneDescription: `${scene.name}, ${scene.location}, ${scene.lighting}, ${scene.mood}`,
-          artStyle,
-        })
-        // Always ensure artStyle is in the prompt (AI-generated image_prompt may omit it)
-        const prompt = scene.image_prompt ? `${basePrompt}. ${artStyle}` : basePrompt
-        console.log('[ensureElements] Scene prompt:', prompt)
-        const r = await runCapability({
-          capability: 'text-to-image',
-          inputs: [{ kind: 'text', text: prompt }],
-          params: { aspect: '16:9' },
-        })
-        if (r.outputs[0]?.url) {
-          const itemId = useCanvasItemStore.getState().addItem({
-            kind: 'image', name: scene.name, content: r.outputs[0].url, prompt,
-          })
-          const nodeId = useCanvasStore.getState().addItemNode(
-            itemId, 'image', { x: 50, y: 500 + inventory.scenes.length * 220 }, { width: 320, height: 180 },
-          )
-          inventory.scenes.push({
-            nodeId, itemId, name: scene.name,
-            imageUrl: r.outputs[0].url, role: 'scene',
-            description: `${scene.location}, ${scene.mood}`,
-          })
-        }
-      } catch (e) {
-        onStatus(`场景 ${scene.name} 生成失败: ${(e as Error).message}`)
-      }
+      const itemId = useCanvasItemStore.getState().addItem({
+        kind: 'image', name: scene.name, content: scene.img_url, prompt: scene.generation_prompt ?? '',
+      })
+      const nodeId = useCanvasStore.getState().addItemNode(
+        itemId, 'image', { x: 50, y: 500 + inventory.scenes.length * 220 }, { width: 320, height: 180 },
+      )
+      inventory.scenes.push({
+        nodeId, itemId, name: scene.name,
+        imageUrl: scene.img_url, role: 'scene',
+        description: `${scene.location}, ${scene.mood}`,
+      })
     }
   }
 

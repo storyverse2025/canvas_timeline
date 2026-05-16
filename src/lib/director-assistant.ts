@@ -10,6 +10,10 @@ import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { ensureElements, extractElementsFromScript, buildElementContext, type ExtractionResult } from '@/lib/canvas-elements'
 import { fillPrompt } from '@/lib/prompts'
 import { scriptAgent } from '@/lib/agents/script-agent'
+import {
+  critiqueComposition as artDirectorCritique,
+  generateStyleBible,
+} from '@/lib/agents/art-director-agent'
 import { driveAuto } from '@/lib/agents/_shared/runtime/runner'
 import { createMemoryContext } from '@/lib/agents/_shared/context/memory'
 import { createCapabilityLLM } from '@/lib/agents/_shared/llm/capability'
@@ -154,20 +158,24 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   const elementCtx = buildElementContext(inv)
   setStep(state, 0, 5, 'done', `${inv.characters.length} 角色, ${inv.scenes.length} 场景`); onUpdate(state)
 
-  // Step 7: 视觉锚定提取
+  // Step 7-8: 视觉锚定提取 + 全局视觉策略 — routed through art-director-agent's
+  // generateStyleBible verb. The pipeline still surfaces two steps to the UI
+  // (anchor / strategy) for continuity, but they're both populated from the
+  // single bible call.
   setStep(state, 0, 6, 'running'); onUpdate(state)
-  const visualAnchor = await aiCall(fillPrompt('visualAnchor', {
-    scriptAnalysis, characterDesigns, sceneDesigns, elementContext: elementCtx,
-  }))
+  const styleBible = await driveAuto(
+    generateStyleBible({
+      scriptAnalysis,
+      characterDesigns,
+      sceneDesigns,
+      elementContext: elementCtx,
+      artStyle,
+      stylePreset: artDir.stylePreset,
+    }, agentCtx),
+  )
+  const visualAnchor = styleBible.anchor
+  const visualStrategy = styleBible.strategy
   setStep(state, 0, 6, 'done', visualAnchor); onUpdate(state)
-
-  // Step 8: 全局视觉策略
-  setStep(state, 0, 7, 'running'); onUpdate(state)
-  const visualStrategy = await aiCall(fillPrompt('visualStrategy', {
-    artStyle, stylePreset: artDir.stylePreset,
-    scriptAnalysis: scriptAnalysis.slice(0, 500),
-    visualAnchor: visualAnchor.slice(0, 500),
-  }))
   setStep(state, 0, 7, 'done', visualStrategy); onUpdate(state)
 
   // Step 9: 镜头分配计划
@@ -210,20 +218,30 @@ async function runSelfCheck(state: PipelineState, storyboardJson: string, onUpda
   const timelineCheck = await aiCall(fillPrompt('timelineCheck', { storyboardJson: storyboardJson.slice(0, 3000) }))
   setStep(state, 1, 0, 'done', timelineCheck); onUpdate(state)
 
+  // Visual balance check is now routed through art-director-agent.critiqueComposition
+  // which returns typed CompositionIssue[] directly — no more regex JSON parsing.
   setStep(state, 1, 1, 'running'); onUpdate(state)
-  const visualCheck = await aiCall(fillPrompt('visualBalanceCheck', { storyboardJson: storyboardJson.slice(0, 3000) }))
+  const agentCtx = createMemoryContext({ llm: createCapabilityLLM() })
+  const compositionIssues = await driveAuto(
+    artDirectorCritique({ storyboardJson }, agentCtx),
+  )
+  const visualCheck = JSON.stringify(compositionIssues, null, 2)
   setStep(state, 1, 1, 'done', visualCheck); onUpdate(state)
 
   const issues: string[] = []
-  for (const checkResult of [timelineCheck, visualCheck]) {
-    try {
-      const m = checkResult.match(/\[[\s\S]*\]/)
-      if (m) {
-        const arr = JSON.parse(m[0]) as { shot: string; issue: string; fix: string }[]
-        for (const a of arr) issues.push(`${a.shot}: ${a.issue} → ${a.fix}`)
-      }
-    } catch { /* no valid JSON */ }
+  // Timeline check still uses the raw-text → regex path.
+  try {
+    const m = timelineCheck.match(/\[[\s\S]*\]/)
+    if (m) {
+      const arr = JSON.parse(m[0]) as { shot: string; issue: string; fix: string }[]
+      for (const a of arr) issues.push(`${a.shot}: ${a.issue} → ${a.fix}`)
+    }
+  } catch { /* no valid JSON */ }
+  // Composition issues come pre-parsed from the agent.
+  for (const a of compositionIssues) {
+    issues.push(`${a.shot}: ${a.issue} → ${a.fix}`)
   }
+
   state.issues = issues
   onUpdate(state)
   return issues

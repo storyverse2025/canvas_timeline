@@ -27,11 +27,14 @@ describe('multi-panel director storyboard and Seedance prompt contract', () => {
     expect(prompt).toContain('不要理解为最终视频的分屏')
   })
 
-  it('makes self-check/fix prompts prefer fewer long video rows and not flag harmless repetition', () => {
+  it('makes self-check/fix prompts prefer fewer long video rows and not flag harmless repetition', async () => {
     const timelineCheck = fillPrompt('timelineCheck', { storyboardJson: '[]' })
-    const visualBalanceCheck = fillPrompt('visualBalanceCheck', { storyboardJson: '[]' })
+    // visualBalanceCheck migrated to art-director-agent/prompts/critique-composition.md.
+    const critiquePromptSource = (
+      await import('@/lib/agents/art-director-agent/prompts/critique-composition.md?raw')
+    ).default
     const applyFixes = fillPrompt('applyFixes', { storyboardJson: '[]', issuesList: 'none' })
-    const combined = [timelineCheck, visualBalanceCheck, applyFixes].join('\n')
+    const combined = [timelineCheck, critiquePromptSource, applyFixes].join('\n')
 
     expect(combined).toContain('10-15秒')
     expect(combined).toContain('合并多个分镜')
