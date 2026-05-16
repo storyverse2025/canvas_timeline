@@ -134,7 +134,19 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   const dossier = await runAgentWithChatBridge(
     'script-agent',
     scriptAgent.run(
-      { scriptText, canvasContext: canvasCtx, existingStoryboard, totalDurationSeconds },
+      {
+        scriptText,
+        canvasContext: canvasCtx,
+        existingStoryboard,
+        // Tell the agent what's already locked from the dialog + canvas so
+        // it skips Q1 (项目类型 — derived from duration) and Q3 (视觉风格
+        // — handled by {{artStyle}}). Saves the user redundant clicks.
+        knownContext: {
+          totalDurationSeconds,
+          visualStyle: artStyle,
+          aspectRatio: artDir.defaultAspectRatio,
+        },
+      },
       agentCtx,
     ),
     { verb: 'expand-script', interactive: true },

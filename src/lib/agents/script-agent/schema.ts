@@ -178,6 +178,30 @@ export interface ScriptInterviewAnswers {
   subAgent: ScriptSubAgent
 }
 
+/**
+ * Facts the caller already knows from the canvas / dialog context. The
+ * script-agent uses these to skip interview questions whose answers are
+ * already locked in — so the director-assistant flow doesn't re-ask for
+ * the duration the user already typed, or the visual style they already
+ * picked. Each populated field replaces a question with an inferred
+ * answer + a recap line.
+ */
+export interface ScriptKnownContext {
+  /** Total duration the final storyboard must sum to (seconds). When set,
+   *  Q1 (项目类型) is skipped — the project type is inferred from this
+   *  duration plus keyword hints in the script. */
+  totalDurationSeconds?: number
+  /** Human-readable global visual style from the canvas (artDirection
+   *  customStyle / stylePreset). When set, Q3 (视觉风格) is skipped —
+   *  the agent uses 'follow-canvas-style' so the prompt template's
+   *  {{artStyle}} variable carries the actual look through. */
+  visualStyle?: string
+  /** Default aspect ratio from the canvas (e.g., '16:9'). Reserved for
+   *  future skip rules — currently not part of the 8-question interview
+   *  but recorded for the recap. */
+  aspectRatio?: string
+}
+
 export interface ScriptRequest {
   /** The user's raw script text (idea, outline, beats, or full draft). */
   scriptText: string
@@ -185,8 +209,15 @@ export interface ScriptRequest {
   canvasContext?: string
   /** Optional existing storyboard block to preserve. */
   existingStoryboard?: string
-  /** Total duration the final storyboard must sum to (seconds). Required by
-   *  the director pipeline; the dossier's duration_or_episode_type and the
-   *  downstream storyboardGeneration prompt both enforce it. */
+  /**
+   * Total duration the final storyboard must sum to (seconds). Required by
+   * the director pipeline; the dossier's duration_or_episode_type and the
+   * downstream storyboardGeneration prompt both enforce it.
+   *
+   * Deprecated: prefer `knownContext.totalDurationSeconds`. Kept at top
+   * level for backwards compatibility; takes precedence if both are set.
+   */
   totalDurationSeconds?: number
+  /** Pre-known facts that skip the corresponding interview questions. */
+  knownContext?: ScriptKnownContext
 }

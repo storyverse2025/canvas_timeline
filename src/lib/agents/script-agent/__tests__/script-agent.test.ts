@@ -123,6 +123,135 @@ describe('script-agent', () => {
     ])
   })
 
+  describe('knownContext skip-when-known', () => {
+    it('skips 项目类型 question when totalDurationSeconds is supplied via knownContext', async () => {
+      const { llm } = mockLLM(JSON.stringify(makeDossierJson()))
+      const ctx = createMemoryContext({ llm })
+      const agent = createScriptAgent()
+
+      const headers: string[] = []
+      await drive(
+        agent.run({ scriptText: '一个侦探', knownContext: { totalDurationSeconds: 30 } }, ctx),
+        {
+          onQuestion: async (turn) => {
+            headers.push(turn.question.header ?? '')
+            if (turn.question.multiSelect) return { selected: [] }
+            return { selected: [turn.question.recommended ?? turn.question.options[0]!.value] }
+          },
+        },
+      )
+      // 项目类型 not asked — total duration carries the answer.
+      expect(headers).not.toContain('项目类型')
+      // Other 7 still asked.
+      expect(headers).toHaveLength(7)
+    })
+
+    it('honors the deprecated top-level totalDurationSeconds field', async () => {
+      const { llm } = mockLLM(JSON.stringify(makeDossierJson()))
+      const ctx = createMemoryContext({ llm })
+      const agent = createScriptAgent()
+
+      const headers: string[] = []
+      await drive(
+        agent.run({ scriptText: '一个侦探', totalDurationSeconds: 60 }, ctx),
+        {
+          onQuestion: async (turn) => {
+            headers.push(turn.question.header ?? '')
+            if (turn.question.multiSelect) return { selected: [] }
+            return { selected: [turn.question.recommended ?? turn.question.options[0]!.value] }
+          },
+        },
+      )
+      expect(headers).not.toContain('项目类型')
+    })
+
+    it('infers project type from duration (30s → short-video-30s; 60s → short-video-60s; 120s → mv; 600s → drama; 3600s → feature)', async () => {
+      const cases: Array<[number, string]> = [
+        [25, '短视频 (15-30秒)'],
+        [55, '短视频 (30-60秒)'],
+        [120, 'MV (3-5 分钟)'],
+        [600, '短剧单集 (10-30 分钟)'],
+        [3600, '院线长片 (90-120 分钟)'],
+      ]
+      for (const [dur, expectedLabel] of cases) {
+        const { llm, spy } = mockLLM(JSON.stringify(makeDossierJson()))
+        const ctx = createMemoryContext({ llm })
+        const agent = createScriptAgent()
+        await drive(
+          agent.run({ scriptText: '一个故事', knownContext: { totalDurationSeconds: dur } }, ctx),
+          {
+            onQuestion: async (turn) => {
+              if (turn.question.multiSelect) return { selected: [] }
+              return { selected: [turn.question.recommended ?? turn.question.options[0]!.value] }
+            },
+          },
+        )
+        const sent = spy.mock.calls[0]![0]![0]!.content as string
+        expect(sent).toContain(`项目类型: ${expectedLabel}`)
+      }
+    })
+
+    it('skips 视觉风格 question when knownContext.visualStyle is supplied', async () => {
+      const { llm, spy } = mockLLM(JSON.stringify(makeDossierJson()))
+      const ctx = createMemoryContext({ llm })
+      const agent = createScriptAgent()
+
+      const headers: string[] = []
+      await drive(
+        agent.run(
+          {
+            scriptText: '一个故事',
+            knownContext: { visualStyle: 'Cold-toned filmic noir' },
+          },
+          ctx,
+        ),
+        {
+          onQuestion: async (turn) => {
+            headers.push(turn.question.header ?? '')
+            if (turn.question.multiSelect) return { selected: [] }
+            return { selected: [turn.question.recommended ?? turn.question.options[0]!.value] }
+          },
+        },
+      )
+      expect(headers).not.toContain('视觉风格')
+      // The prompt still locks visualStyle to 'follow-canvas-style' so the
+      // canvas's actual style threads through via {{artStyle}}.
+      const sent = spy.mock.calls[0]![0]![0]!.content as string
+      expect(sent).toContain('视觉风格: 跟随画布美术风格')
+    })
+
+    it('skips both Q1 and Q3 when both contexts are known — only 6 questions asked', async () => {
+      const { llm } = mockLLM(JSON.stringify(makeDossierJson()))
+      const ctx = createMemoryContext({ llm })
+      const agent = createScriptAgent()
+
+      const headers: string[] = []
+      await drive(
+        agent.run(
+          {
+            scriptText: '一个故事',
+            knownContext: {
+              totalDurationSeconds: 30,
+              visualStyle: 'cinematic',
+              aspectRatio: '16:9',
+            },
+          },
+          ctx,
+        ),
+        {
+          onQuestion: async (turn) => {
+            headers.push(turn.question.header ?? '')
+            if (turn.question.multiSelect) return { selected: [] }
+            return { selected: [turn.question.recommended ?? turn.question.options[0]!.value] }
+          },
+        },
+      )
+      expect(headers).not.toContain('项目类型')
+      expect(headers).not.toContain('视觉风格')
+      expect(headers).toEqual(['平台/受众', '故事目标', '角色数量', '禁忌', '输入形态', '工作流'])
+    })
+  })
+
   it('uses heuristic recommendations from the script text', async () => {
     const { llm } = mockLLM(JSON.stringify(makeDossierJson()))
     const ctx = createMemoryContext({ llm })

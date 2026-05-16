@@ -31,6 +31,21 @@ Before doing any creative work, interview the requester one question at a time
 with a recommended answer. Walk down each branch of the design tree, resolving
 dependencies one-by-one. Ask the questions one at a time.
 
+**Skip-when-known.** If the answer to a question is already locked from the
+canvas context or the director-assistant dialog, do not ask — infer the
+answer, inject it into the dossier, and add a line to the recap so the user
+can spot any wrong inference. The caller passes these via
+`ScriptRequest.knownContext`:
+- `totalDurationSeconds` → skip Q1 (项目类型); derive from duration + keyword hints.
+- `visualStyle` → skip Q3 (视觉风格); lock to `follow-canvas-style` so the
+  canvas's global art style threads through via `{{artStyle}}`.
+- `aspectRatio` → no Q to skip today (not part of the 8-question set); just
+  recorded in the recap.
+
+The recap separates "auto-skipped from canvas" from "collected via interview"
+so the user sees the full lock state without having to remember which
+questions actually popped up.
+
 The minimum interview surface for this agent is:
 
 1. **Input shape** — what is the user bringing in?
