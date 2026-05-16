@@ -40,130 +40,11 @@ export const PROMPTS: Record<string, PromptTemplate> = {
 输出结构化分析结果。`,
   },
 
-  characterExtraction: {
-    id: 'characterExtraction',
-    label: '角色提取与丰富',
-    template: `你是角色设计专家。基于剧本分析，提取并丰富每个角色的视觉描述。
-
-剧本分析：
-{{scriptAnalysis}}
-
-美术风格：{{artStyle}}
-
-为每个角色输出详细的视觉设计 JSON 数组：
-\`\`\`json
-[
-  {
-    "name": "角色名",
-    "gender": "female/male",
-    "age": "年龄描述",
-    "appearance": "详细外貌描述（发型、发色、肤色、五官特征）",
-    "clothing": "服装描述（款式、颜色、材质、配饰）",
-    "expression": "默认表情/气质",
-    "body_type": "体型描述",
-    "distinctive_features": "标志性特征（疤痕、纹身、特殊配饰等）",
-    "image_prompt": "完整的英文人物三视图图片生成 prompt：必须包含 Sony Venice camera, Panavision C-series lenses, 24mm, f/1.4, full-frame, clean shadows, cinematic lighting, anamorphic wide angle, ultra-high detail, 8k, Final Fantasy CG game style, refined CG, Unreal Engine 5 render；构图为纯白背景，上面1/3人物正面脸部超特写且表情自然，下面2/3分三块展示颈部以下到脚部的正/侧/背三视图（不要出现头部），双手自然垂落；同时包含上述所有角色视觉信息，适合 {{artStyle}} 风格"
-  }
-]
-\`\`\`
-只输出 JSON，不要其他文字。`,
-  },
-
-  sceneExtraction: {
-    id: 'sceneExtraction',
-    label: '场景提取与丰富',
-    template: `你是场景设计专家。基于剧本分析，提取并丰富每个场景的视觉描述。
-
-剧本分析：
-{{scriptAnalysis}}
-
-美术风格：{{artStyle}}
-
-为每个场景输出详细的视觉设计 JSON 数组：
-\`\`\`json
-[
-  {
-    "name": "场景名",
-    "location": "地点类型",
-    "time_of_day": "时间",
-    "weather": "天气/氛围",
-    "architecture": "建筑/环境结构描述",
-    "lighting": "光线描述（方向、颜色、强度）",
-    "color_palette": "主色调",
-    "mood": "情绪/氛围",
-    "key_props": "场景中的关键物品",
-    "image_prompt": "完整的英文图片生成 prompt，wide establishing shot，适合 {{artStyle}} 风格，16:9 比例"
-  }
-]
-\`\`\`
-只输出 JSON，不要其他文字。`,
-  },
-
-  propExtraction: {
-    id: 'propExtraction',
-    label: '道具提取与丰富',
-    template: `你是道具设计专家。基于剧本分析，提取关键道具的视觉描述。
-
-剧本分析：
-{{scriptAnalysis}}
-
-美术风格：{{artStyle}}
-
-为每个关键道具输出 JSON 数组（只提取剧情中重要的道具，不超过5个）：
-\`\`\`json
-[
-  {
-    "name": "道具名",
-    "description": "外观描述",
-    "material": "材质",
-    "significance": "剧情意义",
-    "image_prompt": "完整的英文图片生成 prompt，product shot on neutral background，适合 {{artStyle}} 风格"
-  }
-]
-\`\`\`
-只输出 JSON，不要其他文字。如果没有关键道具，输出空数组 []。`,
-  },
-
-  visualAnchor: {
-    id: 'visualAnchor',
-    label: '视觉锚定提取',
-    template: `基于剧本分析和已有画布元素，提取视觉锚点：
-- 每个场景的核心视觉标识（色调、构图母题、标志性道具）
-- 角色的视觉一致性锚点（服装颜色、特征配饰、体型比例）
-- 跨镜头的视觉连接线索
-
-剧本分析：
-{{scriptAnalysis}}
-
-角色设计：
-{{characterDesigns}}
-
-场景设计：
-{{sceneDesigns}}
-
-画布元素：
-{{elementContext}}
-
-输出每个场景/角色的视觉锚点列表。`,
-  },
-
-  visualStrategy: {
-    id: 'visualStrategy',
-    label: '全局视觉策略',
-    template: `作为视觉总监，制定全局视觉策略。美术方向：{{artStyle}}
-
-请基于此美术方向制定：
-- 整体色彩方案（每幕的色调变化，须符合 {{stylePreset}} 风格）
-- 镜头语言风格（手持/稳定/斯坦尼康）
-- 光影基调（自然光/人工光/混合）
-- 构图规则（三分法/中心/对称）
-- 转场策略（硬切/溶解/匹配剪辑）
-
-剧本分析：{{scriptAnalysis}}
-视觉锚点：{{visualAnchor}}
-
-输出视觉策略文档。`,
-  },
+  // Element extraction (characterExtraction / sceneExtraction / propExtraction),
+  // visual anchor / visual strategy, and visual balance check were all migrated
+  // into art-director-agent (src/lib/agents/art-director-agent/prompts/). The
+  // agent's verbs replace the legacy fillPrompt() calls in canvas-elements.ts
+  // and director-assistant.ts.
 
   shotAllocation: {
     id: 'shotAllocation',
@@ -200,6 +81,16 @@ export const PROMPTS: Record<string, PromptTemplate> = {
     id: 'storyboardGeneration',
     label: '生成分镜表 JSON',
     template: `将以上所有分析整合，输出最终的分镜表 JSON 数组。
+
+【时长硬约束（不可违反）】
+- 用户已指定本片总时长为 **{{totalDurationSeconds}} 秒**。
+- 所有分镜 row 的 duration 字段之和必须严格等于 {{totalDurationSeconds}} 秒（允许 0.5 秒以内的舍入误差）。
+- **每一行 row 的 duration 必须满足 2 ≤ duration ≤ 15 秒**。
+  - 任何 > 15s 的行必须立即拆分成多行（每行仍 2-15s）。
+  - 任何 < 2s 的行必须与相邻行合并。
+  - 想要长情绪段落？多行串联，每行最多 15s，主体/构图/节奏可以非常相近但必须有新动作或新情绪信息。
+- 在编辑每个 row 的 duration 之前先做整体规划：按节拍权重分配各 row 时长，确保总时长 == {{totalDurationSeconds}} 且每行落在 [2, 15] 区间内。
+- 输出前在心里逐行核对：每行 ∈ [2, 15]；Σ duration == {{totalDurationSeconds}}。违反任何一条则整张表作废。
 
 【小蔡剧本转分镜 Skill 基准】
 你不是单纯拆 shot list，而是把剧本先当作分镜前的创作基准：
@@ -246,6 +137,8 @@ scene 的 description 必须使用场景提取步骤中的详细描述。这样�
 }
 
 字段硬约束：
+- 每一行的 duration ∈ [2, 15]（秒）。任何超出区间的行都视为违反硬约束，整张表作废。
+- 所有 row 的 duration 字段之和必须等于 {{totalDurationSeconds}} 秒（容差 ±0.5s）。这是 hard constraint，违反则整张表作废。
 - emotion_atmosphere 不等于 lighting_atmosphere；前者是情绪/氛围目标，后者是光影实现。
 - character_motivation 必须回答“为什么这样表演/行动”。
 - character_psychology 必须回答“心理纠结/潜台词/处境压力”。
@@ -280,7 +173,8 @@ scene 的 description 必须使用场景提取步骤中的详细描述。这样�
 - 空间是否一致（角色不能瞬移）
 - 因果关系是否成立
 - 道具连续性（前一镜出现的物品后续是否还在）
-- 是否把本该合并多个分镜的连续动作拆得过碎；同一地点/同一动作链/同一情绪推进应倾向合并为 10-15秒 长视频 row。
+- **每行 duration 必须 ∈ [2, 15] 秒**。任何 < 2s 的行需合并；任何 > 15s 的行需拆分。
+- 是否把本该合并多个分镜的连续动作拆得过碎；同一地点/同一动作链/同一情绪推进应倾向合并为 10-15秒 长视频 row（≤ 15s）。
 - 允许轻微重复：连续动作中的姿态、空间方向、道具位置轻微重复不是问题，前提是强一致动作情节、因果与情绪递进成立。
 
 分镜表：
@@ -290,23 +184,8 @@ scene 的 description 必须使用场景提取步骤中的详细描述。这样�
 如果没有问题，输出：[]`,
   },
 
-  visualBalanceCheck: {
-    id: 'visualBalanceCheck',
-    label: '视觉平衡扫描',
-    template: `你是视觉平衡审查员。扫描分镜表的视觉平衡：
-- 景别分布是否合理（不能连续5个特写）
-- 色调变化是否有节奏
-- 镜头时长是否合理：不要太短<1s；连续动作/情绪推进优先合并多个分镜到 10-15秒 长视频 row；>15s 才需要重点拆分。
-- 构图多样性（是否过于单调）
-- 角色出镜均衡性
-- 不要把服务连续性的轻微重复误判成单调；只要多格导演分镜图内部有清晰新信息和强一致动作情节，就可保留。
-
-分镜表：
-{{storyboardJson}}
-
-如果发现问题，输出 JSON 数组：[{ "shot": "S5", "issue": "描述", "fix": "建议" }]
-如果没有问题，输出：[]`,
-  },
+  // visualBalanceCheck migrated to art-director-agent/prompts/critique-composition.md;
+  // director-assistant.runSelfCheck now calls art-director-agent.critiqueComposition.
 
   // ─── Director Pipeline: 修复阶段 ────────────────────────────────
 
@@ -323,34 +202,19 @@ scene 的 description 必须使用场景提取步骤中的详细描述。这样�
 
 修复规则：
 - 只修改有问题的镜头，不要改动正确的部分
-- 保持总时长大致不变
+- **每一行 row 的 duration 必须 ∈ [2, 15] 秒。** 任何 > 15s 的行必须拆分；任何 < 2s 的行必须与相邻行合并。修复后再次自检。
+- **总时长锁定为 {{totalDurationSeconds}} 秒**。修复后所有 row 的 duration 字段之和必须等于 {{totalDurationSeconds}} 秒（容差 ±0.5s）。若问题列表中包含总时长或单行超界项，必须重新分配每行 duration。
 - 确保修复后的景别分布合理
 - 保持角色和场景的连续性
-- 优先把同一地点、同一动作链、同一情绪推进的碎镜合并多个分镜到单个 10-15秒 row，并在 storyboard_prompts 中写成多格导演分镜图。
+- 优先把同一地点、同一动作链、同一情绪推进的碎镜合并多个分镜到单个 10-15秒 row（仍然 ≤ 15s），并在 storyboard_prompts 中写成多格导演分镜图。
 - 允许轻微重复；不要为了避免重复而破坏强一致动作情节、空间轴线、视线方向和情绪递进。
 
 输出修复后的完整分镜表 JSON 数组（\`\`\`json ... \`\`\`），不要其他文字。`,
   },
 
-  // ─── Element Generation ─────────────────────────────────────────
-
-  characterImageGen: {
-    id: 'characterImageGen',
-    label: '角色图片生成 prompt',
-    template: `Character identity: {{characterDescription}}. {{artStyle}} style. Sony Venice camera, Panavision C-series lenses, 24mm focal length, f/1.4 aperture, full-frame capture, clean shadows, cinematic lighting, anamorphic lens, wide angle, ultra-high detail, 8k, Final Fantasy CG game style, refined CG, Unreal Engine 5 render. pure white background. Composition requirement: top 1/3 is a front-face extreme close-up with natural expression; lower 2/3 is divided into three blocks showing the character from neck down to feet only, no head visible, three-view full body reference: front view, side view, back view, hands naturally hanging down.`,
-  },
-
-  sceneImageGen: {
-    id: 'sceneImageGen',
-    label: '场景图片生成 prompt',
-    template: `Cinematic wide establishing shot: {{sceneDescription}}. {{artStyle}} style. Detailed environment, dramatic lighting, 16:9 aspect ratio`,
-  },
-
-  propImageGen: {
-    id: 'propImageGen',
-    label: '道具图片生成 prompt',
-    template: `Product photography, detailed close-up: {{propDescription}}. {{artStyle}} style. Neutral background, studio lighting`,
-  },
+  // Element-image generation prompts (characterImageGen / sceneImageGen /
+  // propImageGen) moved to art-director-agent/prompts/{character,scene,prop}-image.md.
+  // The agent's generateAssetImages verb consumes them.
 }
 
 /**

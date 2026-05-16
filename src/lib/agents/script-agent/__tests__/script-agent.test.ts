@@ -2,10 +2,13 @@ import { describe, it, expect, vi } from 'vitest'
 
 import { createScriptAgent } from '@/lib/agents/script-agent'
 import { createMemoryContext } from '@/lib/agents/_shared/context/memory'
-import { drive } from '@/lib/agents/_shared/runtime/runner'
+import { drive, driveAuto } from '@/lib/agents/_shared/runtime/runner'
 import type { Answer } from '@/lib/agents/_shared/runtime/types'
 import type { LLM } from '@/lib/agents/_shared/llm/types'
-import type { ScriptDossier, ScriptInputShape } from '@/lib/agents/script-agent/schema'
+import type {
+  ScriptDossier,
+  ScriptInterviewAnswers,
+} from '@/lib/agents/script-agent/schema'
 
 function makeDossierJson(): ScriptDossier {
   return {
@@ -62,19 +65,7 @@ function makeDossierJson(): ScriptDossier {
 
 function mockLLM(response: string): { llm: LLM; spy: ReturnType<typeof vi.fn> } {
   const spy = vi.fn(async () => response)
-  return {
-    llm: { complete: spy },
-    spy,
-  }
-}
-
-const answers: Record<string, Answer> = {
-  shapeRoughIdea: { selected: ['rough-idea'] },
-  shapeDraft: { selected: ['complete-draft'] },
-  flowDefault: { selected: ['default'] },
-  flowFrameworkQa: { selected: ['framework-qa'] },
-  flowWritingExpansion: { selected: ['writing-expansion'] },
-  toneDrama: { selected: ['drama'] },
+  return { llm: { complete: spy }, spy }
 }
 
 async function driveScriptAgent(
@@ -104,100 +95,202 @@ describe('script-agent', () => {
     ).rejects.toThrow(/scriptText is required/)
   })
 
-  it('recommends rough-idea for short text and runs the default flow', async () => {
-    const dossier = makeDossierJson()
-    const { llm, spy } = mockLLM('```json\n' + JSON.stringify(dossier) + '\n```')
+  it('yields the 8 SKILL-checklist questions in order before calling the LLM', async () => {
+    const { llm } = mockLLM(JSON.stringify(makeDossierJson()))
     const ctx = createMemoryContext({ llm })
     const agent = createScriptAgent()
 
-    const result = await driveScriptAgent(
-      agent,
-      ctx,
-      { scriptText: '一个侦探在雨夜遇到亡魂。' },
-      [answers.shapeRoughIdea, answers.flowDefault, answers.toneDrama],
+    const headers: string[] = []
+    await drive(agent.run({ scriptText: '一个侦探' }, ctx), {
+      onQuestion: async (turn) => {
+        headers.push(turn.question.header ?? '')
+        // Auto-accept whichever recommendation each question carries.
+        if (turn.question.multiSelect) return { selected: [] }
+        const rec = turn.question.recommended ?? turn.question.options[0]?.value ?? ''
+        return { selected: [rec] }
+      },
+    })
+
+    expect(headers).toEqual([
+      '项目类型',
+      '平台/受众',
+      '视觉风格',
+      '故事目标',
+      '角色数量',
+      '禁忌',
+      '输入形态',
+      '工作流',
+    ])
+  })
+
+  it('uses heuristic recommendations from the script text', async () => {
+    const { llm } = mockLLM(JSON.stringify(makeDossierJson()))
+    const ctx = createMemoryContext({ llm })
+    const agent = createScriptAgent()
+
+    const recommendations: Record<string, string | null> = {}
+    await drive(
+      agent.run(
+        { scriptText: '一个搞笑的短视频，两人对话，要适合儿童观看' },
+        ctx,
+      ),
+      {
+        onQuestion: async (turn) => {
+          recommendations[turn.question.header ?? ''] = turn.question.recommended
+          if (turn.question.multiSelect) return { selected: turn.question.recommended ? [turn.question.recommended] : [] }
+          return { selected: [turn.question.recommended ?? turn.question.options[0]!.value] }
+        },
+      },
+    )
+
+    // Short text + "搞笑" + "短视频" → recommend short video + comedy
+    expect(recommendations['项目类型']).toBe('short-video-30s')
+    expect(recommendations['故事目标']).toBe('comedy-relief')
+    // "两人对话" → duo
+    expect(recommendations['角色数量']).toBe('duo')
+    // "儿童" → suggests child-safe taboo
+    expect(recommendations['禁忌']).toBe('child-safe')
+  })
+
+  it('persists the dossier into ProjectContext after the LLM call', async () => {
+    const { llm } = mockLLM('```json\n' + JSON.stringify(makeDossierJson()) + '\n```')
+    const ctx = createMemoryContext({ llm })
+    const agent = createScriptAgent()
+
+    const result = await driveAuto(
+      agent.run({ scriptText: '一个侦探在雨夜遇到亡魂。' }, ctx),
     )
 
     expect(result.casting_cards).toHaveLength(1)
-    expect(result.casting_cards[0].name).toBe('林清')
-
-    // Persists outputs into ProjectContext.
     expect(ctx.project.characters.list().map((c) => c.name)).toEqual(['林清'])
     expect(ctx.project.scenes.list().map((s) => s.name)).toEqual(['雨夜街角'])
     expect(ctx.project.props.list().map((p) => p.name)).toEqual(['怀表'])
     expect(ctx.project.beats.list()).toHaveLength(3)
-    expect(ctx.project.beats.list()[0].id).toBe('B1')
-
-    // LLM saw the prompt with the recommended input shape filled in.
-    const sentPrompt = spy.mock.calls[0][0][0].content as string
-    expect(sentPrompt).toContain('类型：rough-idea')
-    expect(sentPrompt).toContain('情绪基调：drama')
+    expect(ctx.project.beats.list()[0]!.id).toBe('B1')
   })
 
-  it("recommends complete-draft for long text, but the user's override wins", async () => {
-    const dossier = makeDossierJson()
-    const { llm, spy } = mockLLM(JSON.stringify(dossier))
+  it('passes user-chosen settings into the LLM prompt', async () => {
+    const { llm, spy } = mockLLM(JSON.stringify(makeDossierJson()))
     const ctx = createMemoryContext({ llm })
     const agent = createScriptAgent()
 
-    const longScript = 'Beat. '.repeat(800) // ≈ 4800 chars → complete-draft
-
-    await driveScriptAgent(agent, ctx, { scriptText: longScript }, [
-      // User overrides the recommendation with rough-idea.
-      answers.shapeRoughIdea,
-      answers.flowDefault,
-      { selected: [], text: 'noir' }, // free-text tone
+    await driveScriptAgent(agent, ctx, { scriptText: '一个浪漫故事' }, [
+      { selected: ['mv'] },                            // projectType
+      { selected: ['bilibili'] },                      // platformAudience
+      { selected: ['anime-2d'] },                      // visualStyle
+      { selected: ['romance-healing'] },               // storyGoal
+      { selected: ['duo'] },                           // characterCount
+      { selected: ['child-safe'] },                    // taboos (multi)
+      { selected: ['rough-idea'] },                    // inputShape
+      { selected: ['default'] },                       // subAgent
     ])
 
-    const sent = spy.mock.calls[0][0][0].content as string
-    expect(sent).toContain('类型：rough-idea')
-    expect(sent).toContain('情绪基调：noir')
+    const sent = spy.mock.calls[0]![0]![0]!.content as string
+    expect(sent).toContain('MV')
+    expect(sent).toContain('B 站')
+    expect(sent).toContain('二次元')
+    expect(sent).toContain('浪漫治愈')
+    expect(sent).toContain('2 人对话')
+    expect(sent).toContain('适合儿童')
+    expect(sent).toContain('一句话想法')
+  })
+
+  it('joins multiple taboos with semicolons in the prompt', async () => {
+    const { llm, spy } = mockLLM(JSON.stringify(makeDossierJson()))
+    const ctx = createMemoryContext({ llm })
+    const agent = createScriptAgent()
+
+    await driveScriptAgent(agent, ctx, { scriptText: 'idea' }, [
+      { selected: ['short-video-30s'] },
+      { selected: ['douyin-kuaishou-vertical'] },
+      { selected: ['follow-canvas-style'] },
+      { selected: ['move-audience'] },
+      { selected: ['solo'] },
+      { selected: ['avoid-violence', 'child-safe'] },  // taboos: 2 selected
+      { selected: ['rough-idea'] },
+      { selected: ['default'] },
+    ])
+
+    const sent = spy.mock.calls[0]![0]![0]!.content as string
+    expect(sent).toContain('避免暴力；适合儿童')
+  })
+
+  it('records 无 when no taboo is selected', async () => {
+    const { llm, spy } = mockLLM(JSON.stringify(makeDossierJson()))
+    const ctx = createMemoryContext({ llm })
+    const agent = createScriptAgent()
+
+    await driveScriptAgent(agent, ctx, { scriptText: 'idea' }, [
+      { selected: ['short-video-30s'] },
+      { selected: ['douyin-kuaishou-vertical'] },
+      { selected: ['follow-canvas-style'] },
+      { selected: ['move-audience'] },
+      { selected: ['solo'] },
+      { selected: [] },  // no taboo selected
+      { selected: ['rough-idea'] },
+      { selected: ['default'] },
+    ])
+
+    const sent = spy.mock.calls[0]![0]![0]!.content as string
+    expect(sent).toContain('内容禁忌: 无')
   })
 
   it('throws a helpful error if a sub-agent is chosen but not wired', async () => {
     const { llm } = mockLLM('')
     const ctx = createMemoryContext({ llm })
-    const agent = createScriptAgent() // no deps.subAgents
+    const agent = createScriptAgent()
 
     await expect(
       driveScriptAgent(agent, ctx, { scriptText: 'idea' }, [
-        answers.shapeRoughIdea,
-        answers.flowFrameworkQa,
-        answers.toneDrama,
+        { selected: ['short-video-30s'] },
+        { selected: ['douyin-kuaishou-vertical'] },
+        { selected: ['follow-canvas-style'] },
+        { selected: ['move-audience'] },
+        { selected: ['solo'] },
+        { selected: [] },
+        { selected: ['rough-idea'] },
+        { selected: ['framework-qa'] },  // sub-agent not wired
       ]),
     ).rejects.toThrow(/sub-agent "framework-qa" is not wired/)
   })
 
-  it('delegates to a wired sub-agent and bubbles its result', async () => {
+  it('delegates to a wired sub-agent and bubbles its result with full answers', async () => {
     const subDossier = makeDossierJson()
     const subSpy = vi.fn()
 
     const writingExpansion = {
       run: async function* (
-        req: { scriptText: string; tone: string; inputShape: ScriptInputShape },
+        req: { scriptText: string; answers: ScriptInterviewAnswers },
       ) {
         subSpy(req)
         yield { type: 'result' as const, payload: subDossier }
       },
     }
 
-    const { llm } = mockLLM('') // LLM should not be called when delegating
+    const { llm } = mockLLM('')
     const ctx = createMemoryContext({ llm })
     const agent = createScriptAgent({
       subAgents: { 'writing-expansion': writingExpansion },
     })
 
     const result = await driveScriptAgent(agent, ctx, { scriptText: 'draft' }, [
-      answers.shapeDraft,
-      answers.flowWritingExpansion,
-      answers.toneDrama,
+      { selected: ['feature-film'] },
+      { selected: ['cinema'] },
+      { selected: ['liveaction-film'] },
+      { selected: ['move-audience'] },
+      { selected: ['small-ensemble'] },
+      { selected: [] },
+      { selected: ['complete-draft'] },
+      { selected: ['writing-expansion'] },
     ])
 
     expect(result).toEqual(subDossier)
-    expect(subSpy).toHaveBeenCalledWith({
-      scriptText: 'draft',
-      tone: 'drama',
-      inputShape: 'complete-draft',
-    })
+    expect(subSpy).toHaveBeenCalledTimes(1)
+    const call = subSpy.mock.calls[0]![0]
+    expect(call.scriptText).toBe('draft')
+    expect(call.answers.projectType).toBe('feature-film')
+    expect(call.answers.platformAudience).toBe('cinema')
+    expect(call.answers.subAgent).toBe('writing-expansion')
     // Persistence still happens on the bubbled-up dossier.
     expect(ctx.project.characters.list()).toHaveLength(1)
   })
@@ -206,25 +299,17 @@ describe('script-agent', () => {
     const { llm } = mockLLM('not json at all')
     const ctx = createMemoryContext({ llm })
     const agent = createScriptAgent()
-    await expect(
-      driveScriptAgent(agent, ctx, { scriptText: 'idea' }, [
-        answers.shapeRoughIdea,
-        answers.flowDefault,
-        answers.toneDrama,
-      ]),
-    ).rejects.toThrow(/parseable JSON object/)
+    await expect(driveAuto(agent.run({ scriptText: 'idea' }, ctx))).rejects.toThrow(
+      /parseable JSON object/,
+    )
   })
 
   it('throws when the JSON does not match the dossier schema', async () => {
     const { llm } = mockLLM('{"casting_cards": "not an array"}')
     const ctx = createMemoryContext({ llm })
     const agent = createScriptAgent()
-    await expect(
-      driveScriptAgent(agent, ctx, { scriptText: 'idea' }, [
-        answers.shapeRoughIdea,
-        answers.flowDefault,
-        answers.toneDrama,
-      ]),
-    ).rejects.toThrow(/failed validation/)
+    await expect(driveAuto(agent.run({ scriptText: 'idea' }, ctx))).rejects.toThrow(
+      /failed validation/,
+    )
   })
 })

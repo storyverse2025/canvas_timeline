@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { ChatMessage } from './ChatMessage'
 import { SkillProgress } from './SkillProgress'
+import { InterviewCard } from './InterviewCard'
 import { QuickActions } from './QuickActions'
 import { useChatStore } from '@/stores/chat-store'
 import { useAssetStore } from '@/stores/asset-store'
@@ -91,6 +92,8 @@ export function ChatPanel() {
   const messages = useChatStore((s) => s.messages)
   const isLoading = useChatStore((s) => s.isLoading)
   const skillProgress = useChatStore((s) => s.skillProgress)
+  const pendingQuestion = useChatStore((s) => s.pendingQuestion)
+  const answerQuestion = useChatStore((s) => s.answerQuestion)
   const addMessage = useChatStore((s) => s.addMessage)
   const updateMessage = useChatStore((s) => s.updateMessage)
   const setIsLoading = useChatStore((s) => s.setIsLoading)
@@ -344,6 +347,13 @@ export function ChatPanel() {
           {messages.map((msg) => (
             <ChatMessage key={msg.id} message={msg} />
           ))}
+          {pendingQuestion && (
+            <InterviewCard
+              question={pendingQuestion.question}
+              askedBy={pendingQuestion.agentLabel}
+              onSubmit={(answer) => answerQuestion(pendingQuestion.id, answer)}
+            />
+          )}
           {isLoading && (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Loader2 className="w-3 h-3 animate-spin" />

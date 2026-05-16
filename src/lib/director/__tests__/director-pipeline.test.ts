@@ -269,21 +269,21 @@ describe('Director Pipeline — Server Skill Files', () => {
     expect(expandPrompt).toContain('只输出 JSON')
   })
 
-  it('character material prompt enforces the required three-view CG system prompt', () => {
-    const prompt = fillPrompt('characterImageGen', {
-      characterDescription: '女主角，黑色短发，银色战术外套',
-      artStyle: 'cinematic',
-    })
-    expect(prompt).toContain('Sony Venice camera')
-    expect(prompt).toContain('Panavision C-series lenses')
-    expect(prompt).toContain('24mm focal length')
-    expect(prompt).toContain('f/1.4 aperture')
-    expect(prompt).toContain('Final Fantasy CG game style')
-    expect(prompt).toContain('top 1/3')
-    expect(prompt).toContain('lower 2/3')
-    expect(prompt).toContain('three-view')
-    expect(prompt).toContain('front view, side view, back view')
-    expect(prompt).toContain('no head visible')
-    expect(prompt).toContain('pure white background')
+  it('character material prompt enforces the required three-view CG system prompt', async () => {
+    // characterImageGen was migrated to art-director-agent/prompts/character-image.md.
+    const promptSource = (
+      await import('@/lib/agents/art-director-agent/prompts/character-image.md?raw')
+    ).default
+    expect(promptSource).toContain('Sony Venice camera')
+    expect(promptSource).toContain('Panavision C-series lenses')
+    expect(promptSource).toContain('24mm focal length')
+    expect(promptSource).toContain('f/1.4 aperture')
+    expect(promptSource).toContain('Final Fantasy CG game style')
+    expect(promptSource).toContain('top 1/3')
+    expect(promptSource).toContain('lower 2/3')
+    expect(promptSource).toContain('three-view')
+    expect(promptSource).toContain('front view, side view, back view')
+    expect(promptSource).toContain('no head visible')
+    expect(promptSource).toContain('pure white background')
   })
 })

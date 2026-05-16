@@ -10,7 +10,11 @@ import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { ensureElements, extractElementsFromScript, buildElementContext, type ExtractionResult } from '@/lib/canvas-elements'
 import { fillPrompt } from '@/lib/prompts'
 import { scriptAgent } from '@/lib/agents/script-agent'
-import { driveAuto } from '@/lib/agents/_shared/runtime/runner'
+import {
+  critiqueComposition as artDirectorCritique,
+  generateStyleBible,
+} from '@/lib/agents/art-director-agent'
+import { runAgentWithChatBridge } from '@/lib/agents/chat-bridge'
 import { createMemoryContext } from '@/lib/agents/_shared/context/memory'
 import { createCapabilityLLM } from '@/lib/agents/_shared/llm/capability'
 
@@ -107,6 +111,10 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
     .filter((it) => it.kind === 'text' && it.content)
     .map((it) => `[${it.name}]: ${it.content}`)
     .join('\n\n')
+  const totalDurationSeconds = db.script.totalDurationSeconds
+  if (!totalDurationSeconds || totalDurationSeconds <= 0) {
+    throw new Error('director pipeline: 必须先在导演助手输入总时长 (script.totalDurationSeconds)')
+  }
   const artDir = db.artDirection
   const artStyle = artDir.customStyle || artDir.stylePreset
   const canvasCtx = buildCanvasContext()
@@ -126,11 +134,13 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
     llm: createCapabilityLLM(),
     snapshot: { style: { presetId: artDir.stylePreset, promptText: artStyle } },
   })
-  const dossier = await driveAuto(
+  const dossier = await runAgentWithChatBridge(
+    'script-agent',
     scriptAgent.run(
-      { scriptText, canvasContext: canvasCtx, existingStoryboard },
+      { scriptText, canvasContext: canvasCtx, existingStoryboard, totalDurationSeconds },
       agentCtx,
     ),
+    { verb: 'expand-script', interactive: true },
   )
   const scriptToCastingReport = JSON.stringify(dossier, null, 2)
   setStep(state, 0, 0, 'done', '已按 script-framework-qa 完成七层框架校准'); onUpdate(state)
@@ -154,20 +164,26 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   const elementCtx = buildElementContext(inv)
   setStep(state, 0, 5, 'done', `${inv.characters.length} 角色, ${inv.scenes.length} 场景`); onUpdate(state)
 
-  // Step 7: 视觉锚定提取
+  // Step 7-8: 视觉锚定提取 + 全局视觉策略 — routed through art-director-agent's
+  // generateStyleBible verb. The pipeline still surfaces two steps to the UI
+  // (anchor / strategy) for continuity, but they're both populated from the
+  // single bible call.
   setStep(state, 0, 6, 'running'); onUpdate(state)
-  const visualAnchor = await aiCall(fillPrompt('visualAnchor', {
-    scriptAnalysis, characterDesigns, sceneDesigns, elementContext: elementCtx,
-  }))
+  const styleBible = await runAgentWithChatBridge(
+    'art-director-agent',
+    generateStyleBible({
+      scriptAnalysis,
+      characterDesigns,
+      sceneDesigns,
+      elementContext: elementCtx,
+      artStyle,
+      stylePreset: artDir.stylePreset,
+    }, agentCtx),
+    { verb: 'style-bible' },
+  )
+  const visualAnchor = styleBible.anchor
+  const visualStrategy = styleBible.strategy
   setStep(state, 0, 6, 'done', visualAnchor); onUpdate(state)
-
-  // Step 8: 全局视觉策略
-  setStep(state, 0, 7, 'running'); onUpdate(state)
-  const visualStrategy = await aiCall(fillPrompt('visualStrategy', {
-    artStyle, stylePreset: artDir.stylePreset,
-    scriptAnalysis: scriptAnalysis.slice(0, 500),
-    visualAnchor: visualAnchor.slice(0, 500),
-  }))
   setStep(state, 0, 7, 'done', visualStrategy); onUpdate(state)
 
   // Step 9: 镜头分配计划
@@ -190,6 +206,7 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   setStep(state, 0, 10, 'running'); onUpdate(state)
   const storyboardJson = await aiCall(fillPrompt('storyboardGeneration', {
     artStyle,
+    totalDurationSeconds: String(totalDurationSeconds),
     characterDesigns: characterDesigns.slice(0, 800),
     sceneDesigns: sceneDesigns.slice(0, 800),
     propDesigns: propDesigns.slice(0, 400),
@@ -198,9 +215,60 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
     visualStrategy: visualStrategy.slice(0, 400),
     elementContext: elementCtx,
   }))
+  for (const issue of collectDurationIssues(storyboardJson, totalDurationSeconds)) {
+    state.issues.push(issue)
+  }
   setStep(state, 0, 10, 'done', storyboardJson); onUpdate(state)
 
   return storyboardJson
+}
+
+/** Per-row bounds enforced by both the prompts and post-validation. */
+export const MIN_ROW_DURATION_SECONDS = 2
+export const MAX_ROW_DURATION_SECONDS = 15
+
+/**
+ * Audit the generated storyboard JSON against the duration contract:
+ *   - every row's duration ∈ [MIN, MAX]
+ *   - sum of durations ≈ expectedTotal (±0.5s)
+ *
+ * Returns one issue line per violation, ready to push onto state.issues so
+ * runFix can request a re-balance. Empty array when the storyboard is clean.
+ */
+export function collectDurationIssues(storyboardJson: string, expectedTotal: number): string[] {
+  let parsed: unknown
+  try {
+    const m = storyboardJson.match(/\[[\s\S]*\]/)
+    if (!m) return []
+    parsed = JSON.parse(m[0])
+  } catch {
+    return []
+  }
+  if (!Array.isArray(parsed)) return []
+  const rows = parsed as Array<{ duration?: number; shot_number?: string }>
+  const issues: string[] = []
+
+  for (const row of rows) {
+    const d = typeof row.duration === 'number' ? row.duration : NaN
+    const shot = row.shot_number ?? '?'
+    if (!Number.isFinite(d)) {
+      issues.push(`${shot}: duration 缺失或非数字 → 补齐 duration，必须 ∈ [${MIN_ROW_DURATION_SECONDS}, ${MAX_ROW_DURATION_SECONDS}] 秒`)
+      continue
+    }
+    if (d < MIN_ROW_DURATION_SECONDS) {
+      issues.push(`${shot}: duration ${d}s 过短 (<${MIN_ROW_DURATION_SECONDS}s) → 与相邻行合并`)
+    } else if (d > MAX_ROW_DURATION_SECONDS) {
+      issues.push(`${shot}: duration ${d}s 过长 (>${MAX_ROW_DURATION_SECONDS}s) → 拆分为多行，每行仍 ∈ [${MIN_ROW_DURATION_SECONDS}, ${MAX_ROW_DURATION_SECONDS}] 秒`)
+    }
+  }
+
+  const sum = rows.reduce((acc, r) => acc + (typeof r.duration === 'number' ? r.duration : 0), 0)
+  const drift = Math.abs(sum - expectedTotal)
+  if (drift > 0.5) {
+    issues.push(`ALL: 分镜总时长 ${sum.toFixed(1)}s 与目标 ${expectedTotal}s 偏差 ${drift.toFixed(1)}s → 重新分配每行 duration 使总和等于 ${expectedTotal}s`)
+  }
+
+  return issues
 }
 
 // ─── Stage 2: 自检 ──────────────────────────────────────────────────
@@ -210,20 +278,32 @@ async function runSelfCheck(state: PipelineState, storyboardJson: string, onUpda
   const timelineCheck = await aiCall(fillPrompt('timelineCheck', { storyboardJson: storyboardJson.slice(0, 3000) }))
   setStep(state, 1, 0, 'done', timelineCheck); onUpdate(state)
 
+  // Visual balance check is now routed through art-director-agent.critiqueComposition
+  // which returns typed CompositionIssue[] directly — no more regex JSON parsing.
   setStep(state, 1, 1, 'running'); onUpdate(state)
-  const visualCheck = await aiCall(fillPrompt('visualBalanceCheck', { storyboardJson: storyboardJson.slice(0, 3000) }))
+  const agentCtx = createMemoryContext({ llm: createCapabilityLLM() })
+  const compositionIssues = await runAgentWithChatBridge(
+    'art-director-agent',
+    artDirectorCritique({ storyboardJson }, agentCtx),
+    { verb: 'critique-composition' },
+  )
+  const visualCheck = JSON.stringify(compositionIssues, null, 2)
   setStep(state, 1, 1, 'done', visualCheck); onUpdate(state)
 
   const issues: string[] = []
-  for (const checkResult of [timelineCheck, visualCheck]) {
-    try {
-      const m = checkResult.match(/\[[\s\S]*\]/)
-      if (m) {
-        const arr = JSON.parse(m[0]) as { shot: string; issue: string; fix: string }[]
-        for (const a of arr) issues.push(`${a.shot}: ${a.issue} → ${a.fix}`)
-      }
-    } catch { /* no valid JSON */ }
+  // Timeline check still uses the raw-text → regex path.
+  try {
+    const m = timelineCheck.match(/\[[\s\S]*\]/)
+    if (m) {
+      const arr = JSON.parse(m[0]) as { shot: string; issue: string; fix: string }[]
+      for (const a of arr) issues.push(`${a.shot}: ${a.issue} → ${a.fix}`)
+    }
+  } catch { /* no valid JSON */ }
+  // Composition issues come pre-parsed from the agent.
+  for (const a of compositionIssues) {
+    issues.push(`${a.shot}: ${a.issue} → ${a.fix}`)
   }
+
   state.issues = issues
   onUpdate(state)
   return issues
@@ -232,6 +312,8 @@ async function runSelfCheck(state: PipelineState, storyboardJson: string, onUpda
 // ─── Stage 3: 修复 ──────────────────────────────────────────────────
 
 async function runFix(state: PipelineState, storyboardJson: string, issues: string[], onUpdate: OnUpdate): Promise<string> {
+  const { useProjectDB } = await import('@/stores/project-db')
+  const totalDurationSeconds = useProjectDB.getState().script.totalDurationSeconds
   if (issues.length === 0) {
     setStep(state, 2, 0, 'done', '无需修复')
     setStep(state, 2, 1, 'done', '使用优化结果作为最终结果')
@@ -243,6 +325,7 @@ async function runFix(state: PipelineState, storyboardJson: string, issues: stri
   const fixResult = await aiCall(fillPrompt('applyFixes', {
     issuesList: issues.map((i, idx) => `${idx + 1}. ${i}`).join('\n'),
     storyboardJson: storyboardJson.slice(0, 3000),
+    totalDurationSeconds: String(totalDurationSeconds || 0),
   }))
   state.fixes = issues.map((i) => `已修复: ${i}`)
   setStep(state, 2, 0, 'done', `已修复 ${issues.length} 个问题`); onUpdate(state)

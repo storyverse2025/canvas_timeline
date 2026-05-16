@@ -97,6 +97,87 @@ export const ScriptInputShapeSchema = z.enum([
 ])
 export type ScriptInputShape = z.infer<typeof ScriptInputShapeSchema>
 
+/**
+ * Interview answers collected by the script-agent before the LLM call.
+ * Mirrors the 8-step clarification checklist from
+ * .claude/skills/ai-script-creation-skill/SKILL.md.
+ */
+
+export const ProjectTypeSchema = z.enum([
+  'short-video-30s',
+  'short-video-60s',
+  'ai-comic-series',
+  'short-drama-episode',
+  'mv',
+  'commercial',
+  'educational',
+  'feature-film',
+  'other',
+])
+export type ProjectType = z.infer<typeof ProjectTypeSchema>
+
+export const PlatformAudienceSchema = z.enum([
+  'douyin-kuaishou-vertical',
+  'bilibili',
+  'youtube',
+  'wechat-video',
+  'cinema',
+  'tv',
+  'cross-platform',
+])
+export type PlatformAudience = z.infer<typeof PlatformAudienceSchema>
+
+export const VisualStyleSchema = z.enum([
+  'follow-canvas-style',
+  'anime-2d',
+  'liveaction-film',
+  '3d-cg',
+  'comic-book',
+  'painterly',
+  'other',
+])
+export type VisualStyle = z.infer<typeof VisualStyleSchema>
+
+export const StoryGoalSchema = z.enum([
+  'move-audience',
+  'comedy-relief',
+  'suspense-thriller',
+  'romance-healing',
+  'provoke-thought',
+  'sales-conversion',
+  'teach',
+  'spark-discussion',
+])
+export type StoryGoal = z.infer<typeof StoryGoalSchema>
+
+export const CharacterCountSchema = z.enum([
+  'solo',
+  'duo',
+  'small-ensemble',
+  'large-ensemble',
+])
+export type CharacterCount = z.infer<typeof CharacterCountSchema>
+
+export const TabooSchema = z.enum([
+  'avoid-violence',
+  'avoid-sexual',
+  'avoid-political',
+  'child-safe',
+  'brand-safe',
+])
+export type Taboo = z.infer<typeof TabooSchema>
+
+export interface ScriptInterviewAnswers {
+  projectType: ProjectType
+  platformAudience: PlatformAudience
+  visualStyle: VisualStyle
+  storyGoal: StoryGoal
+  characterCount: CharacterCount
+  taboos: Taboo[]
+  inputShape: ScriptInputShape
+  subAgent: ScriptSubAgent
+}
+
 export interface ScriptRequest {
   /** The user's raw script text (idea, outline, beats, or full draft). */
   scriptText: string
@@ -104,4 +185,8 @@ export interface ScriptRequest {
   canvasContext?: string
   /** Optional existing storyboard block to preserve. */
   existingStoryboard?: string
+  /** Total duration the final storyboard must sum to (seconds). Required by
+   *  the director pipeline; the dossier's duration_or_episode_type and the
+   *  downstream storyboardGeneration prompt both enforce it. */
+  totalDurationSeconds?: number
 }

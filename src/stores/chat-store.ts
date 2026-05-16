@@ -2,12 +2,26 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { v4 as uuid } from 'uuid';
 import type { ChatMessage, AgentAction, SkillProgress } from '@/types/chat';
+import type { Answer, Question } from '@/lib/agents/_shared/runtime/types';
+
+/**
+ * An interview question that an agent has yielded and is waiting on. ChatPanel
+ * renders this slot as an <InterviewCard/>; the user's Submit click resolves
+ * the promise the agent is awaiting.
+ */
+export interface PendingQuestion {
+  id: string;
+  /** Label rendered above the question — usually "<agent>/<verb>". */
+  agentLabel: string;
+  question: Question;
+}
 
 interface ChatState {
   messages: ChatMessage[];
   isLoading: boolean;
   activeSkill: string | null;
   skillProgress: SkillProgress | null;
+  pendingQuestion: PendingQuestion | null;
 }
 
 interface ChatActions {
@@ -17,7 +31,18 @@ interface ChatActions {
   setActiveSkill: (skill: string | null) => void;
   setSkillProgress: (progress: SkillProgress | null) => void;
   clearHistory: () => void;
+  /** Called by agent bridge — returns a Promise that resolves when answerQuestion is called. */
+  presentQuestion: (agentLabel: string, question: Question) => Promise<Answer>;
+  /** Called by InterviewCard.onSubmit. */
+  answerQuestion: (id: string, answer: Answer) => void;
 }
+
+/**
+ * Pending-question resolvers live outside zustand state so the store stays
+ * serializable. Keyed by question id; set when presentQuestion is called,
+ * popped + invoked when answerQuestion fires.
+ */
+const pendingResolvers = new Map<string, (answer: Answer) => void>();
 
 export const useChatStore = create<ChatState & ChatActions>()(
   immer((set) => ({
@@ -32,6 +57,7 @@ export const useChatStore = create<ChatState & ChatActions>()(
     isLoading: false,
     activeSkill: null,
     skillProgress: null,
+    pendingQuestion: null,
 
     addMessage: (role, content, action) => {
       const id = uuid();
@@ -51,8 +77,14 @@ export const useChatStore = create<ChatState & ChatActions>()(
     setIsLoading: (loading) => set({ isLoading: loading }),
     setActiveSkill: (skill) => set({ activeSkill: skill }),
     setSkillProgress: (progress) => set({ skillProgress: progress }),
-    clearHistory: () =>
+    clearHistory: () => {
+      // Reject any in-flight question so the agent doesn't hang forever.
+      for (const resolve of pendingResolvers.values()) {
+        resolve({ selected: [] });
+      }
+      pendingResolvers.clear();
       set({
+        pendingQuestion: null,
         messages: [
           {
             id: 'welcome',
@@ -61,6 +93,28 @@ export const useChatStore = create<ChatState & ChatActions>()(
             timestamp: Date.now(),
           },
         ],
-      }),
+      });
+    },
+
+    presentQuestion: (agentLabel, question) => {
+      const id = uuid();
+      set((state) => {
+        state.pendingQuestion = { id, agentLabel, question };
+      });
+      return new Promise<Answer>((resolve) => {
+        pendingResolvers.set(id, resolve);
+      });
+    },
+
+    answerQuestion: (id, answer) => {
+      const resolve = pendingResolvers.get(id);
+      pendingResolvers.delete(id);
+      set((state) => {
+        // Only clear if this id is still the active one (defensive against
+        // multiple Submit clicks or stale answers).
+        if (state.pendingQuestion?.id === id) state.pendingQuestion = null;
+      });
+      resolve?.(answer);
+    },
   }))
 );
