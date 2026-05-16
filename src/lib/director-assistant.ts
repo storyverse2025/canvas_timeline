@@ -14,7 +14,7 @@ import {
   critiqueComposition as artDirectorCritique,
   generateStyleBible,
 } from '@/lib/agents/art-director-agent'
-import { driveAuto } from '@/lib/agents/_shared/runtime/runner'
+import { runAgentWithChatBridge } from '@/lib/agents/chat-bridge'
 import { createMemoryContext } from '@/lib/agents/_shared/context/memory'
 import { createCapabilityLLM } from '@/lib/agents/_shared/llm/capability'
 
@@ -130,11 +130,13 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
     llm: createCapabilityLLM(),
     snapshot: { style: { presetId: artDir.stylePreset, promptText: artStyle } },
   })
-  const dossier = await driveAuto(
+  const dossier = await runAgentWithChatBridge(
+    'script-agent',
     scriptAgent.run(
       { scriptText, canvasContext: canvasCtx, existingStoryboard },
       agentCtx,
     ),
+    { verb: 'expand-script', interactive: true },
   )
   const scriptToCastingReport = JSON.stringify(dossier, null, 2)
   setStep(state, 0, 0, 'done', '已按 script-framework-qa 完成七层框架校准'); onUpdate(state)
@@ -163,7 +165,8 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   // (anchor / strategy) for continuity, but they're both populated from the
   // single bible call.
   setStep(state, 0, 6, 'running'); onUpdate(state)
-  const styleBible = await driveAuto(
+  const styleBible = await runAgentWithChatBridge(
+    'art-director-agent',
     generateStyleBible({
       scriptAnalysis,
       characterDesigns,
@@ -172,6 +175,7 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
       artStyle,
       stylePreset: artDir.stylePreset,
     }, agentCtx),
+    { verb: 'style-bible' },
   )
   const visualAnchor = styleBible.anchor
   const visualStrategy = styleBible.strategy
@@ -222,8 +226,10 @@ async function runSelfCheck(state: PipelineState, storyboardJson: string, onUpda
   // which returns typed CompositionIssue[] directly — no more regex JSON parsing.
   setStep(state, 1, 1, 'running'); onUpdate(state)
   const agentCtx = createMemoryContext({ llm: createCapabilityLLM() })
-  const compositionIssues = await driveAuto(
+  const compositionIssues = await runAgentWithChatBridge(
+    'art-director-agent',
     artDirectorCritique({ storyboardJson }, agentCtx),
+    { verb: 'critique-composition' },
   )
   const visualCheck = JSON.stringify(compositionIssues, null, 2)
   setStep(state, 1, 1, 'done', visualCheck); onUpdate(state)

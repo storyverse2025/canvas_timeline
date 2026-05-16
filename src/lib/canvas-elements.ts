@@ -5,7 +5,7 @@ import {
   extractElements as artDirectorExtractElements,
   generateAssetImages as artDirectorGenerateAssetImages,
 } from '@/lib/agents/art-director-agent'
-import { driveAuto } from '@/lib/agents/_shared/runtime/runner'
+import { runAgentWithChatBridge } from '@/lib/agents/chat-bridge'
 import { createMemoryContext } from '@/lib/agents/_shared/context/memory'
 import { createCapabilityLLM } from '@/lib/agents/_shared/llm/capability'
 
@@ -152,8 +152,10 @@ export async function extractElementsFromScript(
   artStyle: string,
 ): Promise<ExtractionResult> {
   const ctx = createMemoryContext({ llm: createCapabilityLLM() })
-  const result = await driveAuto(
+  const result = await runAgentWithChatBridge(
+    'art-director-agent',
     artDirectorExtractElements({ scriptAnalysis, artStyle }, ctx),
+    { verb: 'extract-elements' },
   )
   // The legacy types are a subset of the agent's schema — Zod-validated fields
   // map 1:1 onto ExtractedCharacter/ExtractedScene/ExtractedProp.
@@ -258,7 +260,8 @@ export async function ensureElements(
       llm: createCapabilityLLM(),
       log: (m) => onStatus(m),
     })
-    const generated = await driveAuto(
+    const generated = await runAgentWithChatBridge(
+      'art-director-agent',
       artDirectorGenerateAssetImages({
         artStyle,
         extraction: preppedExtraction,
@@ -268,6 +271,7 @@ export async function ensureElements(
           props: 0,
         },
       }, agentCtx),
+      { verb: 'generate-asset-images' },
     )
 
     for (const char of generated.characters) {
