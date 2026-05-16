@@ -130,9 +130,22 @@ export function AssetCanvas() {
   }, [])
 
   const handleConnect = useCallback(
-    (connection: { source: string | null; target: string | null }) => {
+    (connection: {
+      source: string | null
+      target: string | null
+      sourceHandle?: string | null
+      targetHandle?: string | null
+    }) => {
       if (connection.source && connection.target) {
-        storeAddEdge(connection.source, connection.target)
+        // Forward the handles the user actually grabbed so the edge anchors
+        // to the correct side. Falls back to the addEdge defaults (r/l) when
+        // the handles aren't named on the source/target node.
+        storeAddEdge(
+          connection.source,
+          connection.target,
+          connection.sourceHandle ?? undefined,
+          connection.targetHandle ?? undefined,
+        )
       }
     },
     [storeAddEdge]
