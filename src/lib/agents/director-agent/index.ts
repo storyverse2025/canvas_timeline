@@ -286,8 +286,7 @@ function buildKeyframePrompt(req: GenerateKeyframeRequest): string {
   const visualStyle = req.visualStyle ?? '冷调写实电影质感 / cold-toned filmic'
 
   const characters = req.characters ?? []
-  const character1 = characters[0]
-  const character2 = characters[1]
+  const hasCharacters = characters.length > 0
 
   // Walk the same flattened order as collectOrderedRefs so the "see image N"
   // hints stay aligned with the actual image inputs.
@@ -300,18 +299,26 @@ function buildKeyframePrompt(req: GenerateKeyframeRequest): string {
     imageIndexByRole.set(baseRole, arr)
   })
 
-  const characterColumnLines = characters.length === 0
-    ? ['- (No character sheets supplied — render generic neutral character holders.)']
-    : characters.slice(0, 2).map((c, i) => {
-        const desc = c.description ? ` — ${c.description}` : ''
-        const indices = imageIndexByRole.get(`Character — ${c.name}`) ?? []
-        const ref = indices.length === 0
-          ? ''
-          : indices.length === 1
-            ? ` (see image${indices[0]} for canonical look)`
-            : ` (see images ${indices.join(', ')} for canonical look — multiple views supplied)`
-        return `- Character ${i + 1}: ${c.name}${desc}${ref}`
-      })
+  // Character module is dynamic per row:
+  //   0 → skip the module entirely (the row is a landscape / object / SFX shot)
+  //   1 → "Single-character design column"
+  //   2 → "Dual protagonist character design column"
+  //   3+ → "Ensemble character design column"
+  const characterCountLabel = characters.length === 1
+    ? 'Single-character'
+    : characters.length === 2
+      ? 'Dual protagonist'
+      : `${characters.length}-character ensemble`
+  const characterColumnLines = characters.map((c, i) => {
+    const desc = c.description ? ` — ${c.description}` : ''
+    const indices = imageIndexByRole.get(`Character — ${c.name}`) ?? []
+    const ref = indices.length === 0
+      ? ''
+      : indices.length === 1
+        ? ` (see image${indices[0]} for canonical look)`
+        : ` (see images ${indices.join(', ')} for canonical look — multiple views supplied)`
+    return `- Character ${i + 1}: ${c.name}${desc}${ref}`
+  })
 
   const sceneDesc = req.scene
     ? `${req.scene.name ? `${req.scene.name} — ` : ''}${req.scene.description ?? ''}`.trim() || '(scene description from row)'
@@ -321,6 +328,11 @@ function buildKeyframePrompt(req: GenerateKeyframeRequest): string {
   const legendLines = refs.map((ref, i) =>
     `- image${i + 1} = ${ref.role}${ref.description ? ` (${ref.description})` : ''}`,
   )
+
+  // Renumber modules when the character module is dropped so the LLM doesn't
+  // see "1, 3, 4, 5, 6" — the layout reads as a 5-module sheet instead.
+  let modIdx = 0
+  const next = () => ++modIdx
 
   return [
     `# Hollywood industrial-standard visual development board, 4K ultra-high definition, professional film pre-production layout.`,
@@ -333,39 +345,46 @@ function buildKeyframePrompt(req: GenerateKeyframeRequest): string {
     `- Visual style: ${visualStyle}`,
     `- Aspect ratio: ${aspect}`,
     ``,
-    `## Layout (6 modules, professional film production layout)`,
+    `## Layout (${hasCharacters ? '6' : '5'} modules, professional film production layout)`,
     ``,
-    `### 1. TOP — Project info bar`,
+    `### ${next()}. TOP — Project info bar`,
     `Print "${title}" along with duration ${req.shotDurationSeconds}s, type ${projectType}, tonality ${tone}.`,
     ``,
-    `### 2. TOP-LEFT — Dual protagonist character design column`,
-    ...characterColumnLines,
-    `Render front view, side view, back view three-view PLUS a face close-up for each character.`,
-    `**100% consistent character design across views — no facial drift, no clothing drift, no breaks.**`,
-    character1 || character2
-      ? `Match the canonical look from the supplied reference image(s).`
-      : '',
-    ``,
-    `### 3. TOP-RIGHT — Core scene concept art`,
+    // Character module — only when the row actually has character refs.
+    ...(hasCharacters
+      ? [
+          `### ${next()}. TOP-LEFT — ${characterCountLabel} character design column`,
+          ...characterColumnLines,
+          `Render front view, side view, back view three-view PLUS a face close-up for each character.`,
+          `**100% consistent character design across views — no facial drift, no clothing drift, no breaks.**`,
+          `Match the canonical look from the supplied reference image(s).`,
+          ``,
+        ]
+      : [
+          `### ${next()}. NOTE — No character design column`,
+          `This row has no character refs (a landscape / object-focus / SFX shot). Do NOT render any character figures, three-views, or face close-ups. The space that would normally hold the character column is reallocated to the scene concept art module.`,
+          ``,
+        ]),
+    `### ${next()}. ${hasCharacters ? 'TOP-RIGHT' : 'TOP (wide)'} — Core scene concept art`,
     `Scene: ${sceneDesc}.`,
     `Lighting / atmosphere: ${r.lighting_atmosphere || r.emotion_atmosphere || '(infer from emotion)'}.`,
     ``,
-    `### 4. MIDDLE — 3-shot storyboard sequence`,
+    `### ${next()}. MIDDLE — 3-shot storyboard sequence`,
     `Render a 3-panel sequence covering this shot's action arc.`,
     `Storyboard guidance: ${r.storyboard_prompts || r.visual_description || '(use the visual_description)'}.`,
     `Each panel must annotate: camera angle, lens (focal length), shot size (${r.shot_size || '中景/Medium'}), and the key beat.`,
     `Include arrow diagrams for camera movement (pan / tilt / dolly / push-in) connecting the panels.`,
     ``,
-    `### 5. BOTTOM — Professional technical parameters`,
+    `### ${next()}. BOTTOM — Professional technical parameters`,
     `- Camera movement flowchart (arrow diagram across the sequence).`,
     `- Lighting atmosphere: ${r.lighting_atmosphere || '(infer from scene)'}.`,
     `- Color palette: 3-5 swatches consistent with ${visualStyle}.`,
     `- Cinematography lens parameters: shot size ${r.shot_size || '中景'}, focal length, aperture (motivated by emotion).`,
-    r.character_motivation ? `- Character motivation: ${r.character_motivation}.` : '',
-    r.character_psychology ? `- Inner psychology: ${r.character_psychology}.` : '',
-    r.performance_guidance ? `- Performance guidance: ${r.performance_guidance}.` : '',
+    hasCharacters && r.character_motivation ? `- Character motivation: ${r.character_motivation}.` : '',
+    hasCharacters && r.character_psychology ? `- Inner psychology: ${r.character_psychology}.` : '',
+    hasCharacters && r.performance_guidance ? `- Performance guidance: ${r.performance_guidance}.` : '',
     ``,
-    `### 6. QUALITY REQUIREMENTS`,
+    `### ${next()}. QUALITY REQUIREMENTS`,
     `- 4K ultra-high definition`,
     `- ${visualStyle}`,
     `- ULTRA-DETAILED, PROFESSIONAL FILM PRODUCTION LAYOUT`,

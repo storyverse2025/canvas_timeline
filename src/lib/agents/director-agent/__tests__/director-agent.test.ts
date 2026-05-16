@@ -182,7 +182,8 @@ describe('generateKeyframe (Hollywood 6-module visual development board)', () =>
     // Header / module banner.
     expect(prompt).toContain('Hollywood industrial-standard visual development board')
     expect(prompt).toContain('4K ultra-high definition')
-    // 6 modules titled by number.
+    // 6 modules titled by number (Dual protagonist with 2 characters supplied).
+    expect(prompt).toContain('Layout (6 modules')
     expect(prompt).toMatch(/### 1\. TOP — Project info bar/)
     expect(prompt).toMatch(/### 2\. TOP-LEFT — Dual protagonist character design column/)
     expect(prompt).toMatch(/### 3\. TOP-RIGHT — Core scene concept art/)
@@ -211,13 +212,55 @@ describe('generateKeyframe (Hollywood 6-module visual development board)', () =>
     expect(prompt).toContain('SEEDANCE 2.0 video generation pipeline')
   })
 
-  it('renders gracefully when no character / scene refs are supplied', () => {
+  it('drops the character module entirely when no character refs are supplied (landscape / object shot)', () => {
     const prompt = buildKeyframePrompt({
-      row: { storyboard_prompts: 'rooftop' },
+      row: { storyboard_prompts: 'wide rooftop establishing shot' },
       shotDurationSeconds: 5,
+      scene: { name: 'Rooftop', description: 'wet concrete + neon' },
     })
-    expect(prompt).toContain('No character sheets supplied')
+    // Layout now declares 5 modules instead of 6.
+    expect(prompt).toContain('Layout (5 modules')
+    // The character module heading is replaced with an explicit NOTE.
+    expect(prompt).not.toMatch(/TOP-LEFT — .* character design column/)
+    expect(prompt).toContain('NOTE — No character design column')
+    expect(prompt).toContain('Do NOT render any character figures')
+    // Scene module moves to TOP (wide) since no character column.
+    expect(prompt).toMatch(/TOP \(wide\) — Core scene concept art/)
+    // No "see imageN" character hints, no character_motivation in tech params.
+    expect(prompt).not.toContain('Character 1:')
     expect(prompt).not.toContain('image1 =')
+  })
+
+  it('labels the character module per actual count (1 / 2 / 3+)', () => {
+    const solo = buildKeyframePrompt({
+      row: { storyboard_prompts: 'p' },
+      shotDurationSeconds: 5,
+      characters: [{ name: 'Alice' }],
+    })
+    expect(solo).toContain('TOP-LEFT — Single-character character design column')
+
+    const duo = buildKeyframePrompt({
+      row: { storyboard_prompts: 'p' },
+      shotDurationSeconds: 5,
+      characters: [{ name: 'Alice' }, { name: 'Bob' }],
+    })
+    expect(duo).toContain('TOP-LEFT — Dual protagonist character design column')
+
+    const trio = buildKeyframePrompt({
+      row: { storyboard_prompts: 'p' },
+      shotDurationSeconds: 5,
+      characters: [{ name: 'A' }, { name: 'B' }, { name: 'C' }],
+    })
+    expect(trio).toContain('TOP-LEFT — 3-character ensemble character design column')
+
+    const ensemble = buildKeyframePrompt({
+      row: { storyboard_prompts: 'p' },
+      shotDurationSeconds: 5,
+      characters: [{ name: 'A' }, { name: 'B' }, { name: 'C' }, { name: 'D' }, { name: 'E' }],
+    })
+    expect(ensemble).toContain('TOP-LEFT — 5-character ensemble character design column')
+    // Every character gets its own design line — no slicing to first 2.
+    expect(ensemble).toContain('Character 5: E')
   })
 
   it('throws when row lacks both storyboard_prompts and visual_description', async () => {
