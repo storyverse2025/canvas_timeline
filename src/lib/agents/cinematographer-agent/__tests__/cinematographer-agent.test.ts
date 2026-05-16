@@ -74,20 +74,41 @@ describe('pure helpers', () => {
     expect(desc).toContain('medium close-up shot')
   })
 
-  it('buildImageLegend numbers refs in stable order', () => {
-    const legend = buildImageLegend([
-      { role: 'Keyframe', imageUrl: 'https://k.png' },
-      { role: '角色1', description: 'Alice', imageUrl: 'https://a.png' },
+  it('buildImageLegend lists ONLY the keyframe (omni-reference / 全能参考 mode)', () => {
+    const legend = buildImageLegend('https://k.png')
+    expect(legend).toContain('omni-reference / 全能参考')
+    expect(legend).toContain('image1 / @图片1 = Keyframe')
+    // Character / scene / prop are NOT in the legend — they go into the
+    // motion text via buildContextRefLine instead.
+    expect(legend).not.toContain('image2')
+    expect(legend).not.toContain('角色1')
+  })
+})
+
+describe('buildContextRefLine', () => {
+  it('bakes character/scene/prop names into a "Featuring / 出场" line for the motion text', async () => {
+    const { buildContextRefLine } = await import('@/lib/agents/cinematographer-agent')
+    const line = buildContextRefLine([
+      { role: '角色1', description: 'Alice, grey trench' },
+      { role: '场景', description: 'rainy rooftop' },
     ])
-    expect(legend).toContain('image1 = Keyframe')
-    expect(legend).toContain('image2 = 角色1 (Alice)')
+    expect(line).toContain('Featuring / 出场:')
+    expect(line).toContain('角色1 (Alice, grey trench)')
+    expect(line).toContain('场景 (rainy rooftop)')
+    // No image URLs leak in — context refs are text-only.
+    expect(line).not.toContain('http')
+  })
+
+  it('returns empty when no context refs supplied', async () => {
+    const { buildContextRefLine } = await import('@/lib/agents/cinematographer-agent')
+    expect(buildContextRefLine([])).toBe('')
   })
 })
 
 describe('shoot', () => {
   beforeEach(() => mockedRunCapability.mockReset())
 
-  it('routes Seedance 2.0 with provider + model + duration + aspect params', async () => {
+  it('routes Seedance 2.0 in omni-reference mode (single image input = keyframe only)', async () => {
     mockedRunCapability.mockResolvedValue({ outputs: [{ kind: 'video', url: 'https://video.mp4' }] })
     const ctx = createMemoryContext({ llm: { complete: async () => '' } })
 
@@ -95,7 +116,11 @@ describe('shoot', () => {
       shoot(
         {
           row: { shot_number: 'S1', duration: 8, motion_prompts: 'push in' },
-          refs: [{ role: 'Keyframe', imageUrl: 'https://k.png' }],
+          keyframeUrl: 'https://k.png',
+          contextRefs: [
+            { role: '角色1', description: 'Alice' },
+            { role: '场景', description: 'rooftop' },
+          ],
         },
         ctx,
       ),
@@ -103,7 +128,8 @@ describe('shoot', () => {
 
     expect(result.url).toBe('https://video.mp4')
     expect(result.durationSeconds).toBe(8)
-    expect(result.refs).toHaveLength(1)
+    expect(result.keyframeUrl).toBe('https://k.png')
+    expect(result.contextRefs).toHaveLength(2)
     expect(result.prompt).toContain('push in')
 
     const call = mockedRunCapability.mock.calls[0]![0]
@@ -112,7 +138,9 @@ describe('shoot', () => {
     expect(call.params?.model).toBe('doubao-seedance-2-0-fast-260128')
     expect(call.params?.duration).toBe('8')
     expect(call.params?.aspect).toBe('16:9')
-    // 1 text + 1 image ref.
+    expect(call.params?.reference_mode).toBe('omni')
+    // Exactly 1 text + 1 image (the keyframe). Context refs do NOT land
+    // as additional image inputs.
     expect(call.inputs).toHaveLength(2)
     expect(call.inputs[1]).toEqual({ kind: 'image', url: 'https://k.png' })
   })
@@ -121,7 +149,7 @@ describe('shoot', () => {
     mockedRunCapability.mockResolvedValue({ outputs: [{ kind: 'video', url: 'u' }] })
     const ctx = createMemoryContext({ llm: { complete: async () => '' } })
     const r = await driveAuto(
-      shoot({ row: { duration: 2, motion_prompts: 'p' }, refs: [] }, ctx),
+      shoot({ row: { duration: 2, motion_prompts: 'p' }, keyframeUrl: 'https://k.png' }, ctx),
     )
     expect(r.durationSeconds).toBe(5)
     expect(mockedRunCapability.mock.calls[0]![0].params?.duration).toBe('5')
@@ -131,7 +159,7 @@ describe('shoot', () => {
     mockedRunCapability.mockResolvedValue({ outputs: [{ kind: 'video', url: 'u' }] })
     const ctx = createMemoryContext({ llm: { complete: async () => '' } })
     const r = await driveAuto(
-      shoot({ row: { duration: 30, motion_prompts: 'p' }, refs: [] }, ctx),
+      shoot({ row: { duration: 30, motion_prompts: 'p' }, keyframeUrl: 'https://k.png' }, ctx),
     )
     expect(r.durationSeconds).toBe(15)
   })
@@ -140,7 +168,7 @@ describe('shoot', () => {
     mockedRunCapability.mockResolvedValue({ outputs: [{ kind: 'video', url: 'u' }] })
     const ctx = createMemoryContext({ llm: { complete: async () => '' } })
     const r = await driveAuto(
-      shoot({ row: { duration: 8, motion_prompts: 'p' }, refs: [], durationSecondsOverride: 12 }, ctx),
+      shoot({ row: { duration: 8, motion_prompts: 'p' }, keyframeUrl: 'https://k.png', durationSecondsOverride: 12 }, ctx),
     )
     expect(r.durationSeconds).toBe(12)
   })
@@ -149,36 +177,60 @@ describe('shoot', () => {
     mockedRunCapability.mockResolvedValue({ outputs: [{ kind: 'video', url: 'u' }] })
     const ctx = createMemoryContext({ llm: { complete: async () => '' } })
     await driveAuto(
-      shoot({ row: { motion_prompts: 'p' }, refs: [], aspect: '9:16' }, ctx),
+      shoot({ row: { motion_prompts: 'p' }, keyframeUrl: 'https://k.png', aspect: '9:16' }, ctx),
     )
     expect(mockedRunCapability.mock.calls[0]![0].params?.aspect).toBe('9:16')
   })
 
-  it('throws when row has no motion fields AND no refs', async () => {
+  it('throws when keyframeUrl is missing (omni-reference needs the keyframe)', async () => {
     const ctx = createMemoryContext({ llm: { complete: async () => '' } })
     await expect(
-      driveAuto(shoot({ row: {}, refs: [] }, ctx)),
-    ).rejects.toThrow(/needs at least/)
+      driveAuto(shoot({ row: { motion_prompts: 'p' }, keyframeUrl: '' }, ctx)),
+    ).rejects.toThrow(/requires keyframeUrl/)
   })
 
   it('throws when the capability returns no url', async () => {
     mockedRunCapability.mockResolvedValue({ outputs: [] })
     const ctx = createMemoryContext({ llm: { complete: async () => '' } })
     await expect(
-      driveAuto(shoot({ row: { motion_prompts: 'p' }, refs: [] }, ctx)),
+      driveAuto(shoot({ row: { motion_prompts: 'p' }, keyframeUrl: 'https://k.png' }, ctx)),
     ).rejects.toThrow(/no url/)
   })
 
-  it('places reference images in the same order as the prompt legend', () => {
+  it('threads context-ref names + descriptions into the motion text (not as image inputs)', () => {
     const prompt = assembleShootPrompt({
       row: { motion_prompts: 'm' },
-      refs: [
-        { role: 'Keyframe', imageUrl: 'k' },
-        { role: '角色1', description: 'Alice', imageUrl: 'a' },
-        { role: '场景', description: 'Rooftop', imageUrl: 's' },
+      keyframeUrl: 'https://k.png',
+      contextRefs: [
+        { role: '角色1', description: 'Alice' },
+        { role: '场景', description: 'Rooftop' },
       ],
     })
-    expect(prompt).toMatch(/image1 = Keyframe[\s\S]*image2 = 角色1[\s\S]*image3 = 场景/)
+    expect(prompt).toContain('Featuring / 出场: 角色1 (Alice)；场景 (Rooftop)')
+    // Legend should still list ONLY image1.
+    expect(prompt).toContain('image1 / @图片1 = Keyframe')
+    expect(prompt).not.toContain('image2')
+  })
+
+  it('embeds the Seedance director-reference + casting-lock + negative blocks in every shoot prompt', () => {
+    const prompt = assembleShootPrompt({
+      row: { motion_prompts: 'push in', visual_description: 'rooftop' },
+      keyframeUrl: 'https://k.png',
+    })
+    // Director Reference block — tells Seedance the storyboard sheet is
+    // a blocking reference, not the final shot.
+    expect(prompt).toContain('【全能参考 / Director Reference】')
+    expect(prompt).toContain('@图片1')
+    expect(prompt).toContain('不要拍摄或展示这张图板本身')
+    expect(prompt).toContain('最终输出必须是干净的')
+    // Casting Lock block — face/hair/clothing/posture/weapon consistency.
+    expect(prompt).toContain('【CASTING LOCK / 角色锁定】')
+    expect(prompt).toContain('脸型、发型、服装配色、体态、武器')
+    // Negative block — no panel frames, UI, character substitution.
+    expect(prompt).toContain('【NEGATIVE】')
+    expect(prompt).toContain('不要出现图板边框、分栏、网格')
+    expect(prompt).toContain('不要换角')
+    expect(prompt).toContain('不要把背景人物/路人/怪物/士兵/分身当主角')
   })
 })
 
@@ -199,14 +251,15 @@ describe('revise', () => {
             url: 'https://v1.mp4',
             prompt: 'OLD prompt',
             durationSeconds: 8,
-            refs: [{ role: 'Keyframe', imageUrl: 'https://k.png' }],
+            keyframeUrl: 'https://k.png',
+            contextRefs: [],
           },
           feedback: [
             { aspect: 'characters', severity: 'major', summary: '主角换衣服了', fix: '严格匹配 image1' },
             { aspect: 'scene', severity: 'blocking', summary: '场景不是 rooftop', fix: '改为 rooftop' },
           ],
           row: { shot_number: 'S1', duration: 8, motion_prompts: 'push in' },
-          refs: [{ role: 'Keyframe', imageUrl: 'https://k.png' }],
+          keyframeUrl: 'https://k.png',
         },
         ctx,
       ),
@@ -236,10 +289,10 @@ describe('revise', () => {
       driveAuto(
         revise(
           {
-            previous: { url: 'u', prompt: 'p', durationSeconds: 5, refs: [] },
+            previous: { url: 'u', prompt: 'p', durationSeconds: 5, keyframeUrl: 'https://k.png', contextRefs: [] },
             feedback: [{ aspect: 'characters', severity: 'minor', summary: '...' }],
             row: { motion_prompts: 'p' },
-            refs: [],
+            keyframeUrl: 'https://k.png',
           },
           ctx,
         ),
@@ -254,10 +307,10 @@ describe('revise', () => {
     await driveAuto(
       revise(
         {
-          previous: { url: 'u', prompt: 'p', durationSeconds: 5, refs: [] },
+          previous: { url: 'u', prompt: 'p', durationSeconds: 5, keyframeUrl: 'https://k.png', contextRefs: [] },
           feedback: [],
           row: { motion_prompts: 'p' },
-          refs: [],
+          keyframeUrl: 'https://k.png',
         },
         ctx,
       ),

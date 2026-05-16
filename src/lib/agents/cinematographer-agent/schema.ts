@@ -22,12 +22,26 @@ export interface BeatVideoRow {
   shot_size?: string
 }
 
-/** Image reference passed to Seedance as a `kind: image` input. */
-export interface BeatVideoRef {
-  /** Human-readable role tag — appears in the prompt's image legend. */
+/**
+ * Context-only role descriptor for character / scene / prop. NOT passed to
+ * Seedance as an image — the keyframe (omni-reference / 全能参考) is the
+ * single image input. Used only to bake names + descriptions into the motion
+ * text so the model knows what to read out of the keyframe.
+ */
+export interface BeatVideoContextRef {
+  /** Human-readable role tag (e.g., "角色1", "场景"). */
   role: string
   description?: string
-  imageUrl: string
+}
+
+/**
+ * Legacy union: BeatVideoRef accepts both context-only refs AND the
+ * single-image keyframe ref so the consumer's storyboard mapping logic
+ * doesn't have to know which is which. The shoot verb peels the keyframe
+ * URL out separately.
+ */
+export interface BeatVideoRef extends BeatVideoContextRef {
+  imageUrl?: string
 }
 
 export interface ShootRequest {
@@ -35,8 +49,18 @@ export interface ShootRequest {
   row: BeatVideoRow
   /** Optional global art-style hint (e.g., "Cold-toned filmic noir"). */
   visualStyle?: string
-  /** Ordered references. The keyframe should typically be refs[0]. */
-  refs: BeatVideoRef[]
+  /**
+   * The single image sent to Seedance as the omni-reference (全能参考).
+   * Required — without a keyframe there's nothing to anchor casting,
+   * scene, blocking, and color to.
+   */
+  keyframeUrl: string
+  /**
+   * Optional context — character / scene / prop names + descriptions.
+   * Baked into the motion text so the model knows what to look for in
+   * the keyframe. NOT passed as additional image inputs.
+   */
+  contextRefs?: BeatVideoContextRef[]
   /** 16:9 by default; pass '9:16' for vertical shoots. */
   aspect?: '16:9' | '9:16' | '1:1' | '4:3'
   /**
@@ -53,8 +77,10 @@ export interface BeatVideoResult {
   prompt: string
   /** Effective duration in seconds (post-clamp). */
   durationSeconds: number
-  /** Echoed refs in the same order they appear in the image legend. */
-  refs: BeatVideoRef[]
+  /** Keyframe URL that was used as the omni-reference. */
+  keyframeUrl: string
+  /** Context refs echoed back (text-only — not image inputs). */
+  contextRefs: BeatVideoContextRef[]
 }
 
 export interface ReviseRequest {
@@ -70,7 +96,9 @@ export interface ReviseRequest {
    */
   row: BeatVideoRow
   visualStyle?: string
-  refs: BeatVideoRef[]
+  /** Same omni-reference image as the original shoot (or an updated one). */
+  keyframeUrl: string
+  contextRefs?: BeatVideoContextRef[]
   aspect?: '16:9' | '9:16' | '1:1' | '4:3'
   durationSecondsOverride?: number
 }

@@ -22,6 +22,7 @@ import shootSource from './prompts/shoot.md?raw'
 import reviseSource from './prompts/revise.md?raw'
 
 import type {
+  BeatVideoContextRef,
   BeatVideoRef,
   BeatVideoResult,
   BeatVideoRow,
@@ -49,7 +50,23 @@ function clampDuration(seconds: number): number {
   return Math.min(Math.max(Math.round(seconds), MIN_DURATION), MAX_DURATION)
 }
 
-function buildMotionDescription(req: { row: BeatVideoRow; visualStyle?: string }): string {
+function buildContextRefLine(contextRefs: BeatVideoContextRef[]): string {
+  if (contextRefs.length === 0) return ''
+  // Bake the names + descriptions into the motion text so the model knows
+  // what to read out of the keyframe under omni-reference mode. No image
+  // inputs — just text context.
+  const parts = contextRefs.map((c) => {
+    const desc = c.description ? ` (${c.description})` : ''
+    return `${c.role}${desc}`
+  })
+  return `Featuring / 出场: ${parts.join('；')}.`
+}
+
+function buildMotionDescription(req: {
+  row: BeatVideoRow
+  visualStyle?: string
+  contextRefs?: BeatVideoContextRef[]
+}): string {
   const r = req.row
   return [
     req.visualStyle ? `Strictly maintain ${req.visualStyle} style throughout the entire clip.` : '',
@@ -67,24 +84,33 @@ function buildMotionDescription(req: { row: BeatVideoRow; visualStyle?: string }
     r.performance_guidance ? `performance guidance: ${r.performance_guidance}` : '',
     r.lighting_atmosphere,
     r.shot_size ? `${r.shot_size} shot` : '',
+    buildContextRefLine(req.contextRefs ?? []),
   ]
     .filter((s): s is string => Boolean(s && s.trim()))
     .join('. ')
 }
 
-function buildImageLegend(refs: BeatVideoRef[]): string {
-  if (refs.length === 0) return ''
+/**
+ * The image legend lists ONLY the keyframe — omni-reference (全能参考) mode
+ * means a single image input. Character / scene / prop info goes into the
+ * motion text via buildContextRefLine.
+ */
+function buildImageLegend(_keyframeUrl: string): string {
+  void _keyframeUrl
   return [
-    'Reference images (use them as labeled):',
-    ...refs.map(
-      (r, i) => `- image${i + 1} = ${r.role}${r.description ? ` (${r.description})` : ''}`,
-    ),
+    '【REFERENCE IMAGE / 参考图】 (omni-reference / 全能参考):',
+    '- image1 / @图片1 = Keyframe (the director storyboard sheet — read casting, scene, blocking, lighting from it; do NOT shoot the sheet itself).',
   ].join('\n')
 }
 
-function assembleShootPrompt(req: { row: BeatVideoRow; refs: BeatVideoRef[]; visualStyle?: string }): string {
+function assembleShootPrompt(req: {
+  row: BeatVideoRow
+  keyframeUrl: string
+  contextRefs?: BeatVideoContextRef[]
+  visualStyle?: string
+}): string {
   const motion = buildMotionDescription(req) || 'cinematic motion'
-  const legend = buildImageLegend(req.refs)
+  const legend = buildImageLegend(req.keyframeUrl)
   return fillTemplate(TPL.shoot, {
     motionDescription: motion,
     imageLegend: legend,
@@ -93,21 +119,27 @@ function assembleShootPrompt(req: { row: BeatVideoRow; refs: BeatVideoRef[]; vis
 
 async function callSeedance(opts: {
   prompt: string
-  refs: BeatVideoRef[]
+  keyframeUrl: string
   durationSeconds: number
   aspect: '16:9' | '9:16' | '1:1' | '4:3'
 }): Promise<string> {
+  // Omni-reference mode: exactly one image (the keyframe) goes in. The
+  // motion text + Director Reference block tells Seedance to read casting,
+  // scene, blocking, lighting from this single reference image.
   const r = await runCapability({
     capability: 'text-to-video',
     inputs: [
       { kind: 'text', text: opts.prompt },
-      ...opts.refs.map((ref) => ({ kind: 'image' as const, url: ref.imageUrl })),
+      { kind: 'image', url: opts.keyframeUrl },
     ],
     params: {
       provider: SHOOT_PROVIDER,
       model: SHOOT_MODEL,
       duration: String(opts.durationSeconds),
       aspect: opts.aspect,
+      // Hints to the capability plugin to use omni-reference mode if the
+      // provider exposes it as a flag (Doubao Seedance 2.0 supports it).
+      reference_mode: 'omni',
     },
   })
   const url = r.outputs[0]?.url
@@ -125,29 +157,21 @@ export async function* shoot(
   const durationSeconds = clampDuration(req.durationSecondsOverride ?? req.row.duration ?? MIN_DURATION)
   const aspect = req.aspect ?? '16:9'
 
-  yield {
-    type: 'progress',
-    message: `cinematographer: composing Seedance prompt for shot ${shot} (${durationSeconds}s, ${aspect})`,
+  if (!req.keyframeUrl) {
+    throw new Error(
+      'cinematographer: shoot requires keyframeUrl (omni-reference mode needs the director keyframe as the single reference image). Generate the keyframe first.',
+    )
   }
 
-  // Sanity: refuse to shoot with no motion brief AND no refs. The motion
-  // description has a generic Seedance hint baked in that's non-empty even
-  // for an empty row, so we check the row's text fields directly.
-  const hasMotion = Boolean(
-    req.row.motion_prompts?.trim() ||
-      req.row.storyboard_prompts?.trim() ||
-      req.row.visual_description?.trim() ||
-      req.row.character_actions?.trim(),
-  )
-  if (!hasMotion && req.refs.length === 0) {
-    throw new Error(
-      'cinematographer: shoot needs at least row.motion_prompts / storyboard_prompts / visual_description, or one reference image',
-    )
+  yield {
+    type: 'progress',
+    message: `cinematographer: composing Seedance prompt for shot ${shot} (${durationSeconds}s, ${aspect}, omni-reference)`,
   }
 
   const prompt = assembleShootPrompt({
     row: req.row,
-    refs: req.refs,
+    keyframeUrl: req.keyframeUrl,
+    contextRefs: req.contextRefs,
     visualStyle: req.visualStyle,
   })
 
@@ -156,11 +180,17 @@ export async function* shoot(
     type: 'progress',
     message: `cinematographer: rolling on Seedance (${SHOOT_PROVIDER}/${SHOOT_MODEL})`,
   }
-  const url = await callSeedance({ prompt, refs: req.refs, durationSeconds, aspect })
+  const url = await callSeedance({ prompt, keyframeUrl: req.keyframeUrl, durationSeconds, aspect })
 
   yield {
     type: 'result',
-    payload: { url, prompt, durationSeconds, refs: req.refs },
+    payload: {
+      url,
+      prompt,
+      durationSeconds,
+      keyframeUrl: req.keyframeUrl,
+      contextRefs: req.contextRefs ?? [],
+    },
   }
 }
 
@@ -188,6 +218,10 @@ export async function* revise(
   const durationSeconds = clampDuration(req.durationSecondsOverride ?? req.row.duration ?? MIN_DURATION)
   const aspect = req.aspect ?? '16:9'
 
+  if (!req.keyframeUrl) {
+    throw new Error('cinematographer: revise requires keyframeUrl (omni-reference mode)')
+  }
+
   yield {
     type: 'progress',
     message: `cinematographer: revising shot ${shot} based on ${req.feedback.length} director note(s)`,
@@ -213,16 +247,28 @@ export async function* revise(
     type: 'progress',
     message: `cinematographer: re-rolling on Seedance with revised prompt`,
   }
-  const url = await callSeedance({ prompt: revisedPrompt, refs: req.refs, durationSeconds, aspect })
+  const url = await callSeedance({ prompt: revisedPrompt, keyframeUrl: req.keyframeUrl, durationSeconds, aspect })
 
   yield {
     type: 'result',
-    payload: { url, prompt: revisedPrompt, durationSeconds, refs: req.refs },
+    payload: {
+      url,
+      prompt: revisedPrompt,
+      durationSeconds,
+      keyframeUrl: req.keyframeUrl,
+      contextRefs: req.contextRefs ?? [],
+    },
   }
 }
 
 // Pure helpers — exported for tests + reuse.
-export { buildMotionDescription, buildImageLegend, assembleShootPrompt, clampDuration }
+export {
+  buildMotionDescription,
+  buildContextRefLine,
+  buildImageLegend,
+  assembleShootPrompt,
+  clampDuration,
+}
 
 // ─── Module metadata ──────────────────────────────────────────────
 
@@ -238,6 +284,7 @@ export const cinematographerAgent = {
 } as const
 
 export type {
+  BeatVideoContextRef,
   BeatVideoRef,
   BeatVideoResult,
   BeatVideoRow,

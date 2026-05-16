@@ -17,7 +17,7 @@ import type {
   KeyframeSceneRef,
 } from '@/lib/agents/director-agent'
 import { shoot as cinematographerShoot } from '@/lib/agents/cinematographer-agent'
-import type { BeatVideoRef } from '@/lib/agents/cinematographer-agent'
+import type { BeatVideoContextRef } from '@/lib/agents/cinematographer-agent'
 import { runAgentWithChatBridge } from '@/lib/agents/chat-bridge'
 import { createMemoryContext } from '@/lib/agents/_shared/context/memory'
 import { createCapabilityLLM } from '@/lib/agents/_shared/llm/capability'
@@ -296,21 +296,23 @@ export function useStoryboardGenerate() {
     updateTask(taskId, { status: 'polling' })
 
     try {
-      // Ordered, labeled references — keyframe first (most important),
-      // then per-role slots, then loose reference image.
-      const refs: BeatVideoRef[] = []
-      const pushRef = (role: string, description: string, url: string | undefined) => {
-        if (!url) return
-        if (refs.some((r) => r.imageUrl === url)) return
-        refs.push({ role, description, imageUrl: url })
+      // Omni-reference mode (全能参考): only the keyframe goes to Seedance as
+      // an image input. Character/scene/prop info threads through as TEXT
+      // (contextRefs) so the model knows what to read out of the keyframe.
+      const keyframeUrl = row.keyframeUrl || row.reference_image || ''
+      if (!keyframeUrl) {
+        throw new Error('缺少 keyframe —— 先生成 keyframe 再拍摄 beat video')
       }
-      pushRef('Keyframe', '', row.keyframeUrl)
-      pushRef('角色1', row.character1?.description ?? '', row.character1?.image)
-      pushRef('角色2', row.character2?.description ?? '', row.character2?.image)
-      pushRef('道具1', row.prop1?.description ?? '',      row.prop1?.image)
-      pushRef('道具2', row.prop2?.description ?? '',      row.prop2?.image)
-      pushRef('场景',  row.scene?.description ?? '',      row.scene?.image)
-      pushRef('参考',  '',                                row.reference_image)
+      const contextRefs: BeatVideoContextRef[] = []
+      const pushCtx = (role: string, description: string | undefined) => {
+        if (!description?.trim()) return
+        contextRefs.push({ role, description })
+      }
+      pushCtx('角色1', row.character1?.description)
+      pushCtx('角色2', row.character2?.description)
+      pushCtx('道具1', row.prop1?.description)
+      pushCtx('道具2', row.prop2?.description)
+      pushCtx('场景', row.scene?.description)
 
       const db = useProjectDB.getState()
       const visualStyle = db.artDirection.customStyle || db.artDirection.stylePreset
@@ -322,7 +324,8 @@ export function useStoryboardGenerate() {
           {
             row,
             visualStyle,
-            refs,
+            keyframeUrl,
+            contextRefs,
             aspect: '16:9',
           },
           agentCtx,
