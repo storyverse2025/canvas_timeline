@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>canvas_timeline AI Agent Skills Architecture</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap');
+  :root{--bg:#020617;--card:#0f172a;--slate:#94a3b8;--text:#e2e8f0;--muted:#64748b;--cyan:#22d3ee;--emerald:#34d399;--violet:#a78bfa;--amber:#fbbf24;--rose:#fb7185;--orange:#fb923c;}
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font-family:'JetBrains Mono',monospace;}
+  .wrap{width:1440px;max-width:100%;margin:0 auto;padding:28px 30px 34px;background:
+    linear-gradient(rgba(30,41,59,.28) 1px,transparent 1px),linear-gradient(90deg,rgba(30,41,59,.28) 1px,transparent 1px);background-size:40px 40px;}
+  .header{display:flex;align-items:center;gap:14px;margin-bottom:18px}.dot{width:12px;height:12px;border-radius:50%;background:var(--cyan);box-shadow:0 0 18px var(--cyan);animation:pulse 2s infinite}@keyframes pulse{50%{opacity:.45;transform:scale(.8)}}
+  h1{font-size:28px;margin:0}.sub{font-size:13px;color:var(--slate);margin-top:6px}.panel{background:rgba(15,23,42,.78);border:1px solid #1e293b;border-radius:18px;padding:14px;box-shadow:0 24px 80px rgba(0,0,0,.35)}
+  svg{width:100%;height:auto;display:block}.label{font-size:13px;font-weight:700;fill:#e2e8f0}.small{font-size:10px;fill:#cbd5e1}.tiny{font-size:9px;fill:#94a3b8}.note{font-size:8.5px;fill:#94a3b8}.title{font-size:15px;font-weight:700;fill:#e2e8f0}.sec{font-size:11px;font-weight:700;fill:#cbd5e1}.cardrow{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:14px}.card{border:1px solid #1e293b;background:rgba(15,23,42,.72);border-radius:14px;padding:14px}.card h3{font-size:14px;margin:0 0 8px;display:flex;align-items:center;gap:8px}.card p,.card li{font-size:11px;color:#cbd5e1;line-height:1.55}.card ul{margin:0;padding-left:0;list-style:none}.footer{font-size:10px;color:#64748b;margin-top:12px;text-align:right}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header"><div class="dot"></div><div><h1>canvas_timeline · AI Agent Skills Architecture</h1><div class="sub">Source: src/lib/chat-intent.ts, skill-executor.ts, director-assistant.ts, capabilities/registry.ts, vite-capabilities-plugin.ts, vite-providers-plugin.ts</div></div></div>
+  <div class="panel">
+<svg viewBox="0 0 1380 930" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="AI Agent skills architecture diagram">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#64748b"/></marker>
+    <marker id="arrowC" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#22d3ee"/></marker>
+    <marker id="arrowE" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#34d399"/></marker>
+    <filter id="glow"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <rect x="0" y="0" width="1380" height="930" rx="18" fill="#020617"/>
+
+  <!-- arrows behind boxes -->
+  <path d="M230 132 C285 132 300 132 350 132" stroke="#22d3ee" stroke-width="2" fill="none" marker-end="url(#arrowC)"/>
+  <path d="M230 206 C285 206 300 206 350 206" stroke="#22d3ee" stroke-width="2" fill="none" marker-end="url(#arrowC)"/>
+  <path d="M230 280 C285 280 300 280 350 280" stroke="#22d3ee" stroke-width="2" fill="none" marker-end="url(#arrowC)"/>
+  <path d="M600 132 C640 132 655 168 690 170" stroke="#64748b" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+  <path d="M600 206 C640 206 655 188 690 188" stroke="#64748b" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+  <path d="M600 280 C640 280 655 210 690 206" stroke="#64748b" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+  <path d="M600 355 C650 355 670 300 700 260" stroke="#34d399" stroke-width="2" fill="none" marker-end="url(#arrowE)"/>
+  <path d="M600 430 C650 430 685 330 720 260" stroke="#34d399" stroke-width="2" fill="none" marker-end="url(#arrowE)"/>
+  <path d="M940 210 C985 210 1000 210 1040 210" stroke="#64748b" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+  <path d="M870 300 C870 342 870 360 870 400" stroke="#fb7185" stroke-width="2" stroke-dasharray="5 5" fill="none" marker-end="url(#arrow)"/>
+  <path d="M870 530 C870 565 820 595 760 620" stroke="#34d399" stroke-width="2" fill="none" marker-end="url(#arrowE)"/>
+  <path d="M870 530 C870 565 910 595 980 620" stroke="#34d399" stroke-width="2" fill="none" marker-end="url(#arrowE)"/>
+  <path d="M1180 330 C1180 390 1180 410 1180 480" stroke="#a78bfa" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- Client layer -->
+  <rect x="40" y="60" width="230" height="270" rx="12" fill="none" stroke="#22d3ee" stroke-width="1.5" stroke-dasharray="8 4"/>
+  <text x="56" y="86" class="title" fill="#22d3ee">User / UI Entry</text>
+  <rect x="62" y="110" width="168" height="44" rx="8" fill="#0f172a"/><rect x="62" y="110" width="168" height="44" rx="8" fill="rgba(8,51,68,.45)" stroke="#22d3ee"/><text x="76" y="136" class="label">ChatPanel</text><text x="76" y="149" class="tiny">输入框 + streaming Claude</text>
+  <rect x="62" y="184" width="168" height="44" rx="8" fill="#0f172a"/><rect x="62" y="184" width="168" height="44" rx="8" fill="rgba(8,51,68,.45)" stroke="#22d3ee"/><text x="76" y="210" class="label">QuickActions</text><text x="76" y="223" class="tiny">按钮触发 intent</text>
+  <rect x="62" y="258" width="168" height="44" rx="8" fill="#0f172a"/><rect x="62" y="258" width="168" height="44" rx="8" fill="rgba(8,51,68,.45)" stroke="#22d3ee"/><text x="76" y="284" class="label">Canvas Nodes</text><text x="76" y="297" class="tiny">image/text/video/audio</text>
+
+  <!-- Routing layer -->
+  <rect x="350" y="60" width="250" height="420" rx="12" fill="none" stroke="#34d399" stroke-width="1.5" stroke-dasharray="8 4"/>
+  <text x="366" y="86" class="title" fill="#34d399">Intent & Skill Router</text>
+  <rect x="372" y="110" width="206" height="44" rx="8" fill="#0f172a"/><rect x="372" y="110" width="206" height="44" rx="8" fill="rgba(6,78,59,.45)" stroke="#34d399"/><text x="386" y="135" class="label">detectIntent()</text><text x="386" y="149" class="tiny">正则路由；分镜请求放行 LLM</text>
+  <rect x="372" y="184" width="206" height="44" rx="8" fill="#0f172a"/><rect x="372" y="184" width="206" height="44" rx="8" fill="rgba(6,78,59,.45)" stroke="#34d399"/><text x="386" y="209" class="label">executeIntent()</text><text x="386" y="223" class="tiny">skill progress + store 写入</text>
+  <rect x="372" y="258" width="206" height="44" rx="8" fill="#0f172a"/><rect x="372" y="258" width="206" height="44" rx="8" fill="rgba(6,78,59,.45)" stroke="#34d399"/><text x="386" y="283" class="label">Claude passthrough</text><text x="386" y="297" class="tiny">storyboard JSON / markers</text>
+  <rect x="372" y="333" width="206" height="44" rx="8" fill="#0f172a"/><rect x="372" y="333" width="206" height="44" rx="8" fill="rgba(6,78,59,.45)" stroke="#34d399"/><text x="386" y="358" class="label">processResponse()</text><text x="386" y="372" class="tiny">[IMAGE]/[CHAR]/[SCENE]/[PROP]/[SFX]</text>
+  <rect x="372" y="408" width="206" height="44" rx="8" fill="#0f172a"/><rect x="372" y="408" width="206" height="44" rx="8" fill="rgba(6,78,59,.45)" stroke="#34d399"/><text x="386" y="433" class="label">StoryBoard validator</text><text x="386" y="447" class="tiny">parse + 2 次自动修正</text>
+
+  <!-- Skill families -->
+  <rect x="690" y="60" width="250" height="240" rx="12" fill="none" stroke="#fb923c" stroke-width="1.5" stroke-dasharray="8 4"/>
+  <text x="706" y="86" class="title" fill="#fb923c">App-level Agent Skills</text>
+  <rect x="712" y="110" width="206" height="70" rx="8" fill="#0f172a"/><rect x="712" y="110" width="206" height="70" rx="8" fill="rgba(251,146,60,.24)" stroke="#fb923c"/><text x="727" y="134" class="label">skill-executor.ts</text><text x="727" y="149" class="tiny">script/character/scene/prop/keyframe/video</text><text x="727" y="163" class="tiny">full pipeline / edit / QA / mapping</text>
+  <rect x="712" y="202" width="206" height="70" rx="8" fill="#0f172a"/><rect x="712" y="202" width="206" height="70" rx="8" fill="rgba(251,146,60,.24)" stroke="#fb923c"/><text x="727" y="226" class="label">director-assistant.ts</text><text x="727" y="241" class="tiny">优化 → 自检 → 修复</text><text x="727" y="255" class="tiny">13 pipeline steps</text>
+
+  <rect x="1040" y="60" width="280" height="300" rx="12" fill="none" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="8 4"/>
+  <text x="1056" y="86" class="title" fill="#a78bfa">Capability Registry</text>
+  <rect x="1062" y="108" width="236" height="46" rx="8" fill="#0f172a"/><rect x="1062" y="108" width="236" height="46" rx="8" fill="rgba(76,29,149,.42)" stroke="#a78bfa"/><text x="1077" y="133" class="label">Agent: 6</text><text x="1160" y="133" class="small">rewrite / breakdown / extraction / shot / consistency / QC</text>
+  <rect x="1062" y="166" width="236" height="46" rx="8" fill="#0f172a"/><rect x="1062" y="166" width="236" height="46" rx="8" fill="rgba(76,29,149,.42)" stroke="#a78bfa"/><text x="1077" y="191" class="label">Image: 11</text><text x="1166" y="191" class="small">gen/edit/inpaint/upscale/angle/pose</text>
+  <rect x="1062" y="224" width="236" height="46" rx="8" fill="#0f172a"/><rect x="1062" y="224" width="236" height="46" rx="8" fill="rgba(76,29,149,.42)" stroke="#a78bfa"/><text x="1077" y="249" class="label">Video: 9</text><text x="1160" y="249" class="small">Seedance/FAL, refs, lip-sync, split</text>
+  <rect x="1062" y="282" width="236" height="46" rx="8" fill="#0f172a"/><rect x="1062" y="282" width="236" height="46" rx="8" fill="rgba(76,29,149,.42)" stroke="#a78bfa"/><text x="1077" y="307" class="label">Audio: 4</text><text x="1160" y="307" class="small">voice / clone / polyphonic / SFX</text>
+
+  <!-- Director pipeline stage details -->
+  <rect x="650" y="400" width="450" height="160" rx="12" fill="none" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="8 4"/>
+  <text x="668" y="426" class="title" fill="#fb7185">Director Pipeline · 三段式导演助手</text>
+  <rect x="675" y="448" width="120" height="62" rx="8" fill="#0f172a"/><rect x="675" y="448" width="120" height="62" rx="8" fill="rgba(136,19,55,.38)" stroke="#fb7185"/><text x="694" y="474" class="label">01 优化</text><text x="687" y="489" class="tiny">9 steps</text><text x="687" y="503" class="tiny">分析/提取/构图</text>
+  <rect x="815" y="448" width="120" height="62" rx="8" fill="#0f172a"/><rect x="815" y="448" width="120" height="62" rx="8" fill="rgba(136,19,55,.38)" stroke="#fb7185"/><text x="834" y="474" class="label">02 自检</text><text x="827" y="489" class="tiny">2 checks</text><text x="827" y="503" class="tiny">逻辑/视觉平衡</text>
+  <rect x="955" y="448" width="120" height="62" rx="8" fill="#0f172a"/><rect x="955" y="448" width="120" height="62" rx="8" fill="rgba(136,19,55,.38)" stroke="#fb7185"/><text x="974" y="474" class="label">03 修复</text><text x="967" y="489" class="tiny">2 steps</text><text x="967" y="503" class="tiny">apply fixes</text>
+
+  <!-- Stores -->
+  <rect x="150" y="610" width="540" height="190" rx="12" fill="none" stroke="#34d399" stroke-width="1.5" stroke-dasharray="8 4"/>
+  <text x="168" y="638" class="title" fill="#34d399">Zustand Stores / Local State</text>
+  <g>
+    <rect x="175" y="665" width="145" height="42" rx="8" fill="#0f172a"/><rect x="175" y="665" width="145" height="42" rx="8" fill="rgba(6,78,59,.38)" stroke="#34d399"/><text x="190" y="691" class="label">chat-store</text>
+    <rect x="342" y="665" width="145" height="42" rx="8" fill="#0f172a"/><rect x="342" y="665" width="145" height="42" rx="8" fill="rgba(6,78,59,.38)" stroke="#34d399"/><text x="357" y="691" class="label">canvas-store</text>
+    <rect x="509" y="665" width="145" height="42" rx="8" fill="#0f172a"/><rect x="509" y="665" width="145" height="42" rx="8" fill="rgba(6,78,59,.38)" stroke="#34d399"/><text x="524" y="691" class="label">asset-store</text>
+    <rect x="175" y="730" width="145" height="42" rx="8" fill="#0f172a"/><rect x="175" y="730" width="145" height="42" rx="8" fill="rgba(6,78,59,.38)" stroke="#34d399"/><text x="190" y="756" class="label">timeline-store</text>
+    <rect x="342" y="730" width="145" height="42" rx="8" fill="#0f172a"/><rect x="342" y="730" width="145" height="42" rx="8" fill="rgba(6,78,59,.38)" stroke="#34d399"/><text x="357" y="756" class="label">project-store</text>
+    <rect x="509" y="730" width="145" height="42" rx="8" fill="#0f172a"/><rect x="509" y="730" width="145" height="42" rx="8" fill="rgba(6,78,59,.38)" stroke="#34d399"/><text x="524" y="756" class="label">storyboard-store</text>
+  </g>
+
+  <!-- Backend APIs -->
+  <rect x="760" y="610" width="420" height="190" rx="12" fill="none" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="8 4"/>
+  <text x="778" y="638" class="title" fill="#fbbf24">Backend / Dev Server Gateways</text>
+  <rect x="790" y="665" width="160" height="42" rx="8" fill="#0f172a"/><rect x="790" y="665" width="160" height="42" rx="8" fill="rgba(120,53,15,.35)" stroke="#fbbf24"/><text x="805" y="691" class="label">/capabilities/run</text>
+  <rect x="980" y="665" width="160" height="42" rx="8" fill="#0f172a"/><rect x="980" y="665" width="160" height="42" rx="8" fill="rgba(120,53,15,.35)" stroke="#fbbf24"/><text x="995" y="691" class="label">/providers/*</text>
+  <rect x="790" y="730" width="160" height="42" rx="8" fill="#0f172a"/><rect x="790" y="730" width="160" height="42" rx="8" fill="rgba(120,53,15,.35)" stroke="#fbbf24"/><text x="805" y="756" class="label">/libtv/*</text>
+  <rect x="980" y="730" width="160" height="42" rx="8" fill="#0f172a"/><rect x="980" y="730" width="160" height="42" rx="8" fill="rgba(120,53,15,.35)" stroke="#fbbf24"/><text x="995" y="756" class="label">StoryVerse API</text>
+
+  <!-- External providers -->
+  <rect x="1120" y="420" width="220" height="150" rx="12" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="8 4"/>
+  <text x="1136" y="447" class="title" fill="#94a3b8">External Models</text>
+  <text x="1142" y="477" class="small">Gemini 2.5 Flash: text/vision agents</text>
+  <text x="1142" y="500" class="small">Claude Sonnet: chat stream + JSON</text>
+  <text x="1142" y="523" class="small">FAL / FLUX: image ops</text>
+  <text x="1142" y="546" class="small">Doubao Seedance/Seedream: video/image</text>
+
+  <!-- Legend -->
+  <rect x="40" y="840" width="1280" height="58" rx="10" fill="#0f172a" stroke="#1e293b"/>
+  <text x="60" y="866" class="sec">Legend</text>
+  <circle cx="140" cy="862" r="5" fill="#22d3ee"/><text x="154" y="866" class="tiny">UI/input</text>
+  <circle cx="235" cy="862" r="5" fill="#34d399"/><text x="249" y="866" class="tiny">routing/state</text>
+  <circle cx="355" cy="862" r="5" fill="#fb923c"/><text x="369" y="866" class="tiny">app-level skills</text>
+  <circle cx="500" cy="862" r="5" fill="#a78bfa"/><text x="514" y="866" class="tiny">capability registry</text>
+  <circle cx="675" cy="862" r="5" fill="#fbbf24"/><text x="689" y="866" class="tiny">backend gateway</text>
+  <circle cx="830" cy="862" r="5" fill="#fb7185"/><text x="844" y="866" class="tiny">director self-check/fix</text>
+  <text x="60" y="885" class="note">Key point: two overlapping “skill” systems exist — chat intent skills (workflow orchestration) and capability skills (model-backed media/agent operations). Yes, naming collision, because apparently one kind of skill wasn’t confusing enough.</text>
+</svg>
+  </div>
+  <div class="cardrow">
+    <div class="card"><h3><span style="color:#fb923c">●</span> App-level workflow skills</h3><ul><li>• generateScript / Characters / Scenes / Props / Keyframes / VideoShots</li><li>• autoMapTimeline, runFullPipeline, runEditPipeline, analyzeQuality</li><li>• directorFull / optimize / selfcheck / fix</li></ul></div>
+    <div class="card"><h3><span style="color:#a78bfa">●</span> Model-backed capability skills</h3><ul><li>• Agent 6: rewrite, breakdown, extraction, shot extraction, consistency, QC</li><li>• Image 11, Video 9, Audio 4</li><li>• Backed by Gemini, FAL/FLUX, Doubao Seedance/Seedream, OpenAI, LibTV</li></ul></div>
+    <div class="card"><h3><span style="color:#34d399">●</span> Data flow</h3><ul><li>• ChatPanel → detectIntent → executeIntent or Claude passthrough</li><li>• Results mutate stores: chat/canvas/assets/timeline/storyboard</li><li>• Capabilities run through Vite plugins, not a separate agent runtime</li></ul></div>
+  </div>
+  <div class="footer">Generated from local repo inspection · /home/ubuntu/repos/canvas_timeline</div>
+</div>
+</body>
+</html>
