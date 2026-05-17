@@ -49,6 +49,11 @@ export interface CanvasItem {
   /** Generation metadata (set when AI-generated, for Edit panel) */
   prompt?: string;
   refImages?: string[];
+  /** Audio inputs sent to the generation provider (e.g., voice files
+   *  uploaded as 音色N references when Seedance shot this beat video).
+   *  The Edit panel renders these so the user sees exactly what the
+   *  model received — distinct from the transitive canvas upstream. */
+  refAudios?: string[];
   provider?: string;
   model?: string;
   createdAt: number;

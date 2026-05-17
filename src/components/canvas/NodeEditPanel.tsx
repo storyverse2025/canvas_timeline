@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import { X, Sparkles, Image as ImageIcon, Type as TypeIcon } from 'lucide-react'
+import { X, Sparkles, Image as ImageIcon, Type as TypeIcon, Mic, Film } from 'lucide-react'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { useGenerateDialogStore } from '@/stores/generate-dialog-store'
 import { gatherUpstream } from '@/lib/canvas-graph'
+import { findVoiceByUrl, normalizeVoiceUrl } from '@/lib/voice-library'
 
 interface Props {
   nodeId: string;
@@ -23,6 +24,8 @@ export function NodeEditPanel({ nodeId, itemId, onClose }: Props) {
 
   const live = gatherUpstream(nodeId)
   const storedRefs = item.refImages ?? []
+  const storedAudios = item.refAudios ?? []
+  const isVideo = item.kind === 'video' || /\.(mp4|webm|mov)(\?|$)/i.test(item.content)
 
   const commit = () => {
     updateItem(itemId, {
@@ -110,7 +113,63 @@ export function NodeEditPanel({ nodeId, itemId, onClose }: Props) {
           />
         </div>
 
-        {(storedRefs.length > 0 || live.images.length > 0) && (
+        {/* For video items: show the EXACT inputs the model received
+            (keyframe image + voice audio refs persisted at shoot time)
+            and clearly separate them from the transitive canvas upstream
+            (which walks UP from keyframe → assets that fed the keyframe,
+            and is confusing because none of those ship to Seedance). */}
+        {isVideo && (storedRefs.length > 0 || storedAudios.length > 0) && (
+          <div className="rounded border border-primary/40 bg-primary/5 p-3 space-y-2">
+            <div className="flex items-center gap-1.5 text-[11px] font-medium text-primary">
+              <Film className="w-3 h-3" />
+              Seedance 实际输入
+            </div>
+            {storedRefs.length > 0 && (
+              <div>
+                <div className="text-[10px] text-muted-foreground uppercase mb-1">
+                  Keyframe 图 ({storedRefs.length}) — omni-reference
+                </div>
+                <div className="flex gap-1.5 overflow-x-auto">
+                  {storedRefs.map((u, i) => (
+                    <img key={`s${i}`} src={u} alt="" className="h-16 w-16 object-cover rounded border border-border shrink-0" title={u} />
+                  ))}
+                </div>
+              </div>
+            )}
+            {storedAudios.length > 0 ? (
+              <div>
+                <div className="text-[10px] text-muted-foreground uppercase mb-1">
+                  音色文件 ({storedAudios.length}) — 顺序对应 prompt 里的 音色1 / 音色2 / ...
+                </div>
+                <div className="space-y-1">
+                  {storedAudios.map((u, i) => {
+                    const voice = findVoiceByUrl(u)
+                    return (
+                      <div key={`a${i}`} className="flex items-center gap-2 text-[10px]">
+                        <span className="text-amber-400 font-mono shrink-0">音色{i + 1}</span>
+                        <span className="text-foreground/80 truncate">
+                          {voice?.displayName ?? '(unknown voice)'}
+                        </span>
+                        <audio src={normalizeVoiceUrl(u)} controls preload="none" className="h-6 ml-auto" />
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div className="text-[10px] text-amber-400/80 flex items-center gap-1">
+                <Mic className="w-3 h-3" />
+                没有音色文件 — 该镜头生成时还没有 voice bindings (跑过 演员表 后下次重拍生效)
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Non-video items: keep the legacy refs/upstream display.
+            For video items: hide the transitive upstream — those images
+            DID NOT ship to Seedance (only the keyframe did), and showing
+            them as "upstream" was confusing users. */}
+        {!isVideo && (storedRefs.length > 0 || live.images.length > 0) && (
           <div className="space-y-2">
             {storedRefs.length > 0 && (
               <div>

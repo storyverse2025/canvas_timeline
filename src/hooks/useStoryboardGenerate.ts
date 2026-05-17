@@ -375,8 +375,18 @@ export function useStoryboardGenerate() {
     const isPrivacyBlock = (msg: string): boolean =>
       msg.includes('InputImageSensitiveContentDetected.PrivacyInformation')
 
-    /** Run cinematographer.shoot once with a specific keyframe URL. */
-    const attemptShoot = async (keyframeUrl: string): Promise<{ url: string; prompt: string }> => {
+    /** Run cinematographer.shoot once with a specific keyframe URL.
+     *  Returns the shoot result PLUS the resolved voice audio URLs that
+     *  were actually shipped to Seedance as `kind: 'audio'` inputs — the
+     *  caller persists these on the video canvas item so the Edit panel
+     *  can show the user exactly what the model received. */
+    const attemptShoot = async (
+      keyframeUrl: string,
+    ): Promise<{ url: string; prompt: string; voiceAudioUrls: string[] }> => {
+      // Track what the augmenter actually attached so we can return it
+      // to the caller. The cinematographer's shoot result only carries
+      // prompt + url; the voice URLs are an inner-closure side-effect.
+      let attachedVoiceAudioUrls: string[] = []
       const contextRefs: BeatVideoContextRef[] = []
       const pushCtx = (role: string, description: string | undefined) => {
         if (!description?.trim()) return
@@ -400,6 +410,15 @@ export function useStoryboardGenerate() {
         basePrompt: string,
       ): Promise<{ videoPrompt: string; voiceAudioUrls: string[] }> => {
         if (Object.keys(voiceBindings).length === 0 || castingCards.length === 0) {
+          // User-visible: explain WHY there's no 音色N block in the prompt
+          // (previous behavior was a silent skip, which left the user
+          // wondering why the video had no voice references).
+          if (castingCards.length === 0) {
+            toast.message('Beat Video 无音色块', { description: '原因：暂无 casting cards — 跑一遍导演助手生成角色卡' })
+          } else if (Object.keys(voiceBindings).length === 0) {
+            toast.message('Beat Video 无音色块', { description: '原因：还没有为角色绑定音色 — 在「演员表」点「重新挑选」' })
+          }
+          attachedVoiceAudioUrls = []
           return { videoPrompt: basePrompt, voiceAudioUrls: [] }
         }
         try {
@@ -424,6 +443,7 @@ export function useStoryboardGenerate() {
               subCtx,
             ),
           )
+          attachedVoiceAudioUrls = augmented.voiceAudioUrls
           return {
             videoPrompt: augmented.videoPrompt,
             voiceAudioUrls: augmented.voiceAudioUrls,
@@ -432,12 +452,13 @@ export function useStoryboardGenerate() {
           // Augmentation must never block the shoot — fall back to the base prompt.
           // eslint-disable-next-line no-console
           console.warn('[useStoryboardGenerate] attachVoiceRefs failed, shooting without voice refs:', (e as Error).message)
+          attachedVoiceAudioUrls = []
           return { videoPrompt: basePrompt, voiceAudioUrls: [] }
         }
       }
 
       const agentCtx = createMemoryContext({ llm: createCapabilityLLM() })
-      return runAgentWithChatBridge(
+      const shootResult = await runAgentWithChatBridge(
         'cinematographer-agent',
         cinematographerShoot(
           { row, visualStyle, keyframeUrl, contextRefs, aspect: '16:9', promptPostProcessor },
@@ -445,6 +466,7 @@ export function useStoryboardGenerate() {
         ),
         { verb: 'shoot' },
       )
+      return { ...shootResult, voiceAudioUrls: attachedVoiceAudioUrls }
     }
 
     try {
@@ -456,7 +478,7 @@ export function useStoryboardGenerate() {
         throw new Error('缺少 keyframe —— 先生成 keyframe 再拍摄 beat video')
       }
 
-      let result: { url: string; prompt: string }
+      let result: { url: string; prompt: string; voiceAudioUrls: string[] }
       try {
         result = await attemptShoot(keyframeUrl)
       } catch (firstErr) {
@@ -492,11 +514,18 @@ export function useStoryboardGenerate() {
       const baseY = rowIdx * 300
 
       const finalPrompt = result.prompt
+      // refImages / refAudios persist the EXACT inputs Seedance got, so
+      // the Edit panel can show them — distinct from the transitive
+      // canvas upstream (which includes everything that fed the keyframe
+      // and confuses users into thinking those images shipped to the
+      // video model).
       const vidItemId = useCanvasItemStore.getState().addItem({
         kind: 'video',
         name: `BV-${row.shot_number}`,
         content: url,
         prompt: finalPrompt,
+        refImages: [keyframeUrl],
+        refAudios: result.voiceAudioUrls,
       })
       const vidNodeId = useCanvasStore.getState().addItemNode(
         vidItemId, 'video',
