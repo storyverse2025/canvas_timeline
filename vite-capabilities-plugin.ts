@@ -721,7 +721,7 @@ async function submitSeedanceTaskOnce(opts: {
   const headers = { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' }
 
   const body: Record<string, unknown> = {
-    model: opts.model ?? 'doubao-seedance-2-0-fast-260128',
+    model: opts.model ?? 'doubao-seedance-2-0-260128',
     content: opts.contentParts,
     resolution: opts.resolution ?? '480p',
     ratio: opts.aspect ?? '16:9',
@@ -792,7 +792,7 @@ async function textToVideo(req: CapReq): Promise<CapRes> {
 
   const url = await submitSeedanceTask({
     contentParts,
-    model: (req.params?.model as string) || 'doubao-seedance-2-0-fast-260128',
+    model: (req.params?.model as string) || 'doubao-seedance-2-0-260128',
     resolution: (req.params?.resolution as string) || '480p',
     aspect: (req.params?.aspect as string) || '16:9',
     duration: Number(req.params?.duration ?? 5),
@@ -816,7 +816,7 @@ async function universalToVideo(req: CapReq): Promise<CapRes> {
 
   const url = await submitSeedanceTask({
     contentParts,
-    model: (req.params?.model as string) || 'doubao-seedance-2-0-fast-260128',
+    model: (req.params?.model as string) || 'doubao-seedance-2-0-260128',
     resolution: (req.params?.resolution as string) || '480p',
     aspect: (req.params?.aspect as string) || '16:9',
     duration: Number(req.params?.duration ?? 5),
@@ -1119,7 +1119,7 @@ export function capabilitiesPlugin(): Plugin {
             { id: 'gpt-image-1', label: 'GPT Image 1', provider: 'openai', costPer: 0.04, supportsRef: false },
           ],
           video: [
-            { id: 'doubao-seedance-2-0-fast-260128', label: 'Seedance 2.0 Fast', provider: 'doubao', costPer: 0.35, supportsAudio: true, supportsRef: true, durations: [5, 10] },
+            { id: 'doubao-seedance-2-0-260128', label: 'Seedance 2.0 Fast', provider: 'doubao', costPer: 0.35, supportsAudio: true, supportsRef: true, durations: [5, 10] },
             { id: 'doubao-seedance-2-0-260128', label: 'Seedance 2.0', provider: 'doubao', costPer: 0.70, supportsAudio: true, supportsRef: true, durations: [5, 10] },
             { id: 'doubao-seedance-1-5-pro-251215', label: 'Seedance 1.5 Pro', provider: 'doubao', costPer: 0.50, supportsAudio: true, supportsRef: true, durations: [5, 10] },
             { id: 'fal-ai/kling-video/v1.5/pro/text-to-video', label: 'Kling v1.5 Pro', provider: 'fal', costPer: 0.45, supportsAudio: false, supportsRef: false, durations: [5, 10] },

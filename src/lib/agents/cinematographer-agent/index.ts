@@ -42,7 +42,12 @@ const TPL = {
 // shoots stay deterministic and a future model bump is a one-line change.
 
 export const SHOOT_PROVIDER = 'doubao'
-export const SHOOT_MODEL = 'doubao-seedance-2-0-fast-260128'
+// Default to the full Seedance 2.0 model (not the -fast variant) so 480p
+// shoots have the higher-quality model behind them. The capability plugin
+// already defaults `resolution: '480p'`, so the keyframe-shot pipeline
+// gets 480p Seedance 2.0 out of the box.
+export const SHOOT_MODEL = 'doubao-seedance-2-0-260128'
+export const SHOOT_RESOLUTION = '480p'
 const MIN_DURATION = 5
 const MAX_DURATION = 15
 
@@ -153,6 +158,10 @@ async function callSeedance(opts: {
       model: SHOOT_MODEL,
       duration: String(opts.durationSeconds),
       aspect: opts.aspect,
+      // 480p default — explicit so it shows up in capability logs even
+      // though the plugin already defaults to '480p' for unspecified
+      // requests. Bump to '720p' / '1080p' once we wire a UI toggle.
+      resolution: SHOOT_RESOLUTION,
       // Hints to the capability plugin to use omni-reference mode if the
       // provider exposes it as a flag (Doubao Seedance 2.0 supports it).
       reference_mode: 'omni',
