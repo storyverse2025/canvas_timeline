@@ -150,16 +150,66 @@ export function useStoryboardGenerate() {
   const startTask = useLibtvTasksStore((s) => s.startTask)
   const updateTask = useLibtvTasksStore((s) => s.updateTask)
 
+  /**
+   * Core keyframe-generation logic. Used by:
+   *   - generateKeyframe (public, user-triggered from the table)
+   *   - generateBeatVideo's privacy-block retry (programmatic, with
+   *     stylizeFacesFor2D: true so faces survive Seedance's safety filter)
+   *
+   * Returns the new keyframe URL on success. Throws on failure. Side
+   * effects: new canvas item + node (role='keyframe'), edges from refs,
+   * row update so the new keyframe becomes the adopted one (⭐).
+   */
+  const runKeyframeGeneration = useCallback(async (
+    row: StoryboardRow,
+    opts: { stylizeFacesFor2D?: boolean; taskLabel?: string } = {},
+  ): Promise<string> => {
+    const taskId = uuid()
+    startTask({
+      id: taskId,
+      nodeId: `sb-kf-${row.id}`,
+      itemId: row.id,
+      prompt: opts.taskLabel ?? 'Keyframe',
+    })
+    updateTask(taskId, { status: 'polling' })
+    updateRow(row.id, { status: 'in_progress' })
+
+    try {
+      const url = await _doKeyframeGen(row, opts.stylizeFacesFor2D ?? false)
+      updateTask(taskId, { status: 'done', resultUrl: url, resultKind: 'image' })
+      return url
+    } catch (e) {
+      updateRow(row.id, { status: 'todo' })
+      updateTask(taskId, { status: 'failed', error: String((e as Error).message ?? e) })
+      throw e
+    }
+  }, [startTask, updateTask, updateRow])
+
   const generateKeyframe = useCallback(async (row: StoryboardRow) => {
     if (!row.storyboard_prompts?.trim() && !row.visual_description?.trim()) {
       toast.error('缺少画面描述或分镜提示词')
       return
     }
+    try {
+      await runKeyframeGeneration(row)
+      toast.success(`Keyframe ${row.shot_number} 生成完成`)
+    } catch (e) {
+      toast.error('Keyframe 生成失败', { description: String((e as Error).message).slice(0, 200) })
+    }
+  }, [runKeyframeGeneration])
 
-    const taskId = uuid()
-    startTask({ id: taskId, nodeId: `sb-kf-${row.id}`, itemId: row.id, prompt: 'Keyframe' })
-    updateTask(taskId, { status: 'polling' })
-    updateRow(row.id, { status: 'in_progress' })
+  // The actual generation body — pure side-effectful function (canvas writes,
+  // row update). Kept separate from runKeyframeGeneration so the task-status
+  // bookkeeping wraps it uniformly. Defined outside useCallback because it
+  // doesn't capture any unstable references — it reads stores fresh inside.
+  const _doKeyframeGen = useCallback(async (
+    row: StoryboardRow,
+    stylizeFacesFor2D: boolean,
+  ): Promise<string> => {
+    // Re-instate the original generateKeyframe body, parametrized by
+    // stylizeFacesFor2D so the privacy-block retry can opt in.
+    void 0
+    // ── BEGIN original body ──────────────────────────────────────────
 
     // Compute canvas placement for new nodes up front so the resolver
     // can place freshly-created asset/item nodes near the keyframe.
@@ -215,14 +265,21 @@ export function useStoryboardGenerate() {
       }))
 
     // Pull project-level metadata from the project DB for the header bar.
+    // The creativeBrief carries TYPE / TONE / GENRE that script-agent
+    // locked in during the dossier pass — feed them to gpt-image-2 so the
+    // keyframe is rendered with genre intent, not generic cinematic style.
     const db = useProjectDB.getState()
     const artDir = db.artDirection
     const visualStyle = artDir.customStyle || artDir.stylePreset
+    const brief = db.script.creativeBrief
 
     const req: GenerateKeyframeRequest = {
       row,
       shotDurationSeconds: Math.max(1, Math.round(row.duration ?? 5)),
       projectTitle: db.script.text?.split('\n')[0]?.slice(0, 40) || `Shot ${row.shot_number}`,
+      projectType: brief?.projectType,
+      projectTone: brief?.tone,
+      genre: brief?.genre,
       visualStyle,
       characters: characters.slice(0, 2),
       scene,
@@ -231,53 +288,52 @@ export function useStoryboardGenerate() {
         ? [{ role: '参考 / Prior reference', imageUrl: row.reference_image }]
         : [],
       aspect: '16:9',
+      stylizeFacesFor2D,
     }
 
-    try {
-      const agentCtx = createMemoryContext({ llm: createCapabilityLLM() })
-      const result = await runAgentWithChatBridge(
-        'director-agent',
-        directorGenerateKeyframe(req, agentCtx),
-        { verb: 'generate-keyframe' },
-      )
-      const url = result.url
+    const agentCtx = createMemoryContext({ llm: createCapabilityLLM() })
+    const result = await runAgentWithChatBridge(
+      'director-agent',
+      directorGenerateKeyframe(req, agentCtx),
+      { verb: stylizeFacesFor2D ? 'generate-keyframe (2D-stylized retry)' : 'generate-keyframe' },
+    )
+    const url = result.url
 
-      const kfItemId = useCanvasItemStore.getState().addItem({
-        kind: 'image',
-        name: `KF-${row.shot_number}`,
-        content: url,
-        prompt: result.prompt,
-      })
-      const kfNodeId = useCanvasStore.getState().addItemNode(
-        kfItemId, 'image',
-        { x: baseX, y: baseY },
-        { width: 280, height: 180 },
-      )
+    // Tag with role='keyframe' so ImageCanvasNode can flag the adopted
+    // one with a ⭐ badge. Each regenerate creates a NEW item (old
+    // keyframes stay on the canvas), and the row's keyframeUrl is the
+    // single source of truth for which item is currently adopted.
+    const kfItemId = useCanvasItemStore.getState().addItem({
+      kind: 'image',
+      name: `KF-${row.shot_number}`,
+      content: url,
+      prompt: result.prompt,
+      role: 'keyframe',
+    })
+    const kfNodeId = useCanvasStore.getState().addItemNode(
+      kfItemId, 'image',
+      { x: baseX, y: baseY },
+      { width: 280, height: 180 },
+    )
 
-      // Wire edges from each resolved ref node into the keyframe and persist
-      // the resolved nodeId back into the slot so future regens reuse it.
-      const updatedSlots: Partial<Pick<StoryboardRow, 'character1' | 'character2' | 'prop1' | 'prop2' | 'scene'>> = {}
-      for (const r of resolved) {
-        if (!r.nodeId) continue
-        useCanvasStore.getState().addEdge(r.nodeId, kfNodeId)
-        updatedSlots[r.slotKey] = { ...r.slot, nodeId: r.nodeId, image: r.imageUrl || r.slot.image }
-      }
-
-      updateRow(row.id, {
-        keyframeUrl: url,
-        reference_image: url,
-        keyframeNodeId: kfNodeId,
-        status: 'done',
-        ...updatedSlots,
-      })
-      updateTask(taskId, { status: 'done', resultUrl: url, resultKind: 'image' })
-      toast.success(`Keyframe ${row.shot_number} 生成完成`)
-    } catch (e) {
-      updateRow(row.id, { status: 'todo' })
-      updateTask(taskId, { status: 'failed', error: String((e as Error).message ?? e) })
-      toast.error('Keyframe 生成失败', { description: String((e as Error).message).slice(0, 200) })
+    // Wire edges from each resolved ref node into the keyframe and persist
+    // the resolved nodeId back into the slot so future regens reuse it.
+    const updatedSlots: Partial<Pick<StoryboardRow, 'character1' | 'character2' | 'prop1' | 'prop2' | 'scene'>> = {}
+    for (const r of resolved) {
+      if (!r.nodeId) continue
+      useCanvasStore.getState().addEdge(r.nodeId, kfNodeId)
+      updatedSlots[r.slotKey] = { ...r.slot, nodeId: r.nodeId, image: r.imageUrl || r.slot.image }
     }
-  }, [updateRow, startTask, updateTask])
+
+    updateRow(row.id, {
+      keyframeUrl: url,
+      reference_image: url,
+      keyframeNodeId: kfNodeId,
+      status: 'done',
+      ...updatedSlots,
+    })
+    return url
+  }, [updateRow])
 
   const generateBeatVideo = useCallback(async (row: StoryboardRow) => {
     const hasMotion = Boolean(
@@ -295,14 +351,15 @@ export function useStoryboardGenerate() {
     startTask({ id: taskId, nodeId: `sb-bv-${row.id}`, itemId: row.id, prompt: 'Beat Video' })
     updateTask(taskId, { status: 'polling' })
 
-    try {
-      // Omni-reference mode (全能参考): only the keyframe goes to Seedance as
-      // an image input. Character/scene/prop info threads through as TEXT
-      // (contextRefs) so the model knows what to read out of the keyframe.
-      const keyframeUrl = row.keyframeUrl || row.reference_image || ''
-      if (!keyframeUrl) {
-        throw new Error('缺少 keyframe —— 先生成 keyframe 再拍摄 beat video')
-      }
+    /** Detect Seedance's privacy-content rejection. The provider returns
+     *  the literal "InputImageSensitiveContentDetected.PrivacyInformation"
+     *  in the error message — we don't want to match other privacy errors
+     *  by accident, so the substring check is exact. */
+    const isPrivacyBlock = (msg: string): boolean =>
+      msg.includes('InputImageSensitiveContentDetected.PrivacyInformation')
+
+    /** Run cinematographer.shoot once with a specific keyframe URL. */
+    const attemptShoot = async (keyframeUrl: string): Promise<{ url: string; prompt: string }> => {
       const contextRefs: BeatVideoContextRef[] = []
       const pushCtx = (role: string, description: string | undefined) => {
         if (!description?.trim()) return
@@ -318,20 +375,52 @@ export function useStoryboardGenerate() {
       const visualStyle = db.artDirection.customStyle || db.artDirection.stylePreset
 
       const agentCtx = createMemoryContext({ llm: createCapabilityLLM() })
-      const result = await runAgentWithChatBridge(
+      return runAgentWithChatBridge(
         'cinematographer-agent',
         cinematographerShoot(
-          {
-            row,
-            visualStyle,
-            keyframeUrl,
-            contextRefs,
-            aspect: '16:9',
-          },
+          { row, visualStyle, keyframeUrl, contextRefs, aspect: '16:9' },
           agentCtx,
         ),
         { verb: 'shoot' },
       )
+    }
+
+    try {
+      // Omni-reference mode (全能参考): only the keyframe goes to Seedance as
+      // an image input. Character/scene/prop info threads through as TEXT
+      // (contextRefs) so the model knows what to read out of the keyframe.
+      let keyframeUrl = row.keyframeUrl || row.reference_image || ''
+      if (!keyframeUrl) {
+        throw new Error('缺少 keyframe —— 先生成 keyframe 再拍摄 beat video')
+      }
+
+      let result: { url: string; prompt: string }
+      try {
+        result = await attemptShoot(keyframeUrl)
+      } catch (firstErr) {
+        const msg = String((firstErr as Error).message ?? firstErr)
+        if (!isPrivacyBlock(msg)) throw firstErr
+
+        // Seedance flagged the keyframe as containing real-person privacy
+        // content. Ask director-agent to render a 2D-stylized keyframe
+        // (faces no longer trip the safety filter) and reshoot from that.
+        // The new keyframe lands as its own canvas node (kept alongside
+        // the original) and becomes the row's adopted ⭐ keyframe.
+        toast.info('Seedance 隐私检测拒绝了当前 keyframe — 让 director 重画 2D 风格化版本', {
+          description: '保留原 keyframe，新版会成为表格采用的 keyframe',
+        })
+        const freshRow = useStoryboardStore.getState().rows.find((r) => r.id === row.id) ?? row
+        const newKfUrl = await runKeyframeGeneration(freshRow, {
+          stylizeFacesFor2D: true,
+          taskLabel: 'Keyframe (2D-stylized for Seedance privacy retry)',
+        })
+        keyframeUrl = newKfUrl
+        toast.info('重新拍摄 Beat Video …', { description: '使用 2D 风格化 keyframe 重试' })
+        // Re-read the row in case generateKeyframe mutated other fields.
+        const retryRow = useStoryboardStore.getState().rows.find((r) => r.id === row.id) ?? row
+        Object.assign(row, retryRow)
+        result = await attemptShoot(keyframeUrl)
+      }
       const url = result.url
 
       // Create beat video node on canvas, connected to keyframe
@@ -340,11 +429,12 @@ export function useStoryboardGenerate() {
       const baseX = 750
       const baseY = rowIdx * 300
 
+      const finalPrompt = result.prompt
       const vidItemId = useCanvasItemStore.getState().addItem({
         kind: 'video',
         name: `BV-${row.shot_number}`,
         content: url,
-        prompt: result.prompt,
+        prompt: finalPrompt,
       })
       const vidNodeId = useCanvasStore.getState().addItemNode(
         vidItemId, 'video',
