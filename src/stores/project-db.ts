@@ -157,6 +157,10 @@ export interface Script {
   /** Casting cards from the most recent script-agent dossier. Consumed by
    *  actor-agent to play each character's lines + performance. */
   castingCards?: PersistedCastingCard[]
+  /** characterName -> voiceLibrary id mapping produced by actor-agent.castVoices.
+   *  Consumed by cinematographer prompt augmentation + by the canvas audio
+   *  node spawner so every character has a paired voice asset on the canvas. */
+  voiceBindings?: Record<string, string>
   updatedAt: number
 }
 

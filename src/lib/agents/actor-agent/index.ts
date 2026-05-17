@@ -20,20 +20,30 @@ import type { AgentGenerator } from '@/lib/agents/_shared/runtime/types'
 
 import skillSource from './SKILL.md?raw'
 import enrichRowSource from './prompts/enrich-row.md?raw'
+import castVoicesSource from './prompts/cast-voices.md?raw'
+import attachVoiceRefsSource from './prompts/attach-voice-refs.md?raw'
 
 import {
   EnrichedPerformanceFieldsSchema,
+  VoiceBindingsSchema,
   type ActorCharacterCard,
   type ActorRow,
+  type AttachVoiceRefsRequest,
+  type AttachVoiceRefsResult,
+  type CastVoicesRequest,
   type EnrichRowRequest,
   type EnrichTableRequest,
   type EnrichTableResult,
   type EnrichedPerformanceFields,
+  type VoiceBindings,
+  type VoiceCandidateSummary,
 } from './schema'
 
 const { body: SYSTEM } = parseFrontmatter(skillSource)
 const TPL = {
   enrichRow: parseFrontmatter(enrichRowSource).body,
+  castVoices: parseFrontmatter(castVoicesSource).body,
+  attachVoiceRefs: parseFrontmatter(attachVoiceRefsSource).body,
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────
@@ -210,27 +220,228 @@ export async function* enrichTable(
   yield { type: 'result', payload: out }
 }
 
+// ─── Verb: castVoices ────────────────────────────────────────────
+
+interface BuildCastVoicesPromptArgs {
+  cards: ActorCharacterCard[]
+  candidates: VoiceCandidateSummary[]
+  creativeBrief?: CastVoicesRequest['creativeBrief']
+}
+
+function buildCastVoicesPrompt(args: BuildCastVoicesPromptArgs): string {
+  return fillTemplate(TPL.castVoices, {
+    castingCardsJson: JSON.stringify(args.cards, null, 2),
+    voiceShortlistJson: JSON.stringify(args.candidates, null, 2),
+    creativeBriefJson: JSON.stringify(args.creativeBrief ?? {}, null, 2),
+  })
+}
+
+/**
+ * Generator-style castVoices that lets the caller supply the candidate
+ * pool. Decoupled from voice-library so this agent module stays pure
+ * (no Vite asset imports); the director-assistant pulls shortlists from
+ * the library and feeds them in here.
+ *
+ * Input: castingCards + a shortlist of voice candidates per character.
+ * Output: { characterName: voiceId } map. Bindings are schema-validated
+ * to ensure ids actually exist in the supplied candidate pool.
+ */
+export interface CastVoicesWithCandidatesRequest {
+  castingCards: ActorCharacterCard[]
+  creativeBrief?: {
+    projectType?: string
+    tone?: string
+    genre?: string
+  }
+  /** Per-character shortlist of voice candidates, pre-filtered by caller. */
+  candidatesPerCard: Record<string, VoiceCandidateSummary[]>
+}
+
+export async function* castVoices(
+  req: CastVoicesWithCandidatesRequest,
+  ctx: ProjectContext,
+): AgentGenerator<VoiceBindings> {
+  if (req.castingCards.length === 0) {
+    yield { type: 'result', payload: {} }
+    return
+  }
+
+  yield {
+    type: 'progress',
+    message: `actor: casting voices for ${req.castingCards.length} character${req.castingCards.length === 1 ? '' : 's'}`,
+  }
+
+  // Build a union pool — the LLM sees every candidate in its shortlist.
+  // Each candidate gets the names of the cards that nominated it so the
+  // model can keep gender/age sanity even after the union.
+  const seen = new Set<string>()
+  const unionPool: VoiceCandidateSummary[] = []
+  for (const cands of Object.values(req.candidatesPerCard)) {
+    for (const c of cands) {
+      if (seen.has(c.id)) continue
+      seen.add(c.id)
+      unionPool.push(c)
+    }
+  }
+  if (unionPool.length === 0) {
+    throw new Error('actor-agent: castVoices got empty candidate pool — voice library empty?')
+  }
+
+  const prompt = buildCastVoicesPrompt({
+    cards: req.castingCards,
+    candidates: unionPool,
+    creativeBrief: req.creativeBrief,
+  })
+
+  const llmResponse = await ctx.llm.complete(
+    [{ role: 'user', content: prompt }],
+    { system: SYSTEM, signal: ctx.abort },
+  )
+
+  const json = extractFirstJsonObject(llmResponse)
+  const parsed = VoiceBindingsSchema.safeParse(json)
+  if (!parsed.success) {
+    throw new Error(`actor-agent: castVoices JSON failed validation: ${z.prettifyError(parsed.error)}`)
+  }
+
+  // Defensive: drop any binding whose voiceId isn't in the pool, so we
+  // never persist a phantom id the catalog doesn't know about.
+  const validIds = new Set(unionPool.map((v) => v.id))
+  const cleaned: VoiceBindings = {}
+  const skipped: string[] = []
+  for (const [name, voiceId] of Object.entries(parsed.data)) {
+    if (validIds.has(voiceId)) {
+      cleaned[name] = voiceId
+    } else {
+      skipped.push(`${name}→${voiceId}`)
+    }
+  }
+  if (skipped.length > 0) {
+    ctx.log(`actor: castVoices dropped ${skipped.length} hallucinated voice binding(s): ${skipped.join(', ')}`)
+  }
+
+  yield { type: 'result', payload: cleaned }
+}
+
+// ─── Verb: attachVoiceRefs (pure post-processor for cinematographer) ─
+
+/**
+ * Cinematographer-prompt post-processor. Deterministically appends an
+ * audio-reference block to the video prompt so Seedance sees per-character
+ * dialogue + voice file urls. No LLM call — purely templated.
+ *
+ * Idempotent: rerunning with the same inputs produces the same output;
+ * caller is responsible for not double-appending across re-shoots.
+ */
+export async function* attachVoiceRefs(
+  req: AttachVoiceRefsRequest,
+  ctx: ProjectContext,
+): AgentGenerator<AttachVoiceRefsResult> {
+  void ctx
+  const cards = cardsForRow(req.row, req.castingCards)
+  if (cards.length === 0) {
+    yield { type: 'result', payload: { videoPrompt: req.videoPrompt, attached: [] } }
+    return
+  }
+
+  // Parse the row's dialogue into per-character lines. Format produced by
+  // enrichRow is `角色名: 台词\n角色名: 台词`. For single-character rows
+  // dialogue has no prefix — we attribute it to the lone character.
+  const lines = parseDialogueByCharacter(req.row.dialogue ?? '', cards)
+
+  const attached: AttachVoiceRefsResult['attached'] = []
+  for (const card of cards) {
+    const line = lines[card.name] ?? ''
+    if (!line) continue
+    const voiceId = req.voiceBindings[card.name]
+    if (!voiceId) continue
+    const voiceUrl = req.voiceUrlFor(voiceId)
+    if (!voiceUrl) continue
+    attached.push({ character: card.name, voiceId, voiceUrl, line })
+  }
+
+  if (attached.length === 0) {
+    yield { type: 'result', payload: { videoPrompt: req.videoPrompt, attached: [] } }
+    return
+  }
+
+  const characterLines = attached
+    .map(
+      (a: { character: string; voiceId: string; voiceUrl: string; line: string }) =>
+        `- 角色: ${a.character}\n  对白: "${a.line}"\n  音色文件: ${a.voiceUrl}\n  voice_id: ${a.voiceId}`,
+    )
+    .join('\n')
+
+  const appended = fillTemplate(TPL.attachVoiceRefs, { characterLines })
+  const videoPrompt = `${req.videoPrompt.trim()}\n\n${appended.trim()}`
+  yield { type: 'result', payload: { videoPrompt, attached } }
+}
+
+function parseDialogueByCharacter(
+  dialogue: string,
+  cards: ActorCharacterCard[],
+): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (!dialogue.trim()) return out
+
+  // Multi-character format: `角色名: line` lines (one per line).
+  const lines = dialogue.split(/\n+/).map((l) => l.trim()).filter(Boolean)
+  let matched = 0
+  for (const line of lines) {
+    const m = line.match(/^([^:：]{1,16})\s*[:：]\s*(.+)$/)
+    if (m) {
+      const name = m[1].trim()
+      const text = m[2].trim()
+      // Match against known card names (case-insensitive); skip unknowns.
+      const card = cards.find((c) => c.name.toLowerCase() === name.toLowerCase())
+      if (card) {
+        out[card.name] = out[card.name] ? `${out[card.name]} ${text}` : text
+        matched++
+      }
+    }
+  }
+  // Single-character row with no prefix: attribute the whole dialogue
+  // to the sole character on stage.
+  if (matched === 0 && cards.length === 1) {
+    out[cards[0].name] = dialogue.trim()
+  }
+  return out
+}
+
 // Pure helpers exported for tests.
-export { buildEnrichRowPrompt, cardsForRow, nameFromSlotDescription }
+export {
+  buildCastVoicesPrompt,
+  buildEnrichRowPrompt,
+  cardsForRow,
+  nameFromSlotDescription,
+  parseDialogueByCharacter,
+}
 
 // ─── Module metadata ─────────────────────────────────────────────
 
 export const actorAgent = {
   meta: {
     name: 'actor-agent',
-    description: 'Plays each character and rewrites the 5 storyboard performance fields',
+    description: 'Plays each character, rewrites the 5 performance fields, picks voices, and augments cinematographer prompts',
     model: 'claude-sonnet-4-5',
   },
   systemPrompt: SYSTEM,
   enrichRow,
   enrichTable,
+  castVoices,
+  attachVoiceRefs,
 } as const
 
 export type {
   ActorCharacterCard,
   ActorRow,
+  AttachVoiceRefsRequest,
+  AttachVoiceRefsResult,
+  CastVoicesRequest,
   EnrichRowRequest,
   EnrichTableRequest,
   EnrichTableResult,
   EnrichedPerformanceFields,
+  VoiceBindings,
+  VoiceCandidateSummary,
 } from './schema'

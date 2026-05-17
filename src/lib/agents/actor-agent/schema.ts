@@ -70,3 +70,59 @@ export interface EnrichTableRequest {
 }
 
 export type EnrichTableResult = Record<string, EnrichedPerformanceFields>
+
+// ─── Voice casting (actor-agent picks a voice per character) ──────
+
+/** Compact voice metadata sent to the LLM for casting picks. */
+export interface VoiceCandidateSummary {
+  id: string
+  displayName: string
+  /** Optional one-line sample of the spoken content for tone reference. */
+  sampleSnippet?: string
+  gender?: string
+  age?: string
+  tags?: string[]
+}
+
+/** LLM output: characterName -> voiceId. Validated against the candidate
+ *  pool so phantom ids never get persisted. */
+export const VoiceBindingsSchema = z.record(z.string().min(1), z.string().min(1))
+export type VoiceBindings = z.infer<typeof VoiceBindingsSchema>
+
+export interface CastVoicesRequest {
+  castingCards: ActorCharacterCard[]
+  creativeBrief?: {
+    projectType?: string
+    tone?: string
+    genre?: string
+  }
+}
+
+// ─── Cinematographer prompt augmentation ──────────────────────────
+
+export interface AttachVoiceRefsRequest {
+  /** The cinematographer-built video prompt this verb appends to. */
+  videoPrompt: string
+  /** The storyboard row whose dialogue + character slots provide attribution. */
+  row: ActorRow
+  /** Project casting cards — for character-name matching. */
+  castingCards: ActorCharacterCard[]
+  /** characterName -> voiceId mapping persisted from a previous castVoices run. */
+  voiceBindings: VoiceBindings
+  /** Caller-supplied URL resolver — keeps actor-agent decoupled from the
+   *  voice-library Vite asset chain. Returns the audio public URL or undefined. */
+  voiceUrlFor: (voiceId: string) => string | undefined
+}
+
+export interface AttachVoiceRefsResult {
+  /** videoPrompt with an appended `角色对白与音色` block (or unchanged if
+   *  no character had both a line + a voice binding). */
+  videoPrompt: string
+  /** Per-character refs that were attached (for logging / inspection). */
+  attached: Array<{
+    character: string
+    voiceId: string
+    voiceUrl: string
+    line: string
+  }>
+}

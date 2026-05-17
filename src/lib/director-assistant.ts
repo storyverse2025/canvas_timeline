@@ -163,6 +163,17 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   const briefTone = fc.core_emotion?.trim() || ''
   const briefGenre = [briefType, briefTone].filter(Boolean).join(' · ') || undefined
   const { useProjectDB: useProjectDBImport } = await import('@/stores/project-db')
+  const persistedCastingCards = dossier.casting_cards.map((c) => ({
+    name: c.name,
+    dramatic_function: c.dramatic_function,
+    age_range: c.age_range,
+    gender_presentation: c.gender_presentation,
+    appearance_for_image: c.appearance_for_image,
+    personality_layers: c.personality_layers,
+    voice_print: c.voice_print,
+    performance_anchors: c.performance_anchors,
+    casting_notes: c.casting_notes,
+  }))
   useProjectDBImport.getState().updateScript({
     creativeBrief: {
       projectType: briefType || undefined,
@@ -170,18 +181,24 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
       genre: briefGenre,
       platformAudience: fc.platform_bias?.trim() || undefined,
     },
-    castingCards: dossier.casting_cards.map((c) => ({
-      name: c.name,
-      dramatic_function: c.dramatic_function,
-      age_range: c.age_range,
-      gender_presentation: c.gender_presentation,
-      appearance_for_image: c.appearance_for_image,
-      personality_layers: c.personality_layers,
-      voice_print: c.voice_print,
-      performance_anchors: c.performance_anchors,
-      casting_notes: c.casting_notes,
-    })),
+    castingCards: persistedCastingCards,
   })
+
+  // Actor-agent casts a voice per character right after the dossier
+  // lands, so the storyboard table + cinematographer downstream both have
+  // voiceBindings available without an extra manual step. Failures here
+  // are non-fatal: log + continue (user can re-cast voices manually from
+  // the 演员表 panel).
+  try {
+    const { runCastVoicesAndSpawnAudio } = await import('@/lib/voice-binding')
+    await runCastVoicesAndSpawnAudio({
+      castingCards: persistedCastingCards,
+      creativeBrief: { projectType: briefType, tone: briefTone, genre: briefGenre },
+    })
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn('[director-assistant] voice casting failed, continuing without voiceBindings:', (e as Error).message)
+  }
 
   setStep(state, 0, 0, 'done', '已按 script-framework-qa 完成七层框架校准'); onUpdate(state)
   setStep(state, 0, 1, 'done', '已按 script-writing-expansion 生成/补齐完整剧本基准'); onUpdate(state)

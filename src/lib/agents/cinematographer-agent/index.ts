@@ -168,7 +168,7 @@ export async function* shoot(
     message: `cinematographer: composing Seedance prompt for shot ${shot} (${durationSeconds}s, ${aspect}, omni-reference)`,
   }
 
-  const prompt = assembleShootPrompt({
+  const basePrompt = assembleShootPrompt({
     row: req.row,
     keyframeUrl: req.keyframeUrl,
     contextRefs: req.contextRefs,
@@ -176,6 +176,11 @@ export async function* shoot(
   })
 
   void ctx
+  // Caller-supplied post-processor runs after the cinematographer prompt
+  // is assembled and before Seedance is invoked — actor-agent uses this
+  // to append per-character voice file URLs + dialogue.
+  const prompt = req.promptPostProcessor ? await req.promptPostProcessor(basePrompt) : basePrompt
+
   yield {
     type: 'progress',
     message: `cinematographer: rolling on Seedance (${SHOOT_PROVIDER}/${SHOOT_MODEL})`,
