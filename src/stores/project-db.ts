@@ -144,6 +144,20 @@ export interface PersistedCastingCard {
   voice_print?: string
   performance_anchors?: string
   casting_notes?: string
+  /** Biography written by actor-agent.designCharacters — 200-400 字 narrative. */
+  biography?: string
+  /** 7-pillar appearance breakdown from actor-agent.designCharacters. */
+  appearance_pillars?: {
+    subject: string
+    bone_structure: string
+    features: string
+    expression: string
+    texture_light: string
+    quality: string
+    anti_ai: string
+  }
+  /** Composed appearance prompt the art-director hands to the image model. */
+  appearance_prompt?: string
 }
 
 export interface Script {

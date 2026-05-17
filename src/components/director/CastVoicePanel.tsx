@@ -5,7 +5,7 @@ import { toast } from 'sonner'
 import { runCastVoicesAndSpawnAudio, spawnVoiceCanvasNodes } from '@/lib/voice-binding'
 import { getVoice, listVoices, searchVoices } from '@/lib/voice-library'
 import type { VoiceEntry, VoiceGender } from '@/lib/voice-library'
-import { useProjectDB } from '@/stores/project-db'
+import { useProjectDB, type PersistedCastingCard } from '@/stores/project-db'
 import { cn } from '@/lib/utils'
 
 /**
@@ -21,11 +21,24 @@ import { cn } from '@/lib/utils'
  * Mounted inside ScriptInputDialog after the casting cards land. Falls
  * back to a friendly empty state when no cards are present yet.
  */
+// Stable empty literals so the `??` fallback inside the component doesn't
+// create a fresh reference each render — that's what was tripping
+// zustand's selector equality check and causing the React
+// "Maximum update depth exceeded" infinite-loop loop in DirectorAssistant.
+const EMPTY_CARDS: PersistedCastingCard[] = []
+const EMPTY_BINDINGS: Record<string, string> = {}
+
 export function CastVoicePanel() {
-  const castingCards = useProjectDB((s) => s.script.castingCards ?? [])
-  const voiceBindings = useProjectDB((s) => s.script.voiceBindings ?? {})
+  // Selectors must return *stable* references when nothing changed —
+  // never `... ?? []` inside a selector. Hoist the fallback to module
+  // scope (above).
+  const castingCardsRaw = useProjectDB((s) => s.script.castingCards)
+  const voiceBindingsRaw = useProjectDB((s) => s.script.voiceBindings)
   const creativeBrief = useProjectDB((s) => s.script.creativeBrief)
   const updateScript = useProjectDB((s) => s.updateScript)
+
+  const castingCards = castingCardsRaw ?? EMPTY_CARDS
+  const voiceBindings = voiceBindingsRaw ?? EMPTY_BINDINGS
 
   const [busy, setBusy] = useState(false)
   const [pickerCharacter, setPickerCharacter] = useState<string | null>(null)

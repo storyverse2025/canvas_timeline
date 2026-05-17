@@ -4,9 +4,12 @@ import {
   actorAgent,
   attachVoiceRefs,
   buildCastVoicesPrompt,
+  buildDesignCharactersPrompt,
   buildEnrichRowPrompt,
   cardsForRow,
   castVoices,
+  composePillarsIntoPrompt,
+  designCharacters,
   enrichRow,
   enrichTable,
   nameFromSlotDescription,
@@ -434,5 +437,134 @@ describe('attachVoiceRefs', () => {
     expect(result.attached.map((a) => a.character)).toEqual(['林清'])
     expect(result.videoPrompt).toContain('林清')
     expect(result.videoPrompt).not.toContain('vox-MISSING')
+  })
+})
+
+describe('designCharacters', () => {
+  const extracted = [
+    { name: '林清', gender: 'female', appearance: '', clothing: '', expression: '', image_prompt: 'bland' },
+    { name: '陆判', gender: 'male', appearance: '', clothing: '', expression: '', image_prompt: 'bland villain' },
+  ]
+  const castingCards = [
+    { name: '林清', dramatic_function: '保护者', personality_layers: '冷静克制' },
+    { name: '陆判', dramatic_function: '阴鸷反派', personality_layers: '城府深沉' },
+  ]
+  const designSample = [
+    {
+      name: '林清',
+      biography: '林清出生于沿海雾港一户医师之家，十二岁那年她目睹父亲为庇护避难者被海上巡警带走，从此学会沉默与隐藏。少年时她在码头工坊学修理钟表，掌握了让自己消失在日常细节里的本能。后来她为一个反抗者网络递送情报，每次都靠那只父亲留下的银怀表抵御恐惧。这次任务里她终于决定不再只递送，而是要带阿澈走出去——她心里清楚，做出这一步，自己回不去原先那个隐身在人群中的林清了。',
+      appearance_pillars: {
+        subject: '亚洲女性，30 岁上下，半身正面，视线略偏向镜头左侧，肩颈以下隐入码头夜色',
+        bone_structure: '窄鹅蛋脸，下颌角弱化，下巴尖；额头中等饱满，太阳穴轻微内收',
+        features: '深灰棕平眉，长杏眼带凤眼感，细直秀气鼻，中薄唇',
+        expression: '视线冷静克制，瞳孔聚焦但不咄咄逼人，嘴角自然平直微收',
+        texture_light: '冷白皮雾面妆，黑色长发中分；冷光定向补光，背景压暗虚化',
+        quality: '电影级真实摄影质感，8K，Kodak Vision3 色彩，Sony Venice + Panavision 镜头感',
+        anti_ai: '不做网红脸/磨皮/欧美鼻/甜妹卧蚕/二次元；不做夸张笑容',
+      },
+      appearance_prompt: 'composed-prompt-林清-very-long-string-for-image-model-' + 'x'.repeat(200),
+    },
+    {
+      name: '陆判',
+      biography: '陆判幼年丧母，被舅父收养于钱庄。账房先生发现他算账过目不忘，把他送进权钱场。二十岁那年他亲眼看着曾经救他出火的恩师被同僚以诈骗罪推下水，他在审讯室门外站了一整夜没说一句话。后来他成了那种"什么都听着、什么都记着、什么都不流露"的角色——别人犯错就在他档案里多一行。这次他盯上的是林清的网络，因为她父亲三十年前的旧案里有一笔他至今没算清的账。',
+      appearance_pillars: {
+        subject: '亚洲男性，45 岁上下，半身正面，肩颈微僵直；背景为雾港夜色',
+        bone_structure: '长方脸收紧，颧骨内收偏窄，太阳穴明显凹陷；下颌角清晰偏锐，下巴尖',
+        features: '一字眉偏低，长凤眼但内眦角度极锐；山根高直鼻梁窄；薄唇嘴角微微下垂；左眉骨上一道极淡旧伤',
+        expression: '凝视过久，眨眼极慢；嘴角向斜上方扯出几乎不可察的弧度，但眼睛纹丝不动',
+        texture_light: '皮肤偏蜡黄哑光，下睑泪沟深陷；黑色后梳短发，墨绿哑光呢西装；硬侧光从右下打来制造眼窝阴影；色温偏冷',
+        quality: '电影级真实摄影质感，8K，胶片颗粒，Sony Venice + Panavision 镜头感',
+        anti_ai: '不做漫画式邪笑/狞笑/狰狞；不做美型反派模板；不做眼睛发红或瞳孔变形；保留一处让人本能戒备的违和（颧骨过窄+泪沟深陷）',
+      },
+      appearance_prompt: 'composed-prompt-陆判-very-long-string-for-image-model-' + 'x'.repeat(200),
+    },
+  ]
+
+  it('buildDesignCharactersPrompt embeds extraction + cards + brief + style', () => {
+    const prompt = buildDesignCharactersPrompt({
+      extractedCharacters: extracted,
+      castingCards,
+      creativeBrief: { tone: '悬疑' },
+      visualStyle: 'Cold-toned filmic noir',
+    })
+    expect(prompt).toContain('林清')
+    expect(prompt).toContain('陆判')
+    expect(prompt).toContain('保护者')
+    expect(prompt).toContain('阴鸷反派')
+    expect(prompt).toContain('Cold-toned filmic noir')
+    expect(prompt).toContain('7 个 pillars')
+  })
+
+  it('returns biography + appearance_pillars + appearance_prompt per character', async () => {
+    const { llm } = llmReturning(JSON.stringify(designSample))
+    const ctx = createMemoryContext({ llm })
+    const result = await driveAuto(
+      designCharacters({ extractedCharacters: extracted, castingCards }, ctx),
+    )
+    expect(result).toHaveLength(2)
+    expect(result[0]!.name).toBe('林清')
+    expect(result[0]!.biography.length).toBeGreaterThan(40)
+    expect(result[0]!.appearance_pillars.anti_ai).toContain('网红脸')
+    expect(result[1]!.appearance_pillars.bone_structure).toContain('长方')
+  })
+
+  it('recomposes appearance_prompt from pillars when the LLM returned a too-short one', async () => {
+    const compressed = [{ ...designSample[0]!, appearance_prompt: 'too short' }]
+    const { llm } = llmReturning(JSON.stringify(compressed))
+    const ctx = createMemoryContext({ llm })
+    const result = await driveAuto(
+      designCharacters({ extractedCharacters: [extracted[0]!], castingCards: [castingCards[0]!] }, ctx),
+    )
+    // Recomposed prompt must include pillar content + end on the anti_ai line.
+    expect(result[0]!.appearance_prompt).toContain('窄鹅蛋')
+    expect(result[0]!.appearance_prompt).toContain('网红脸')
+    const lastLine = result[0]!.appearance_prompt.trim().split(/\n+/).pop() ?? ''
+    expect(lastLine).toContain('不做')
+  })
+
+  it('logs missing characters when the LLM skips some', async () => {
+    const onlyOne = [designSample[0]!]
+    const { llm } = llmReturning(JSON.stringify(onlyOne))
+    const logs: string[] = []
+    const ctx = createMemoryContext({ llm, log: (m) => logs.push(m) })
+    const result = await driveAuto(
+      designCharacters({ extractedCharacters: extracted, castingCards }, ctx),
+    )
+    expect(result).toHaveLength(1)
+    expect(logs.some((m) => m.includes('陆判') && m.includes('skipped'))).toBe(true)
+  })
+
+  it('short-circuits empty extractedCharacters', async () => {
+    const { llm, spy } = llmReturning('SHOULD NOT BE CALLED')
+    const ctx = createMemoryContext({ llm })
+    const result = await driveAuto(
+      designCharacters({ extractedCharacters: [], castingCards }, ctx),
+    )
+    expect(spy).not.toHaveBeenCalled()
+    expect(result).toEqual([])
+  })
+
+  it('throws on schema-violating JSON (missing required pillar)', async () => {
+    const bad = [{
+      name: '林清',
+      biography: 'x'.repeat(100),
+      appearance_pillars: {
+        subject: 's', bone_structure: 'b', features: 'f', expression: 'e',
+        texture_light: 't', quality: 'q',
+        // anti_ai missing
+      },
+      appearance_prompt: 'x'.repeat(100),
+    }]
+    const { llm } = llmReturning(JSON.stringify(bad))
+    const ctx = createMemoryContext({ llm })
+    await expect(
+      driveAuto(designCharacters({ extractedCharacters: [extracted[0]!], castingCards: [castingCards[0]!] }, ctx)),
+    ).rejects.toThrow(/failed validation/)
+  })
+
+  it('composePillarsIntoPrompt puts anti_ai last', () => {
+    const composed = composePillarsIntoPrompt(designSample[0]!.appearance_pillars)
+    const lines = composed.split(/\n+/).map((l) => l.trim()).filter(Boolean)
+    expect(lines[lines.length - 1]).toBe(designSample[0]!.appearance_pillars.anti_ai)
   })
 })

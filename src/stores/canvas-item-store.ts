@@ -14,7 +14,7 @@ export type CanvasItemKind = 'image' | 'text' | 'video' | 'audio';
  *                  to render an adopted-keyframe ⭐ badge when this item's
  *                  content matches some storyboard row's keyframeUrl.
  */
-export type CanvasItemRole = 'style' | 'system' | 'keyframe' | 'voice';
+export type CanvasItemRole = 'style' | 'system' | 'keyframe' | 'voice' | 'character-bio';
 
 export interface CanvasItem {
   id: string;

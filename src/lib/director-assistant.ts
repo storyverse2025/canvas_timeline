@@ -208,16 +208,44 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
 
   const scriptAnalysis = scriptToCastingReport
   const extraction = await extractElementsFromScript(scriptAnalysis, artStyle)
-  const characterDesigns = JSON.stringify(extraction.characters, null, 2)
-  const sceneDesigns = JSON.stringify(extraction.scenes, null, 2)
-  const propDesigns = JSON.stringify(extraction.props, null, 2)
+
+  // Actor-agent.designCharacters runs BEFORE art-director generates the
+  // character images, so each character image is rendered against the
+  // actor-built biography + 7-pillar appearance instead of the bland
+  // one-liner the extractor produced. Failures are non-fatal: log + fall
+  // through with the original extraction.
+  let augmentedExtraction = extraction
+  try {
+    const { runDesignCharactersAndPersist } = await import('@/lib/character-design')
+    const designed = await runDesignCharactersAndPersist({
+      extractedCharacters: extraction.characters,
+    })
+    augmentedExtraction = { ...extraction, characters: designed.augmentedExtraction }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn('[director-assistant] actor-agent designCharacters failed; continuing with bland extraction:', (e as Error).message)
+  }
+
+  const characterDesigns = JSON.stringify(augmentedExtraction.characters, null, 2)
+  const sceneDesigns = JSON.stringify(augmentedExtraction.scenes, null, 2)
+  const propDesigns = JSON.stringify(augmentedExtraction.props, null, 2)
 
   // Step 6: 素材生成 (角色/场景图片)
   setStep(state, 0, 5, 'running'); onUpdate(state)
   const inv = await ensureElements(
     (msg) => { /* silent — progress shown via pipeline UI */ },
-    { scriptText: scriptAnalysis, stylePreset: artDir.stylePreset, customStyle: artDir.customStyle, extraction },
+    { scriptText: scriptAnalysis, stylePreset: artDir.stylePreset, customStyle: artDir.customStyle, extraction: augmentedExtraction },
   )
+
+  // After character images land, spawn 人物小传 + 外貌 text nodes on the
+  // canvas, edge-wired from each character image node.
+  try {
+    const { spawnCharacterBioCanvasNodes } = await import('@/lib/character-design')
+    spawnCharacterBioCanvasNodes()
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn('[director-assistant] spawning bio text nodes failed:', (e as Error).message)
+  }
   const elementCtx = buildElementContext(inv)
   setStep(state, 0, 5, 'done', `${inv.characters.length} 角色, ${inv.scenes.length} 场景`); onUpdate(state)
 

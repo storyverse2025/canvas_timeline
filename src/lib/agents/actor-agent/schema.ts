@@ -114,6 +114,63 @@ export interface AttachVoiceRefsRequest {
   voiceUrlFor: (voiceId: string) => string | undefined
 }
 
+// ─── designCharacters (biography + 7-pillar appearance) ──────────
+
+/**
+ * Minimal shape of an art-director-extracted character — actor-agent
+ * reads it as input. Fields mirror canvas-elements.ExtractedCharacter
+ * (required there) but the agent boundary keeps them optional so the
+ * agent can also operate on hand-constructed inputs in tests.
+ */
+export interface ExtractedCharacterInput {
+  name: string
+  gender: string
+  appearance: string
+  clothing: string
+  expression: string
+  image_prompt: string
+}
+
+/** The 7-pillar appearance breakdown the actor-agent writes for each character. */
+export const AppearancePillarsSchema = z.object({
+  subject: z.string().min(1),
+  bone_structure: z.string().min(1),
+  features: z.string().min(1),
+  expression: z.string().min(1),
+  texture_light: z.string().min(1),
+  quality: z.string().min(1),
+  anti_ai: z.string().min(1),
+})
+export type AppearancePillars = z.infer<typeof AppearancePillarsSchema>
+
+export const CharacterDesignSchema = z.object({
+  name: z.string().min(1),
+  biography: z.string().min(40),
+  appearance_pillars: AppearancePillarsSchema,
+  // No min length — designCharacters recomposes from pillars if the LLM
+  // shipped a too-short or empty prompt, so the schema only needs the
+  // string to exist.
+  appearance_prompt: z.string(),
+})
+export type CharacterDesign = z.infer<typeof CharacterDesignSchema>
+
+export const CharacterDesignsSchema = z.array(CharacterDesignSchema)
+export type CharacterDesigns = z.infer<typeof CharacterDesignsSchema>
+
+export interface DesignCharactersRequest {
+  /** Characters as extracted by art-director.extractElements. */
+  extractedCharacters: ExtractedCharacterInput[]
+  /** Casting cards from script-agent dossier (already on projectDB.script.castingCards). */
+  castingCards: ActorCharacterCard[]
+  creativeBrief?: {
+    projectType?: string
+    tone?: string
+    genre?: string
+  }
+  /** Global visual style fragment (e.g. style guide's goal line). */
+  visualStyle?: string
+}
+
 export interface AttachVoiceRefsResult {
   /** videoPrompt with an appended `角色对白与音色` block (or unchanged if
    *  no character had both a line + a voice binding). */

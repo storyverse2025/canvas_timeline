@@ -22,19 +22,26 @@ import skillSource from './SKILL.md?raw'
 import enrichRowSource from './prompts/enrich-row.md?raw'
 import castVoicesSource from './prompts/cast-voices.md?raw'
 import attachVoiceRefsSource from './prompts/attach-voice-refs.md?raw'
+import designCharactersSource from './prompts/design-characters.md?raw'
 
 import {
+  CharacterDesignsSchema,
   EnrichedPerformanceFieldsSchema,
   VoiceBindingsSchema,
   type ActorCharacterCard,
   type ActorRow,
+  type AppearancePillars,
   type AttachVoiceRefsRequest,
   type AttachVoiceRefsResult,
   type CastVoicesRequest,
+  type CharacterDesign,
+  type CharacterDesigns,
+  type DesignCharactersRequest,
   type EnrichRowRequest,
   type EnrichTableRequest,
   type EnrichTableResult,
   type EnrichedPerformanceFields,
+  type ExtractedCharacterInput,
   type VoiceBindings,
   type VoiceCandidateSummary,
 } from './schema'
@@ -44,6 +51,7 @@ const TPL = {
   enrichRow: parseFrontmatter(enrichRowSource).body,
   castVoices: parseFrontmatter(castVoicesSource).body,
   attachVoiceRefs: parseFrontmatter(attachVoiceRefsSource).body,
+  designCharacters: parseFrontmatter(designCharactersSource).body,
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────
@@ -408,11 +416,137 @@ function parseDialogueByCharacter(
   return out
 }
 
+// ─── Verb: designCharacters ──────────────────────────────────────
+
+interface BuildDesignCharactersPromptArgs {
+  extractedCharacters: ExtractedCharacterInput[]
+  castingCards: ActorCharacterCard[]
+  creativeBrief?: DesignCharactersRequest['creativeBrief']
+  visualStyle?: string
+}
+
+function buildDesignCharactersPrompt(args: BuildDesignCharactersPromptArgs): string {
+  return fillTemplate(TPL.designCharacters, {
+    extractedCharactersJson: JSON.stringify(args.extractedCharacters, null, 2),
+    castingCardsJson: JSON.stringify(args.castingCards, null, 2),
+    creativeBriefJson: JSON.stringify(args.creativeBrief ?? {}, null, 2),
+    visualStyle: args.visualStyle ?? '(未指定 / unspecified)',
+  })
+}
+
+/**
+ * Extract a JSON array (the design output) from the LLM response. Mirrors
+ * extractFirstJsonObject but for arrays — the design verb returns one
+ * design object per character.
+ */
+function extractFirstJsonArray(text: string): unknown {
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)
+  const candidates = [fence?.[1], text].filter((c): c is string => typeof c === 'string')
+  for (const c of candidates) {
+    const start = c.indexOf('[')
+    const end = c.lastIndexOf(']')
+    if (start < 0 || end < 0 || end <= start) continue
+    try {
+      return JSON.parse(c.slice(start, end + 1))
+    } catch {
+      // try next
+    }
+  }
+  throw new Error('actor-agent: model output did not contain a parseable JSON array')
+}
+
+/**
+ * Compose the 7 pillars into a single image-generation prompt — used as
+ * a safety net when the LLM's `appearance_prompt` is suspiciously short
+ * (some models compress aggressively). Pillar 7 always lands last.
+ */
+function composePillarsIntoPrompt(p: AppearancePillars): string {
+  return [
+    p.subject,
+    p.bone_structure,
+    p.features,
+    p.expression,
+    p.texture_light,
+    p.quality,
+    p.anti_ai,
+  ]
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+/**
+ * designCharacters — for each extracted character, produce biography +
+ * 7-pillar appearance + composed image-prompt. Caller (director-assistant)
+ * patches each ExtractedCharacter.image_prompt with the design's
+ * appearance_prompt before handing the extraction to art-director.
+ */
+export async function* designCharacters(
+  req: DesignCharactersRequest,
+  ctx: ProjectContext,
+): AgentGenerator<CharacterDesigns> {
+  if (req.extractedCharacters.length === 0) {
+    yield { type: 'result', payload: [] }
+    return
+  }
+
+  yield {
+    type: 'progress',
+    message: `actor: designing ${req.extractedCharacters.length} character${req.extractedCharacters.length === 1 ? '' : 's'} (biography + 7-pillar appearance)`,
+  }
+
+  const prompt = buildDesignCharactersPrompt({
+    extractedCharacters: req.extractedCharacters,
+    castingCards: req.castingCards,
+    creativeBrief: req.creativeBrief,
+    visualStyle: req.visualStyle,
+  })
+
+  const llmResponse = await ctx.llm.complete(
+    [{ role: 'user', content: prompt }],
+    { system: SYSTEM, signal: ctx.abort },
+  )
+  const json = extractFirstJsonArray(llmResponse)
+  const parsed = CharacterDesignsSchema.safeParse(json)
+  if (!parsed.success) {
+    throw new Error(
+      `actor-agent: designCharacters JSON failed validation: ${z.prettifyError(parsed.error)}`,
+    )
+  }
+
+  // Safety-net the appearance_prompt — if the LLM compressed it too
+  // hard, recompose from the validated pillars so the image model still
+  // receives the full directive.
+  const enriched: CharacterDesigns = parsed.data.map((d) => {
+    const recomposed = composePillarsIntoPrompt(d.appearance_pillars)
+    return {
+      ...d,
+      appearance_prompt:
+        d.appearance_prompt.length >= recomposed.length * 0.7
+          ? d.appearance_prompt
+          : recomposed,
+    }
+  })
+
+  // Defensive: warn if the LLM skipped any extracted character.
+  const designed = new Set(enriched.map((d) => d.name))
+  const missing = req.extractedCharacters
+    .map((c) => c.name)
+    .filter((n) => !designed.has(n))
+  if (missing.length > 0) {
+    ctx.log(`actor: designCharacters skipped ${missing.length} character(s) — caller will fall back to extracted prompts: ${missing.join(', ')}`)
+  }
+
+  yield { type: 'result', payload: enriched }
+}
+
 // Pure helpers exported for tests.
 export {
   buildCastVoicesPrompt,
+  buildDesignCharactersPrompt,
   buildEnrichRowPrompt,
   cardsForRow,
+  composePillarsIntoPrompt,
   nameFromSlotDescription,
   parseDialogueByCharacter,
 }
@@ -422,12 +556,13 @@ export {
 export const actorAgent = {
   meta: {
     name: 'actor-agent',
-    description: 'Plays each character, rewrites the 5 performance fields, picks voices, and augments cinematographer prompts',
+    description: 'Plays characters, rewrites performance fields, designs biographies + 7-pillar appearances, picks voices, augments cinematographer prompts',
     model: 'claude-sonnet-4-5',
   },
   systemPrompt: SYSTEM,
   enrichRow,
   enrichTable,
+  designCharacters,
   castVoices,
   attachVoiceRefs,
 } as const
@@ -435,13 +570,18 @@ export const actorAgent = {
 export type {
   ActorCharacterCard,
   ActorRow,
+  AppearancePillars,
   AttachVoiceRefsRequest,
   AttachVoiceRefsResult,
   CastVoicesRequest,
+  CharacterDesign,
+  CharacterDesigns,
+  DesignCharactersRequest,
   EnrichRowRequest,
   EnrichTableRequest,
   EnrichTableResult,
   EnrichedPerformanceFields,
+  ExtractedCharacterInput,
   VoiceBindings,
   VoiceCandidateSummary,
 } from './schema'
