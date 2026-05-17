@@ -124,6 +124,28 @@ export interface CreativeBrief {
   platformAudience?: string
 }
 
+/**
+ * Casting card persisted from the script-agent dossier. actor-agent reads
+ * these to "play" each character — voice_print drives dialogue tone,
+ * performance_anchors drive performance_guidance, personality_layers drive
+ * character_psychology.
+ *
+ * Mirrors src/lib/agents/script-agent/schema.ts CastingCard. Stored on
+ * projectDB.script.castingCards so the agent survives reloads + can be
+ * read from anywhere without touching script-agent internals.
+ */
+export interface PersistedCastingCard {
+  name: string
+  dramatic_function?: string
+  age_range?: string
+  gender_presentation?: string
+  appearance_for_image?: string
+  personality_layers?: string
+  voice_print?: string
+  performance_anchors?: string
+  casting_notes?: string
+}
+
 export interface Script {
   text: string
   optimizedText: string
@@ -132,6 +154,9 @@ export interface Script {
   totalDurationSeconds: number
   /** Distilled facts from the most recent script-agent run. */
   creativeBrief?: CreativeBrief
+  /** Casting cards from the most recent script-agent dossier. Consumed by
+   *  actor-agent to play each character's lines + performance. */
+  castingCards?: PersistedCastingCard[]
   updatedAt: number
 }
 
@@ -216,6 +241,7 @@ const DEFAULT_SCRIPT: Script = {
   optimizedText: '',
   totalDurationSeconds: 30,
   creativeBrief: undefined,
+  castingCards: undefined,
   updatedAt: 0,
 }
 

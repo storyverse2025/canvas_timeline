@@ -1,9 +1,14 @@
 import { useEffect, useRef } from 'react'
-import { Trash2, Plus, Wand2, Film, Image as ImageIcon } from 'lucide-react'
+import { Trash2, Plus, Wand2, Film, Image as ImageIcon, Drama } from 'lucide-react'
 import { toast } from 'sonner'
 import { useStoryboardStore } from '@/stores/storyboard-store'
+import { useProjectDB } from '@/stores/project-db'
 import { useStoryboardGenerate } from '@/hooks/useStoryboardGenerate'
 import { runCapability } from '@/lib/capabilities/client'
+import { enrichRow as actorEnrichRow } from '@/lib/agents/actor-agent'
+import { runAgentWithChatBridge } from '@/lib/agents/chat-bridge'
+import { createMemoryContext } from '@/lib/agents/_shared/context/memory'
+import { createCapabilityLLM } from '@/lib/agents/_shared/llm/capability'
 import type { StoryboardRow } from '@/types/storyboard'
 import { cn } from '@/lib/utils'
 
@@ -146,6 +151,43 @@ export function TableContextMenu({ menu, onClose }: Props) {
     generateBeatVideo(row)
   }
 
+  const updateRow = useStoryboardStore.getState().updateRow
+
+  const handleActorEnrich = async () => {
+    onClose()
+    const db = useProjectDB.getState()
+    const castingCards = db.script.castingCards ?? []
+    if (castingCards.length === 0) {
+      toast.error('暂无角色卡 — 先用导演助手跑一遍剧本生成', {
+        description: 'actor-agent 需要 casting cards 才能扮演角色',
+      })
+      return
+    }
+    try {
+      const ctx = createMemoryContext({ llm: createCapabilityLLM() })
+      const enriched = await runAgentWithChatBridge(
+        'actor-agent',
+        actorEnrichRow(
+          {
+            row,
+            castingCards,
+            scene: row.scene?.description
+              ? { name: row.scene?.description.split(/[,，。]/)[0]?.trim(), description: row.scene.description }
+              : undefined,
+            creativeBrief: db.script.creativeBrief,
+            visualStyle: db.artDirection.customStyle || db.artDirection.stylePreset,
+          },
+          ctx,
+        ),
+        { verb: 'enrich-row' },
+      )
+      updateRow(menu.rowId, enriched)
+      toast.success(`镜头 ${row.shot_number} 表演已完善`)
+    } catch (e) {
+      toast.error('演员完善失败', { description: String((e as Error).message).slice(0, 200) })
+    }
+  }
+
   return (
     <div
       ref={ref}
@@ -154,6 +196,7 @@ export function TableContextMenu({ menu, onClose }: Props) {
     >
       <MenuBtn icon={ImageIcon} label="生成 Keyframe" onClick={handleGenKeyframe} />
       <MenuBtn icon={Film} label="生成 Beat Video" onClick={handleGenBeatVideo} />
+      <MenuBtn icon={Drama} label="演员完善表演 (actor-agent)" onClick={handleActorEnrich} />
       <div className="my-1 border-t border-zinc-800" />
       <MenuBtn icon={Plus} label="插入过渡分镜 (AI)" onClick={handleInsertTransition} />
       <div className="my-1 border-t border-zinc-800" />

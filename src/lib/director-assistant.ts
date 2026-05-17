@@ -153,9 +153,11 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   )
   const scriptToCastingReport = JSON.stringify(dossier, null, 2)
 
-  // Persist a distilled creative brief so every downstream keyframe pulls
-  // TYPE / TONE / GENRE from the same source of truth. The dossier's
-  // framework_calibration carries the labels the script-agent locked in.
+  // Persist a distilled creative brief + the casting cards so every
+  // downstream agent (keyframe generator pulls TYPE/TONE/GENRE; actor-agent
+  // pulls casting cards to play each character) reads from the same source
+  // of truth. dossier.framework_calibration carries the labels script-agent
+  // locked in; dossier.casting_cards carries the per-character bios.
   const fc = dossier.framework_calibration
   const briefType = fc.duration_or_episode_type?.trim() || ''
   const briefTone = fc.core_emotion?.trim() || ''
@@ -168,6 +170,17 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
       genre: briefGenre,
       platformAudience: fc.platform_bias?.trim() || undefined,
     },
+    castingCards: dossier.casting_cards.map((c) => ({
+      name: c.name,
+      dramatic_function: c.dramatic_function,
+      age_range: c.age_range,
+      gender_presentation: c.gender_presentation,
+      appearance_for_image: c.appearance_for_image,
+      personality_layers: c.personality_layers,
+      voice_print: c.voice_print,
+      performance_anchors: c.performance_anchors,
+      casting_notes: c.casting_notes,
+    })),
   })
 
   setStep(state, 0, 0, 'done', '已按 script-framework-qa 完成七层框架校准'); onUpdate(state)
