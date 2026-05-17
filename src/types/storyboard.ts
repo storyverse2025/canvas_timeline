@@ -39,6 +39,9 @@ export const StoryboardRowSchema = z.object({
   scene_tags: z.string().default(''),
   lighting_atmosphere: z.string().default(''),
   sound_effects: z.string().default(''),
+  /** sound-agent 3-track mixing brief: dialogue / SFX / BGM levels + timing
+   *  + ducking + row-boundary fades. Free-form text the mixer reads. */
+  mixing_brief: z.string().default(''),
   /** Dialogue text */
   dialogue: z.string().default(''),
   /** Dialogue audio URL (TTS or uploaded) */

@@ -26,6 +26,7 @@ function emptyRow(): Omit<StoryboardRow, 'id' | 'createdAt'> {
     motion_prompts: '',
     bgm: '',
     bgm_audio: '',
+    mixing_brief: '',
     visual_anchor: '',
     character1: { ...EMPTY_SLOT },
     character2: { ...EMPTY_SLOT },

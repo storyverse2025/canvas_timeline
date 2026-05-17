@@ -1,11 +1,12 @@
 import { useEffect, useRef } from 'react'
-import { Trash2, Plus, Wand2, Film, Image as ImageIcon, Drama } from 'lucide-react'
+import { Trash2, Plus, Wand2, Film, Image as ImageIcon, Drama, Music2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useStoryboardStore } from '@/stores/storyboard-store'
 import { useProjectDB } from '@/stores/project-db'
 import { useStoryboardGenerate } from '@/hooks/useStoryboardGenerate'
 import { runCapability } from '@/lib/capabilities/client'
 import { enrichRow as actorEnrichRow } from '@/lib/agents/actor-agent'
+import { designRow as soundDesignRow } from '@/lib/agents/sound-agent'
 import { runAgentWithChatBridge } from '@/lib/agents/chat-bridge'
 import { createMemoryContext } from '@/lib/agents/_shared/context/memory'
 import { createCapabilityLLM } from '@/lib/agents/_shared/llm/capability'
@@ -119,6 +120,7 @@ export function TableContextMenu({ menu, onClose }: Props) {
         storyboard_prompts: String(parsed.storyboard_prompts ?? ''),
         motion_prompts: String(parsed.motion_prompts ?? ''),
         bgm: '',
+        mixing_brief: '',
         bgm_audio: '',
         visual_anchor: '',
         character1: row.character1 ?? { image: '', description: '', nodeId: '' },
@@ -152,6 +154,35 @@ export function TableContextMenu({ menu, onClose }: Props) {
   }
 
   const updateRow = useStoryboardStore.getState().updateRow
+
+  const handleSoundDesign = async () => {
+    onClose()
+    const db = useProjectDB.getState()
+    try {
+      const ctx = createMemoryContext({ llm: createCapabilityLLM() })
+      const brief = await runAgentWithChatBridge(
+        'sound-agent',
+        soundDesignRow(
+          {
+            row,
+            creativeBrief: db.script.creativeBrief,
+            visualStyle: db.artDirection.customStyle || db.artDirection.stylePreset,
+            // Right-click "音频设计" is the user explicitly asking for a
+            // fresh take; overwrite any hand-edited bgm/sfx/mixing fields.
+            overwrite: true,
+          },
+          ctx,
+        ),
+        { verb: 'design-row' },
+      )
+      updateRow(menu.rowId, brief)
+      toast.success(`镜头 ${row.shot_number} 音频设计完成`, {
+        description: 'BGM + SFX + mixing brief 已填入表格，可在编辑面板内调整',
+      })
+    } catch (e) {
+      toast.error('音频设计失败', { description: String((e as Error).message).slice(0, 200) })
+    }
+  }
 
   const handleActorEnrich = async () => {
     onClose()
@@ -197,6 +228,7 @@ export function TableContextMenu({ menu, onClose }: Props) {
       <MenuBtn icon={ImageIcon} label="生成 Keyframe" onClick={handleGenKeyframe} />
       <MenuBtn icon={Film} label="生成 Beat Video" onClick={handleGenBeatVideo} />
       <MenuBtn icon={Drama} label="演员完善表演 (actor-agent)" onClick={handleActorEnrich} />
+      <MenuBtn icon={Music2} label="音频设计 BGM/SFX/混音 (sound-agent)" onClick={handleSoundDesign} />
       <div className="my-1 border-t border-zinc-800" />
       <MenuBtn icon={Plus} label="插入过渡分镜 (AI)" onClick={handleInsertTransition} />
       <div className="my-1 border-t border-zinc-800" />
