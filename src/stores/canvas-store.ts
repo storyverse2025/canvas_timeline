@@ -8,6 +8,62 @@ import type { Node, Edge, NodeChange, EdgeChange } from '@xyflow/react';
 import type { CanvasNodeData, CanvasNodeType } from '@/types/canvas';
 import type { CanvasItemKind } from '@/stores/canvas-item-store';
 
+// Handle ids declared by each node type. Image/Text/Video/Audio render via
+// ImageCanvasNode + TextCanvasNode, which expose named handles (r/b source,
+// t/l target). Other node types (asset, script, visual, …) declare unnamed
+// handles. An edge whose sourceHandle / targetHandle doesn't match the
+// referenced node's set will fail to render and ReactFlow logs the warning
+// "Couldn't create edge for source handle id …". This map drives the
+// cleanup pass below.
+const NAMED_SOURCE_HANDLES: Record<string, ReadonlySet<string>> = {
+  image: new Set(['r', 'b']),
+  video: new Set(['r', 'b']),
+  audio: new Set(['r', 'b']),
+  text:  new Set(['r', 'b']),
+};
+const NAMED_TARGET_HANDLES: Record<string, ReadonlySet<string>> = {
+  image: new Set(['t', 'l']),
+  video: new Set(['t', 'l']),
+  audio: new Set(['t', 'l']),
+  text:  new Set(['t', 'l']),
+};
+
+/**
+ * Sweep edges, removing orphans (source/target node gone) and stripping
+ * handle ids that don't exist on the referenced node's type. Returns counts
+ * for observability — caller decides whether to log. Pure / safe to test.
+ */
+export function pruneOrphanEdges(state: { nodes: Node<CanvasNodeGeometry>[]; edges: Edge[] }): {
+  removed: number;
+  strippedHandles: number;
+} {
+  const byId = new Map(state.nodes.map((n) => [n.id, n]));
+  let removed = 0;
+  let strippedHandles = 0;
+  const next: Edge[] = [];
+  for (const e of state.edges) {
+    const src = byId.get(e.source);
+    const tgt = byId.get(e.target);
+    if (!src || !tgt) { removed++; continue; }
+    let edge: Edge = e;
+    const srcSet = NAMED_SOURCE_HANDLES[src.type ?? ''];
+    if (edge.sourceHandle && !srcSet?.has(edge.sourceHandle)) {
+      const { sourceHandle: _drop, ...rest } = edge;
+      edge = rest;
+      strippedHandles++;
+    }
+    const tgtSet = NAMED_TARGET_HANDLES[tgt.type ?? ''];
+    if (edge.targetHandle && !tgtSet?.has(edge.targetHandle)) {
+      const { targetHandle: _drop, ...rest } = edge;
+      edge = rest;
+      strippedHandles++;
+    }
+    next.push(edge);
+  }
+  state.edges = next;
+  return { removed, strippedHandles };
+}
+
 /** Data stored per canvas node — reference to asset or free-form item */
 export interface CanvasNodeGeometry extends Record<string, unknown> {
   assetId?: string;
@@ -173,6 +229,19 @@ export const useCanvasStore = create<CanvasState & CanvasActions>()(
       name: 'canvas-store',
       partialize: (state) => ({ nodes: state.nodes, edges: state.edges }),
       storage: createJSONStorage(() => createIdbStorage('canvas-store')),
+      // One-shot cleanup after IDB hydration: prune edges whose source or
+      // target node is gone, and strip handle ids ReactFlow can't resolve.
+      // Without this, legacy edges keep logging "Couldn't create edge for
+      // source handle id …" every render.
+      onRehydrateStorage: () => (state, error) => {
+        if (error || !state) return;
+        const { removed, strippedHandles } = pruneOrphanEdges(state);
+        if (removed || strippedHandles) {
+          console.log(
+            `[canvas-store] edge cleanup: removed ${removed} orphan(s), stripped ${strippedHandles} invalid handle(s)`,
+          );
+        }
+      },
     }
   )
 );
