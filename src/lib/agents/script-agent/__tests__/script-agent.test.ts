@@ -95,7 +95,7 @@ describe('script-agent', () => {
     ).rejects.toThrow(/scriptText is required/)
   })
 
-  it('yields the 8 SKILL-checklist questions in order before calling the LLM', async () => {
+  it('yields the 7 SKILL-checklist questions in order before calling the LLM (禁忌 removed)', async () => {
     const { llm } = mockLLM(JSON.stringify(makeDossierJson()))
     const ctx = createMemoryContext({ llm })
     const agent = createScriptAgent()
@@ -111,13 +111,13 @@ describe('script-agent', () => {
       },
     })
 
+    // 禁忌 question removed per user feedback — taboos always render as "无".
     expect(headers).toEqual([
       '项目类型',
       '平台/受众',
       '视觉风格',
       '故事目标',
       '角色数量',
-      '禁忌',
       '输入形态',
       '工作流',
     ])
@@ -142,8 +142,8 @@ describe('script-agent', () => {
       )
       // 项目类型 not asked — total duration carries the answer.
       expect(headers).not.toContain('项目类型')
-      // Other 7 still asked.
-      expect(headers).toHaveLength(7)
+      // Other 6 still asked (was 7 before 禁忌 removal).
+      expect(headers).toHaveLength(6)
     })
 
     it('honors the deprecated top-level totalDurationSeconds field', async () => {
@@ -248,7 +248,9 @@ describe('script-agent', () => {
       )
       expect(headers).not.toContain('项目类型')
       expect(headers).not.toContain('视觉风格')
-      expect(headers).toEqual(['平台/受众', '故事目标', '角色数量', '禁忌', '输入形态', '工作流'])
+      // '禁忌' question removed per user feedback — taboos defaults to "无".
+      expect(headers).not.toContain('禁忌')
+      expect(headers).toEqual(['平台/受众', '故事目标', '角色数量', '输入形态', '工作流'])
     })
   })
 
@@ -277,8 +279,8 @@ describe('script-agent', () => {
     expect(recommendations['故事目标']).toBe('comedy-relief')
     // "两人对话" → duo
     expect(recommendations['角色数量']).toBe('duo')
-    // "儿童" → suggests child-safe taboo
-    expect(recommendations['禁忌']).toBe('child-safe')
+    // '禁忌' question removed — no recommendation surfaces for it anymore.
+    expect(recommendations['禁忌']).toBeUndefined()
   })
 
   it('persists the dossier into ProjectContext after the LLM call', async () => {
@@ -309,7 +311,7 @@ describe('script-agent', () => {
       { selected: ['anime-2d'] },                      // visualStyle
       { selected: ['romance-healing'] },               // storyGoal
       { selected: ['duo'] },                           // characterCount
-      { selected: ['child-safe'] },                    // taboos (multi)
+      // 禁忌 question removed
       { selected: ['rough-idea'] },                    // inputShape
       { selected: ['default'] },                       // subAgent
     ])
@@ -320,11 +322,12 @@ describe('script-agent', () => {
     expect(sent).toContain('二次元')
     expect(sent).toContain('浪漫治愈')
     expect(sent).toContain('2 人对话')
-    expect(sent).toContain('适合儿童')
+    // 禁忌 question removed — taboos always renders as "无" in the prompt.
+    expect(sent).toContain('内容禁忌: 无')
     expect(sent).toContain('一句话想法')
   })
 
-  it('joins multiple taboos with semicolons in the prompt', async () => {
+  it('always passes taboos as 无 in the prompt (question removed per user feedback)', async () => {
     const { llm, spy } = mockLLM(JSON.stringify(makeDossierJson()))
     const ctx = createMemoryContext({ llm })
     const agent = createScriptAgent()
@@ -335,27 +338,7 @@ describe('script-agent', () => {
       { selected: ['follow-canvas-style'] },
       { selected: ['move-audience'] },
       { selected: ['solo'] },
-      { selected: ['avoid-violence', 'child-safe'] },  // taboos: 2 selected
-      { selected: ['rough-idea'] },
-      { selected: ['default'] },
-    ])
-
-    const sent = spy.mock.calls[0]![0]![0]!.content as string
-    expect(sent).toContain('避免暴力；适合儿童')
-  })
-
-  it('records 无 when no taboo is selected', async () => {
-    const { llm, spy } = mockLLM(JSON.stringify(makeDossierJson()))
-    const ctx = createMemoryContext({ llm })
-    const agent = createScriptAgent()
-
-    await driveScriptAgent(agent, ctx, { scriptText: 'idea' }, [
-      { selected: ['short-video-30s'] },
-      { selected: ['douyin-kuaishou-vertical'] },
-      { selected: ['follow-canvas-style'] },
-      { selected: ['move-audience'] },
-      { selected: ['solo'] },
-      { selected: [] },  // no taboo selected
+      // no taboo answer slot — question is gone
       { selected: ['rough-idea'] },
       { selected: ['default'] },
     ])
@@ -376,7 +359,7 @@ describe('script-agent', () => {
         { selected: ['follow-canvas-style'] },
         { selected: ['move-audience'] },
         { selected: ['solo'] },
-        { selected: [] },
+        // 禁忌 question removed
         { selected: ['rough-idea'] },
         { selected: ['framework-qa'] },  // sub-agent not wired
       ]),
@@ -408,7 +391,7 @@ describe('script-agent', () => {
       { selected: ['liveaction-film'] },
       { selected: ['move-audience'] },
       { selected: ['small-ensemble'] },
-      { selected: [] },
+      // 禁忌 question removed
       { selected: ['complete-draft'] },
       { selected: ['writing-expansion'] },
     ])
