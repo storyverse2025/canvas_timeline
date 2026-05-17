@@ -1,0 +1,650 @@
+{
+  "version": "2026-02-08",
+  "default_style_id": "anime_psych_thriller_motion_comic",
+  "selection_contract": {
+    "user_selects": "style_id",
+    "fallback_style_id": "anime_psych_thriller_motion_comic",
+    "pipeline_rule": "Load the matching style object and pass it into global_style_guide for casting, storyboard, and video agents."
+  },
+  "style_categories": ["2d", "3d", "live_action"],
+  "styles": [
+    {
+      "style_id": "anime_psych_thriller_motion_comic",
+      "label": "Death Note x Re:Zero x Psycho-Pass",
+      "category": "2d",
+      "source": "existing baseline",
+      "global_style_guide": {
+        "goal": "Psychological thriller motion comic anime style. Fast tempo with sharp 2-second rhythm. Emotional arc per beat: Suspense to Shock to Cold Resolve.",
+        "consistency_rules": [
+          "Character facial features, hairstyles, clothing, and physique are consistent across all cuts.",
+          "Camera language stays dynamic and handheld-feeling, not static tripod.",
+          "Maintain continuity physics across cuts: fog drift, rain streak direction, light flares, and screen glow.",
+          "Use noir composition: negative space, off-center framing, hard rim light, and dramatic eye close-ups.",
+          "System moments allow clean in-world UI overlays only when story-critical, with no dialogue subtitles.",
+          "No music bed; emotion is carried by SFX and short spoken lines."
+        ]
+      }
+    },
+    {
+      "style_id": "liveaction_nolan_filmic",
+      "label": "Christopher Nolan Inspired Hollywood Cinematic",
+      "category": "live_action",
+      "source": "user requirement",
+      "global_style_guide": {
+        "goal": "Photoreal live-action Hollywood cinematic style inspired by Nolan scale and clarity. Tension is built through grounded realism, practical environments, and high-contrast filmic texture.",
+        "film_emulation": "Kodak Vision3 500T color, authentic 16mm film grain, halation, realistic texture",
+        "lens_characteristics": "Vintage 16mm lenses, soft edges, chromatic aberration",
+        "lighting_aesthetic": "Volumetric skylight, practical tungsten accents, moody realism",
+        "color_grading_profile": "Warm interiors, high-contrast skin tones, natural light falloff",
+        "composition_mandate": "Rule of Thirds, Over-the-Shoulder, Dirty Framing, avoid symmetry",
+        "scale_mandate": "Human scale and proportion must be preserved at all times",
+        "consistency_rules": [
+          "Use photoreal live-action imagery only; no anime, cel-shading, or illustrated textures.",
+          "Prioritize practical lighting and motivated sources; keep skin tone natural and physically plausible.",
+          "Frame with architectural geometry, strong depth, and clean eyeline continuity.",
+          "Use restrained but purposeful camera movement; avoid chaotic over-shake unless story-justified.",
+          "Apply filmic color science with deep blacks, controlled highlight rolloff, and subtle grain.",
+          "No subtitle text overlays; story-critical UI appears only as in-world objects.",
+          "Use cinematic sound design with clear dialogue intelligibility and restrained score usage."
+        ]
+      }
+    },
+    {
+      "style_id": "liveaction_japanese_film_look",
+      "label": "Japanese Cinematic Film Look",
+      "category": "live_action",
+      "source": "user requirement",
+      "global_style_guide": {
+        "goal": "Japanese cinematic live-action with restrained emotion, naturalistic realism, and photochemical film texture.",
+        "film_look": {
+          "capture_aesthetic": "photochemical film look, not digital-clean",
+          "grain": "subtle to moderate organic film grain",
+          "halation": "soft highlight halation around practical lights",
+          "contrast": "deep blacks with protected highlights",
+          "color": "neutral-cool shadows, warm practical highlights, cinematic skin tone roll-off",
+          "lens_character": "real lens falloff, natural bokeh, slight edge softness",
+          "texture": "natural skin and fabric texture, no cartoon or cel-shaded rendering"
+        },
+        "consistency_rules": [
+          "Photoreal live-action only. No anime, cel shading, illustration, or motion-comic look.",
+          "Keep character identity continuity across all cuts: face, hair, wardrobe, and body proportions.",
+          "Use practical lighting and grounded production design for a premium studio film feel.",
+          "Maintain continuity physics across cuts: wind, smoke, rain direction, and light flicker.",
+          "No dialogue subtitles; only story-critical in-world UI/signage when required."
+        ]
+      }
+    },
+    {
+      "style_id": "liveaction_madmax_kinetic_desert",
+      "label": "Mad Max Fury Road Inspired Kinetic Desert",
+      "category": "live_action",
+      "source": "Prompt of Live-Action Features with Best Cinematography.pdf",
+      "global_style_guide": {
+        "goal": "Brutal kinetic desert action with practical stunt feel, high velocity, and survival urgency.",
+        "consistency_rules": [
+          "Keep center-weighted action readability during chaos.",
+          "Use hard sunlight, dust haze, and high-contrast warm palette.",
+          "Vehicles and debris obey consistent motion vectors between cuts.",
+          "Prioritize practical texture: rust, sand, grease, and wind pressure.",
+          "Cut rhythm is aggressive but geography remains legible.",
+          "No cartoony physics or stylized anime exaggeration."
+        ]
+      }
+    },
+    {
+      "style_id": "liveaction_dune_epic_scale",
+      "label": "Dune Inspired Epic Monumental Sci-Fi",
+      "category": "live_action",
+      "source": "Prompt of Live-Action Features with Best Cinematography.pdf",
+      "global_style_guide": {
+        "goal": "Monumental sci-fi scale with austere composition, ritual tone, and environmental dominance.",
+        "consistency_rules": [
+          "Use large negative space and monumental architecture in framing.",
+          "Keep color palette controlled: sand neutrals, shadowed steel, muted accents.",
+          "Atmospheric particles, wind, and cloth motion stay physically coherent.",
+          "Human figures are grounded by scale references in every wide setup.",
+          "Lighting favors sculpted contrast and atmospheric depth over flashy effects.",
+          "No over-saturated comic styling."
+        ]
+      }
+    },
+    {
+      "style_id": "liveaction_matrix_neo_noir",
+      "label": "The Matrix Inspired Neo-Noir Action",
+      "category": "live_action",
+      "source": "Prompt of Live-Action Features with Best Cinematography.pdf",
+      "global_style_guide": {
+        "goal": "Neo-noir cyber action with crisp choreography, controlled cool tint, and technical precision.",
+        "consistency_rules": [
+          "Use clean geometric framing and disciplined blocking in fight beats.",
+          "Favor cool green-cyan bias with controlled contrast, not neon overload.",
+          "Action clarity first: subject silhouette must remain readable.",
+          "Integrate reflective surfaces and hard specular highlights consistently.",
+          "Motion is stylized but physically tracked through contiguous vectors.",
+          "No cartoon or cel-shaded rendering."
+        ]
+      }
+    },
+    {
+      "style_id": "liveaction_crouching_tiger_poetic_wuxia",
+      "label": "Crouching Tiger Inspired Poetic Wuxia",
+      "category": "live_action",
+      "source": "Prompt of Live-Action Features with Best Cinematography.pdf",
+      "global_style_guide": {
+        "goal": "Poetic wuxia romance with lyrical movement and elegant emotional restraint.",
+        "consistency_rules": [
+          "Prioritize graceful body lines and flowing costume motion.",
+          "Use natural environments with painterly color balance and soft atmosphere.",
+          "Keep action elegant and readable rather than chaotic.",
+          "Employ layered depth with foreground occlusion for intimacy.",
+          "Preserve period texture and material authenticity.",
+          "No modern UI overlays or contemporary props unless script-required."
+        ]
+      }
+    },
+    {
+      "style_id": "liveaction_sin_city_high_contrast_noir",
+      "label": "Sin City Inspired Graphic Noir",
+      "category": "live_action",
+      "source": "Prompt of Live-Action Features with Best Cinematography.pdf",
+      "global_style_guide": {
+        "goal": "High-contrast noir with selective accent color and hard-edged mood.",
+        "consistency_rules": [
+          "Use predominantly monochrome tonal structure with limited accent colors.",
+          "Push silhouette separation and directional key light.",
+          "Frame for graphic shapes and hard negative space.",
+          "Keep rain, smoke, and practical highlights consistent across cuts.",
+          "Dialogue scenes remain legible despite stylized contrast.",
+          "No anime rendering style."
+        ]
+      }
+    },
+    {
+      "style_id": "anime_apothecary_refined_comedic",
+      "label": "The Apothecary Diaries Inspired Refined Court + Comedic Timing",
+      "category": "2d",
+      "source": "Prompt of Top Anime in Japan and China.pdf",
+      "global_style_guide": {
+        "goal": "Refined historical anime tone with elegant visual detail and precise comedic punctuations.",
+        "consistency_rules": [
+          "Maintain high-quality cel-shaded finish with clean line discipline.",
+          "Blend graceful atmosphere with sudden deadpan comedic beats.",
+          "Facial acting must stay subtle and readable in close-up.",
+          "Use diffused natural light, mist, and soft textile detail.",
+          "Preserve consistent character proportions and costume motifs.",
+          "No photoreal live-action texture mixing."
+        ]
+      }
+    },
+    {
+      "style_id": "anime_solo_leveling_dark_power",
+      "label": "Solo Leveling Inspired Dark Power Fantasy",
+      "category": "2d",
+      "source": "Prompt of Top Anime in Japan and China.pdf",
+      "global_style_guide": {
+        "goal": "Dark high-impact anime action with sharp contrast, aura effects, and dominance escalation.",
+        "consistency_rules": [
+          "Use bold shadow design and high-intensity highlight separation.",
+          "Action poses must read clearly at first glance.",
+          "Energy effects follow coherent direction and timing from cut to cut.",
+          "Keep character facial identity locked across power-up states.",
+          "Background detail supports depth but does not overpower subjects.",
+          "No photoreal skin or film-grain realism."
+        ]
+      }
+    },
+    {
+      "style_id": "anime_demon_slayer_painterly_breath",
+      "label": "Demon Slayer Inspired Painterly Combat Rhythm",
+      "category": "2d",
+      "source": "Prompt of Top Anime in Japan and China.pdf",
+      "global_style_guide": {
+        "goal": "Painterly sword-action anime with stylized elemental flow and emotional intensity.",
+        "consistency_rules": [
+          "Keep line art crisp with painterly color modulation.",
+          "Elemental trails are stylized but temporally consistent.",
+          "Combat framing alternates impact close-ups with readable spacing.",
+          "Character costume patterns remain exact between shots.",
+          "Use dramatic color accents for emotional spikes.",
+          "No live-action texture realism."
+        ]
+      }
+    },
+    {
+      "style_id": "anime_jujutsu_urban_occult",
+      "label": "Jujutsu Kaisen Inspired Urban Occult Action",
+      "category": "2d",
+      "source": "Prompt of Top Anime in Japan and China.pdf",
+      "global_style_guide": {
+        "goal": "Urban occult anime with aggressive choreography, layered debris, and curse-energy tension.",
+        "consistency_rules": [
+          "Maintain high-speed action readability through silhouette discipline.",
+          "Urban lighting mixes practical signage glow with hard shadows.",
+          "Energy distortions remain physically anchored to motion direction.",
+          "Impacts produce coherent debris and dust continuity across cuts.",
+          "Character identity and uniform details stay stable.",
+          "No photoreal live-action treatment."
+        ]
+      }
+    },
+    {
+      "style_id": "anime_chainsaw_raw_chaotic",
+      "label": "Chainsaw Man Inspired Raw Chaotic Horror-Action",
+      "category": "2d",
+      "source": "Prompt of Top Anime in Japan and China.pdf",
+      "global_style_guide": {
+        "goal": "Raw, uneasy anime action-horror energy with visceral momentum and dark humor edge.",
+        "consistency_rules": [
+          "Keep raw tonal contrast and controlled grime texture.",
+          "Action blocking must stay legible despite violent pacing.",
+          "Use unstable framing feel while preserving spatial continuity.",
+          "Facial acting toggles between deadpan and panic with clean readability.",
+          "Avoid graphic gore detail when policy requires neutral substitutions.",
+          "No photoreal live-action rendering."
+        ]
+      }
+    },
+    {
+      "style_id": "donghua_mortal_journey_realist_xianxia",
+      "label": "A Mortal's Journey Inspired Realist Xianxia Donghua",
+      "category": "2d",
+      "source": "Prompt of Top Anime in Japan and China.pdf",
+      "global_style_guide": {
+        "goal": "High-fidelity Chinese donghua realism with disciplined cultivation aesthetics and grounded motion.",
+        "consistency_rules": [
+          "Use realistic material rendering with controlled fantasy effects.",
+          "Keep costume layering and period details consistent.",
+          "Energy techniques should be elegant, directional, and coherent.",
+          "Landscape atmospherics support scale and spiritual mood.",
+          "Character faces and proportions remain stable through upgrades.",
+          "No live-action photoreal blending."
+        ]
+      }
+    },
+    {
+      "style_id": "donghua_renegade_immortal_grim_grand",
+      "label": "Renegade Immortal Inspired Grim Grand Xianxia",
+      "category": "2d",
+      "source": "Prompt of Top Anime in Japan and China.pdf",
+      "global_style_guide": {
+        "goal": "Grand and severe cultivation epic with cosmic stakes and cold emotional tone.",
+        "consistency_rules": [
+          "Maintain austere color palette with occasional high-energy accents.",
+          "Use monumental compositions for sects, ruins, and celestial spaces.",
+          "Technique effects must obey continuity of source direction and intensity.",
+          "Character growth states stay identifiable without face drift.",
+          "Favor controlled pacing over chaotic visual overload.",
+          "No photoreal live-action treatment."
+        ]
+      }
+    },
+    {
+      "style_id": "liveaction_wong_kar_wai_neon_romance",
+      "label": "Wong Kar Wai Inspired Neon Melancholy",
+      "category": "live_action",
+      "source": "cinema canon",
+      "global_style_guide": {
+        "goal": "Lush urban romance with neon reflections, temporal longing, and intimate emotional distance.",
+        "consistency_rules": [
+          "Use saturated practical neon with warm skin falloff and deep shadow pockets.",
+          "Favor layered foreground obstruction and shallow depth for emotional isolation.",
+          "Maintain coherent color motif per scene, especially reds, greens, and amber practicals.",
+          "Movement stays lyrical and restrained, with drifting human blocking.",
+          "Photoreal live-action only; no anime or cel-shaded rendering."
+        ]
+      }
+    },
+    {
+      "style_id": "liveaction_fincher_precision_noir",
+      "label": "Fincher Inspired Precision Noir",
+      "category": "live_action",
+      "source": "cinema canon",
+      "global_style_guide": {
+        "goal": "Cold precision thriller style with exact framing, controlled camera movement, and forensic visual detail.",
+        "consistency_rules": [
+          "Keep camera movement minimal, deliberate, and mathematically clean.",
+          "Use low-key contrast with cool neutral palette and practical motivated highlights.",
+          "Production design is controlled, symmetric, and detail-rich.",
+          "Continuity of props, hand positions, and micro-actions is strict across cuts.",
+          "Photoreal live-action only; avoid comic or stylized illustration aesthetics."
+        ]
+      }
+    },
+    {
+      "style_id": "liveaction_deakins_naturalist_epic",
+      "label": "Deakins Inspired Naturalist Epic",
+      "category": "live_action",
+      "source": "cinema canon",
+      "global_style_guide": {
+        "goal": "Naturalist epic realism with sculpted light, atmospheric depth, and emotionally grounded scale.",
+        "consistency_rules": [
+          "Use motivated natural light and practical sources with disciplined contrast.",
+          "Maintain subtle atmospheric haze and coherent depth layering.",
+          "Preserve skin and fabric texture with restrained post-processing.",
+          "Camera language is elegant and unobtrusive, prioritizing story clarity.",
+          "No anime, cel-shaded, or toon rendering."
+        ]
+      }
+    },
+    {
+      "style_id": "liveaction_michael_mann_urban_night",
+      "label": "Michael Mann Inspired Urban Night Tension",
+      "category": "live_action",
+      "source": "cinema canon",
+      "global_style_guide": {
+        "goal": "Urban nocturnal crime tension with metallic city light, digital-night immediacy, and procedural realism.",
+        "consistency_rules": [
+          "Use city practicals, sodium-vapor variance, and high-contrast night exteriors.",
+          "Keep action blocking grounded and tactical, not superhero stylized.",
+          "Weather, traffic light flicker, and reflections must remain continuity-accurate.",
+          "Dialogue scenes retain intelligibility with restrained visual noise.",
+          "Photoreal live-action only."
+        ]
+      }
+    },
+    {
+      "style_id": "liveaction_kurosawa_weather_drama",
+      "label": "Kurosawa Inspired Weather-Driven Epic Drama",
+      "category": "live_action",
+      "source": "cinema canon",
+      "global_style_guide": {
+        "goal": "Mythic human drama driven by weather, movement, and moral tension in physically expressive landscapes.",
+        "consistency_rules": [
+          "Use wind, rain, dust, and fabric motion as active dramatic carriers.",
+          "Compose with strong directional blocking and layered depth planes.",
+          "Keep actor movement legible and forceful in wide action geometry.",
+          "Maintain coherent environmental physics across all cuts.",
+          "Photoreal live-action only."
+        ]
+      }
+    },
+    {
+      "style_id": "liveaction_park_chan_wook_baroque_tension",
+      "label": "Park Chan Wook Inspired Baroque Tension",
+      "category": "live_action",
+      "source": "cinema canon",
+      "global_style_guide": {
+        "goal": "Elegant yet unsettling visual tension with ornate framing, controlled color, and sharp emotional reversals.",
+        "consistency_rules": [
+          "Use exacting compositions with deliberate symmetry breaks.",
+          "Color palette supports psychological polarity, not random saturation.",
+          "Set dressing and props must carry symbolic continuity.",
+          "Camera transitions are smooth, precise, and narratively motivated.",
+          "Photoreal live-action only; no cartoon stylization."
+        ]
+      }
+    },
+    {
+      "style_id": "liveaction_malick_magic_hour_poetry",
+      "label": "Malick Inspired Magic-Hour Poetic Realism",
+      "category": "live_action",
+      "source": "cinema canon",
+      "global_style_guide": {
+        "goal": "Poetic natural-light cinema with introspective motion, tactile landscapes, and human-scale transcendence.",
+        "consistency_rules": [
+          "Prioritize golden-hour and soft overcast natural light continuity.",
+          "Use flowing movement and breathable negative space.",
+          "Maintain organic texture in skin, foliage, and atmosphere.",
+          "Visual rhythm remains contemplative while preserving narrative clarity.",
+          "Photoreal live-action only."
+        ]
+      }
+    },
+    {
+      "style_id": "liveaction_del_toro_gothic_fable",
+      "label": "Del Toro Inspired Gothic Dark Fable",
+      "category": "live_action",
+      "source": "cinema canon",
+      "global_style_guide": {
+        "goal": "Gothic dark-fable atmosphere blending tactile production design, romantic dread, and mythic creature-space.",
+        "consistency_rules": [
+          "Use sculpted low-key lighting and rich practical texture in sets and costumes.",
+          "Color palette balances deep teal, crimson, and antique amber tones.",
+          "Creature or prosthetic elements must remain physically integrated.",
+          "Fog, candlelight, and shadow behavior stay continuity-consistent.",
+          "Photoreal live-action only."
+        ]
+      }
+    },
+    {
+      "style_id": "anime_ghibli_lyrical_wonder",
+      "label": "Studio Ghibli Inspired Lyrical Wonder",
+      "category": "2d",
+      "source": "anime canon",
+      "global_style_guide": {
+        "goal": "Lyrical hand-crafted anime warmth with ecological wonder, gentle rhythm, and emotionally grounded magic.",
+        "consistency_rules": [
+          "Use painterly backgrounds with soft atmospheric perspective.",
+          "Character acting stays subtle and humane, never plastic.",
+          "Wind, foliage, and cloth motion convey emotional subtext.",
+          "Color transitions remain gentle and harmonic across scene beats.",
+          "No live-action photoreal texture treatment."
+        ]
+      }
+    },
+    {
+      "style_id": "anime_attack_on_titan_brutal_scale",
+      "label": "Attack on Titan Inspired Brutal Scale",
+      "category": "2d",
+      "source": "anime canon",
+      "global_style_guide": {
+        "goal": "Militarized apocalyptic anime with severe scale contrast, kinetic threat, and existential urgency.",
+        "consistency_rules": [
+          "Keep large-vs-small scale readability in every action frame.",
+          "Use high-contrast sky, debris, steam, and velocity lines consistently.",
+          "Body mechanics and trajectory continuity are strict across cuts.",
+          "Emotional beats remain raw but compositionally clear.",
+          "No photoreal live-action rendering."
+        ]
+      }
+    },
+    {
+      "style_id": "anime_akira_cyberpunk_megacity",
+      "label": "Akira Inspired Neo-Tokyo Cyberpunk",
+      "category": "2d",
+      "source": "anime canon",
+      "global_style_guide": {
+        "goal": "Dense cyberpunk anime with urban decay, kinetic machinery, and catastrophic adolescent energy.",
+        "consistency_rules": [
+          "Use high-density city signage, infrastructure, and neon haze with continuity discipline.",
+          "Mechanical motion and vehicle momentum must remain physically coherent.",
+          "Color contrast emphasizes red, cyan, and sodium-amber zones by scene logic.",
+          "Frame impact beats with aggressive readability, not visual clutter.",
+          "No live-action photoreal treatment."
+        ]
+      }
+    },
+    {
+      "style_id": "anime_ghost_in_shell_philosophical_cyber",
+      "label": "Ghost in the Shell Inspired Philosophical Cyber Noir",
+      "category": "2d",
+      "source": "anime canon",
+      "global_style_guide": {
+        "goal": "Meditative cyber-noir anime balancing tactical realism, reflective surfaces, and identity-focused stillness.",
+        "consistency_rules": [
+          "Maintain restrained palette with rain, glass reflections, and low-key practicals.",
+          "Action choreography is concise and technically legible.",
+          "Quiet contemplative frames use strong negative space and subtle motion.",
+          "UI and interface visuals remain in-world and diegetic.",
+          "No live-action photoreal rendering."
+        ]
+      }
+    },
+    {
+      "style_id": "anime_satoshi_kon_psychological_editing",
+      "label": "Satoshi Kon Inspired Psychological Reality Shift",
+      "category": "2d",
+      "source": "anime canon",
+      "global_style_guide": {
+        "goal": "Psychological anime with seamless reality transitions, temporal fracture, and urban subconscious tension.",
+        "consistency_rules": [
+          "Maintain character identity continuity through dream-reality transitions.",
+          "Use match-cuts in concept while preserving spatial legibility per frame.",
+          "Background motifs recur as visual anchors for continuity.",
+          "Color and lighting shifts must signal narrative state changes consistently.",
+          "No live-action photoreal rendering."
+        ]
+      }
+    },
+    {
+      "style_id": "anime_violet_evergarden_luminous_drama",
+      "label": "Violet Evergarden Inspired Luminous Emotional Drama",
+      "category": "2d",
+      "source": "anime canon",
+      "global_style_guide": {
+        "goal": "Luminous high-detail anime drama with meticulous gesture acting and delicate emotional cadence.",
+        "consistency_rules": [
+          "Use premium line discipline and soft volumetric light transitions.",
+          "Hands, eyes, and micro-expression acting carry emotional beats.",
+          "Fabric, metal, and paper textures remain crisp and coherent.",
+          "Color design favors elegant tonal gradients over hard saturation.",
+          "No live-action photoreal rendering."
+        ]
+      }
+    },
+    {
+      "style_id": "anime_fate_ufotable_spectral_combat",
+      "label": "Fate Ufotable Inspired Spectral Combat",
+      "category": "2d",
+      "source": "anime canon",
+      "global_style_guide": {
+        "goal": "High-impact anime combat with luminous effects, clean choreography arcs, and premium compositing polish.",
+        "consistency_rules": [
+          "Action readability stays clear despite dense VFX layers.",
+          "Energy trails, sparks, and debris follow coherent vector continuity.",
+          "Character silhouettes remain identifiable through effects storms.",
+          "Use controlled contrast to separate foreground combat from background scale.",
+          "No live-action photoreal rendering."
+        ]
+      }
+    },
+    {
+      "style_id": "3d_pixar_emotional_realism",
+      "label": "Pixar Inspired Emotional 3D Realism",
+      "category": "3d",
+      "source": "Pixar filmography and box office references",
+      "global_style_guide": {
+        "goal": "High-end 3D animation with emotionally readable acting, tactile materials, and family-audience clarity.",
+        "consistency_rules": [
+          "Facial rig performance emphasizes clear emotion and clean lip-sync readability.",
+          "PBR materials remain believable but stylized for warmth.",
+          "Lighting supports mood transitions while preserving character legibility.",
+          "Camera language is cinematic but story-first and accessible.",
+          "No live-action plate look and no 2D cel-shaded line-art look."
+        ]
+      }
+    },
+    {
+      "style_id": "3d_dreamworks_kinetic_character_comedy",
+      "label": "DreamWorks Inspired Kinetic Character Comedy",
+      "category": "3d",
+      "source": "animation industry canon",
+      "global_style_guide": {
+        "goal": "Expressive 3D character-driven comedy-action with fast timing, broad posing, and premium cinematic polish.",
+        "consistency_rules": [
+          "Prioritize strong silhouette posing and readable body language.",
+          "Action timing is snappy but physically coherent.",
+          "Maintain material and fur/hair consistency under dynamic lighting.",
+          "Comedic beats land through spacing and reaction shot clarity.",
+          "No live-action photoreal plate emulation."
+        ]
+      }
+    },
+    {
+      "style_id": "3d_disney_fairytale_musical_scope",
+      "label": "Disney CG Fairytale Musical Scope",
+      "category": "3d",
+      "source": "animation industry canon",
+      "global_style_guide": {
+        "goal": "Grand fairytale 3D animation with musical-stage readability, vivid environments, and heroic emotional arcs.",
+        "consistency_rules": [
+          "Use clear color scripting by emotional beat and story chapter.",
+          "Keep costume and hair simulation continuity across choreography-heavy scenes.",
+          "Frame staging supports ensemble readability in large set pieces.",
+          "Facial acting stays appealing and unambiguous.",
+          "No gritty live-action photoreal treatment."
+        ]
+      }
+    },
+    {
+      "style_id": "3d_spiderverse_graphic_hybrid",
+      "label": "Spider Verse Inspired Graphic Hybrid 3D",
+      "category": "3d",
+      "source": "animation industry canon",
+      "global_style_guide": {
+        "goal": "Graphic-forward hybrid 3D with comic-inspired stylization, bold composition, and kinetic line-energy.",
+        "consistency_rules": [
+          "Blend 3D depth with graphic halftone/comic textures in a controlled style system.",
+          "Color palettes can be highly stylized but must remain continuity-anchored per scene.",
+          "Action readability must survive aggressive visual stylization.",
+          "Character identity and silhouette continuity are strict across style shifts.",
+          "Avoid photoreal live-action look."
+        ]
+      }
+    },
+    {
+      "style_id": "3d_arcane_painterly_hybrid",
+      "label": "Arcane Inspired Painterly 3D Hybrid",
+      "category": "3d",
+      "source": "animation industry canon",
+      "global_style_guide": {
+        "goal": "Painterly hybrid 3D with hand-painted finish, dramatic lighting, and mature character psychology.",
+        "consistency_rules": [
+          "Use painterly texture overlays with consistent brush language.",
+          "Keep contrast-driven cinematic lighting for emotional peaks.",
+          "Facial animation supports nuanced dramatic acting, not broad caricature.",
+          "FX layers remain integrated with painterly compositing style.",
+          "Do not drift into pure live-action photorealism."
+        ]
+      }
+    },
+    {
+      "style_id": "3d_weta_performance_capture_epic",
+      "label": "Weta Performance-Capture Epic 3D",
+      "category": "3d",
+      "source": "VFX and performance-capture cinema canon",
+      "global_style_guide": {
+        "goal": "Epic performance-capture 3D realism with large-scale worldbuilding and physically grounded spectacle.",
+        "consistency_rules": [
+          "Facial and body performance data must remain anatomically coherent.",
+          "Materials, water, foliage, and atmospheric FX follow physically-based simulation logic.",
+          "Scale transitions between characters and environments remain consistent.",
+          "Color and lighting preserve believable environmental interaction.",
+          "Avoid 2D anime line-art and flat cel rendering."
+        ]
+      }
+    },
+    {
+      "style_id": "3d_chinese_mythic_epic",
+      "label": "Chinese Mythic Epic 3D Animation",
+      "category": "3d",
+      "source": "recent high-grossing Chinese animation trend",
+      "global_style_guide": {
+        "goal": "Mythic Chinese 3D epic with operatic scale, elemental power choreography, and culturally rooted visual motifs.",
+        "consistency_rules": [
+          "Keep mythic costume motifs and symbolic color coding stable across arcs.",
+          "Elemental effects follow coherent direction, scale, and timing continuity.",
+          "Use monumental environment scale with readable character staging.",
+          "Blend stylization with high-fidelity material rendering and atmospheric depth.",
+          "Avoid live-action plate realism and flat 2D cel look."
+        ]
+      }
+    },
+    {
+      "style_id": "3d_illumination_bright_pop",
+      "label": "Illumination Inspired Bright Pop Comedy 3D",
+      "category": "3d",
+      "source": "animation industry canon",
+      "global_style_guide": {
+        "goal": "Bright, high-clarity 3D animation with playful timing, simple readable staging, and broad audience accessibility.",
+        "consistency_rules": [
+          "Use high-key lighting and clean color blocking for instant readability.",
+          "Character poses are bold and expression-forward.",
+          "Motion timing supports comedy beats without sacrificing continuity.",
+          "Environment detail remains supportive and uncluttered.",
+          "No live-action photoreal treatment."
+        ]
+      }
+    }
+  ]
+}

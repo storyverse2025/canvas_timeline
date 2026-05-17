@@ -228,7 +228,7 @@ interface ProjectDBActions {
 // ─── Default values ──────────────────────────────────────────────────
 
 const DEFAULT_ART_DIRECTION: ArtDirection = {
-  stylePreset: 'cinematic',
+  stylePreset: 'anime_psych_thriller_motion_comic',
   customStyle: '',
   defaultImageModel: 'openai/gpt-5.4-image-2',
   defaultVideoModel: 'doubao-seedance-2-0-fast-260128',

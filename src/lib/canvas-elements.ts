@@ -8,6 +8,7 @@ import {
 import { runAgentWithChatBridge } from '@/lib/agents/chat-bridge'
 import { createMemoryContext } from '@/lib/agents/_shared/context/memory'
 import { createCapabilityLLM } from '@/lib/agents/_shared/llm/capability'
+import { styleFragmentFor } from '@/lib/style-library'
 
 export type ElementRole = 'character' | 'prop' | 'scene' | 'keyframe' | 'unknown'
 
@@ -176,19 +177,6 @@ export interface EnsureElementsOptions {
   extraction?: ExtractionResult
 }
 
-const STYLE_MAP: Record<string, string> = {
-  cinematic: 'cinematic film style, dramatic lighting',
-  anime: 'anime style, cel-shaded, vibrant colors, Japanese animation',
-  realistic: 'photorealistic, detailed, 8k photograph',
-  watercolor: 'watercolor painting style, soft edges',
-  'pixel-art': '8-bit pixel art, retro game style',
-  '3d-render': '3D CGI render, Pixar quality',
-  comic: 'comic book illustration, ink and color',
-  'oil-painting': 'oil painting, impressionist brushstrokes',
-  gothic: 'gothic dark art, dramatic shadows',
-  cyberpunk: 'cyberpunk neon aesthetic, futuristic',
-}
-
 export const CHARACTER_MATERIAL_SYSTEM_PROMPT = 'Sony Venice camera, Panavision C-series lenses, 24mm focal length, f/1.4 aperture, full-frame capture, clean shadows, cinematic lighting, anamorphic lens, wide angle, ultra-high detail, 8k, Final Fantasy CG game style, refined CG, Unreal Engine 5 render. pure white background. Composition requirement: top 1/3 is a front-face extreme close-up with natural expression; lower 2/3 is divided into three blocks showing the character from neck down to feet only, no head visible, three-view full body reference: front view, side view, back view, hands naturally hanging down.'
 
 export function buildCharacterMaterialPrompt(basePrompt: string, artStyle: string): string {
@@ -197,8 +185,8 @@ export function buildCharacterMaterialPrompt(basePrompt: string, artStyle: strin
 
 export function getArtStyle(opts?: EnsureElementsOptions): string {
   if (opts?.customStyle) return opts.customStyle
-  if (opts?.stylePreset) return STYLE_MAP[opts.stylePreset] ?? opts.stylePreset
-  return 'cinematic'
+  if (opts?.stylePreset) return styleFragmentFor(opts.stylePreset)
+  return styleFragmentFor(undefined)
 }
 
 export async function ensureElements(
