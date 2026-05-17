@@ -116,7 +116,10 @@ describe('generateAssetImages', () => {
       }, ctx),
     )
     expect(result.characters[0]!.img_url).toMatch(/^https:\/\/assets\//)
-    expect(result.characters[0]!.generation_prompt).toBe('CHAR-PROMPT')
+    // The extracted image_prompt now feeds INTO the template (`{{characterDescription}}`),
+    // not used verbatim — the template wraps it with three-view + lens/cam guidance.
+    expect(result.characters[0]!.generation_prompt).toContain('CHAR-PROMPT')
+    expect(result.characters[0]!.generation_prompt).toContain('three-view full body reference')
     expect(result.scenes[0]!.img_url).toMatch(/^https:\/\/assets\//)
     expect(result.props[0]!.img_url).toMatch(/^https:\/\/assets\//)
   })
@@ -171,9 +174,12 @@ describe('generateAssetImages', () => {
     )
     const call = mockedRunCapability.mock.calls[0]![0]
     const sentPrompt = call.inputs[0]!.text!
-    // Scene-image.md mandates the 360° panorama treatment.
-    expect(sentPrompt).toContain('360° immersive equirectangular panorama')
-    expect(sentPrompt).toContain('4K ultra-high definition')
+    // Scene-image.md mandates the 360° panorama treatment using the
+    // canonical industry phrasing that reliably triggers panorama-mode
+    // rendering on most image models.
+    expect(sentPrompt).toContain('360-degree equirectangular panoramic image')
+    expect(sentPrompt).toContain('seamless wrap')
+    expect(sentPrompt).toContain('NO HUMANS IN THIS IMAGE')
     expect(sentPrompt).toContain('2:1 aspect ratio')
     expect(sentPrompt).toContain('Seamless seam-free wraparound')
     // Global art style threaded in.
@@ -248,7 +254,10 @@ describe('generateAssetImages', () => {
       }, ctx),
     )
     expect(result.characters[0]!.img_url).toBeUndefined()
-    expect(result.characters[0]!.generation_prompt).toBe('p')
+    // image_prompt 'p' is wrapped by character-image.md template now
+    // (template always runs, even when img_url isn't returned).
+    expect(result.characters[0]!.generation_prompt).toContain('p')
+    expect(result.characters[0]!.generation_prompt).toContain('Sony Venice camera')
   })
 
   it('falls back to template-built prompts when image_prompt is empty', async () => {

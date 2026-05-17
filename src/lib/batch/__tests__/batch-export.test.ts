@@ -31,6 +31,7 @@ function makeRow(overrides: Omit<Partial<StoryboardRow>, 'shot_number'> & { shot
     motion_prompts: '',
     bgm: '',
     bgm_audio: '',
+    mixing_brief: '',
     character1: { ...EMPTY_SLOT },
     character2: { ...EMPTY_SLOT },
     prop1: { ...EMPTY_SLOT },

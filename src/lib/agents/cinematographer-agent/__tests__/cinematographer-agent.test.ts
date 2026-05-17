@@ -38,7 +38,7 @@ describe('cinematographer-agent: meta', () => {
 
   it('pins to Seedance 2.0 (the planning contract)', () => {
     expect(SHOOT_PROVIDER).toBe('doubao')
-    expect(SHOOT_MODEL).toBe('doubao-seedance-2-0-fast-260128')
+    expect(SHOOT_MODEL).toBe('doubao-seedance-2-0-260128')
   })
 })
 
@@ -135,7 +135,7 @@ describe('shoot', () => {
     const call = mockedRunCapability.mock.calls[0]![0]
     expect(call.capability).toBe('text-to-video')
     expect(call.params?.provider).toBe('doubao')
-    expect(call.params?.model).toBe('doubao-seedance-2-0-fast-260128')
+    expect(call.params?.model).toBe('doubao-seedance-2-0-260128')
     expect(call.params?.duration).toBe('8')
     expect(call.params?.aspect).toBe('16:9')
     expect(call.params?.reference_mode).toBe('omni')

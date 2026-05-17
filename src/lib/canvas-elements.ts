@@ -235,32 +235,30 @@ export async function ensureElements(
     // Wrap AI-generated image_prompts with global-style guidance before
     // sending; the per-asset background tasks forward them as-is.
     //   characters → three-view material system prompt
-    //   scenes     → append art style
-    //   props      → append art style (the prop-image.md template owns the
-    //                turnaround layout; we only ensure the style flows in)
-    const preppedExtraction = {
-      ...extraction,
-      characters: extraction.characters.map((c) => ({
-        ...c,
-        image_prompt: c.image_prompt
-          ? buildCharacterMaterialPrompt(c.image_prompt, artStyle)
-          : '',
-      })),
-      scenes: extraction.scenes.map((s) => ({
-        ...s,
-        image_prompt: s.image_prompt ? `${s.image_prompt}. ${artStyle}` : '',
-      })),
-      props: extraction.props.map((p) => ({
-        ...p,
-        image_prompt: p.image_prompt ? `${p.image_prompt}. ${artStyle}` : '',
-      })),
-    }
+    // Pass the extraction through unchanged. We used to pre-wrap each
+    // image_prompt with style + composition guidance HERE, but that
+    // collided with the kind-specific templates (character-image.md /
+    // scene-image.md / prop-image.md) which were silently bypassed
+    // whenever image_prompt was non-empty. Now the templates always
+    // run (see generateOneImage) and they own all the wrapping:
+    //   character-image.md → three-view + Sony Venice rig
+    //   scene-image.md     → 360° equirectangular + NO HUMANS
+    //   prop-image.md      → 4-panel turnaround + no faces/hands
+    // Each template references {{artStyle}} so the style still threads
+    // through; it's just sourced from the agent boundary rather than
+    // injected by the caller.
+    const preppedExtraction = extraction
 
-    // Caps mirror the legacy synchronous agent verb defaults so behavior
-    // stays the same modulo concurrency / blocking.
-    const CHAR_CAP = needCharacters ? 2 : 0
-    const SCENE_CAP = needScenes ? 2 : 0
-    const PROP_CAP = needProps ? 3 : 0
+    // Generate an image for EVERY extracted character — the earlier
+    // CHAR_CAP=2 was dropping 3rd/4th characters silently (user reported:
+    // 3 个角色的人物小传和音色都有，但只有 2 个角色的图生成成功). Bumped to
+    // 6 to bound runaway scripts but cover ensemble casts. Scenes / props
+    // stay at their tighter caps because they're typically fewer + cheaper
+    // to add back manually if needed; lift them if a similar drop is
+    // reported.
+    const CHAR_CAP = needCharacters ? Math.min(preppedExtraction.characters.length, 6) : 0
+    const SCENE_CAP = needScenes ? Math.min(preppedExtraction.scenes.length, 4) : 0
+    const PROP_CAP = needProps ? Math.min(preppedExtraction.props.length, 5) : 0
 
     // Pre-create the canvas items + nodes with EMPTY content so the
     // downstream director-assistant pipeline immediately has stable
@@ -277,7 +275,7 @@ export async function ensureElements(
     for (let i = 0; i < Math.min(preppedExtraction.characters.length, CHAR_CAP); i++) {
       const ch = preppedExtraction.characters[i]!
       const itemId = useCanvasItemStore.getState().addItem({
-        kind: 'image', name: ch.name, content: '', prompt: '',
+        kind: 'image', name: ch.name, content: '', prompt: '', role: 'character',
       })
       const nodeId = useCanvasStore.getState().addItemNode(
         itemId, 'image', { x: 50, y: 50 + inventory.characters.length * 220 }, { width: 200, height: 200 },
@@ -310,7 +308,7 @@ export async function ensureElements(
     for (let i = 0; i < Math.min(preppedExtraction.props.length, PROP_CAP); i++) {
       const pr = preppedExtraction.props[i]!
       const itemId = useCanvasItemStore.getState().addItem({
-        kind: 'image', name: pr.name, content: '', prompt: '',
+        kind: 'image', name: pr.name, content: '', prompt: '', role: 'prop',
       })
       const nodeId = useCanvasStore.getState().addItemNode(
         itemId, 'image', { x: 50, y: 950 + inventory.props.length * 220 }, { width: 200, height: 200 },

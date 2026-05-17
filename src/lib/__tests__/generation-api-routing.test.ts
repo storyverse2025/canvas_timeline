@@ -25,7 +25,10 @@ describe('generation API routing', () => {
 
     expect(code).toContain('ARK_API_KEY')
     expect(code).toContain('https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks')
-    expect(code).toContain('doubao-seedance-2-0-fast-260128')
+    // The plugin references the Seedance 2.0 model family; the default
+    // is the non-fast variant at 480p (see SHOOT_MODEL in
+    // cinematographer-agent/index.ts).
+    expect(code).toContain('doubao-seedance-2-0')
     expect(code).toContain('submitSeedanceTask')
   })
 })

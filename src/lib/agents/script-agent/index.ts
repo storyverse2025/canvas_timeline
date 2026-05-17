@@ -421,19 +421,12 @@ export function createScriptAgent(deps: ScriptAgentDeps = {}): AgentModule<
     }) as Answer | undefined
     const characterCount = pickFirst<CharacterCount>(charCountAns, recCharCount)
 
-    // Q6: 禁忌内容 (multi-select)
-    const recTaboos = recommendTaboos(request.scriptText)
-    const taboosAns = (yield {
-      type: 'question',
-      question: {
-        q: '内容禁忌？(可多选；选项不勾即"无")',
-        header: '禁忌',
-        options: TABOO_OPTIONS,
-        recommended: recTaboos[0] ?? null,
-        multiSelect: true,
-      },
-    }) as Answer | undefined
-    const taboos = pickMulti<Taboo>(taboosAns, recTaboos)
+    // Q6 (内容禁忌) intentionally removed per user request — the question
+    // was friction in the interview flow and rarely mattered for the kind
+    // of stories users are bringing. The downstream expand-script prompt
+    // still references {{taboos}}, so we always pass "无" and keep the
+    // schema field for backwards compat with persisted answers.
+    const taboos: Taboo[] = []
 
     // Q7: 输入形态
     const recInputShape = recommendInputShape(request.scriptText)
@@ -481,7 +474,7 @@ export function createScriptAgent(deps: ScriptAgentDeps = {}): AgentModule<
     recapLines.push(`    - 视觉风格: ${labelOf(visualStyle, VISUAL_STYLE_OPTIONS)}`)
     recapLines.push(`    - 故事目标: ${labelOf(storyGoal, STORY_GOAL_OPTIONS)}`)
     recapLines.push(`    - 角色数量: ${labelOf(characterCount, CHARACTER_COUNT_OPTIONS)}`)
-    recapLines.push(`    - 禁忌: ${taboos.length === 0 ? '无' : taboos.map((t) => labelOf(t, TABOO_OPTIONS)).join(' / ')}`)
+    // 禁忌 line dropped along with the question.
     recapLines.push(`    - 输入形态: ${labelOf(inputShape, INPUT_SHAPE_OPTIONS)}`)
     recapLines.push(`    - 工作流: ${labelOf(subAgent, SUB_AGENT_OPTIONS)}`)
     yield { type: 'progress', message: recapLines.join('\n') }

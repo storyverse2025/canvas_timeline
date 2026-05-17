@@ -222,11 +222,33 @@ function tokenRouterImageSize(aspect: string): string {
   return process.env.TOKENROUTER_IMAGE_SIZE || sizeMap[aspect] || '1024x1024'
 }
 
+/**
+ * The exact field name TokenRouter accepts for input/reference images on
+ * /images/generations isn't documented from where we sit, so on first
+ * failure we try the next-most-likely OpenAI-compatible variants in order
+ * before giving up. `image` is what we used to ship (silently failing);
+ * `image_url` mirrors the FAL convention; `images` mirrors the responses
+ * API pattern.
+ */
+const TOKENROUTER_IMAGE_REF_FIELDS = ['image', 'image_url', 'images', 'input_images'] as const
+
+async function postTokenRouterImageRequest(
+  baseUrl: string,
+  key: string,
+  body: Record<string, unknown>,
+): Promise<Response> {
+  return fetch(`${baseUrl}/images/generations`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
 async function runTokenRouterImage(prompt: string, aspect: string, numImages: number, refImages: string[] = []): Promise<string[]> {
   const key = process.env.TOKENROUTER_API_KEY
   if (!key) throw new Error('TOKENROUTER_API_KEY 未配置 — 无法生成图片')
 
-  const body: Record<string, unknown> = {
+  const baseBody: Record<string, unknown> = {
     model: process.env.TOKENROUTER_IMAGE_MODEL || TOKENROUTER_IMAGE_MODEL,
     prompt,
     n: numImages,
@@ -234,23 +256,45 @@ async function runTokenRouterImage(prompt: string, aspect: string, numImages: nu
   }
 
   const refs = refImages.slice(0, 3).filter((url) => /^https?:\/\//i.test(url) || url.startsWith('data:'))
-  if (refs.length) body.image = refs
-
   const baseUrl = (process.env.TOKENROUTER_BASE_URL || TOKENROUTER_BASE_URL).replace(/\/$/, '')
-  let res = await fetch(`${baseUrl}/images/generations`, {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
 
-  if (!res.ok && refs.length) {
-    delete body.image
-    res = await fetch(`${baseUrl}/images/generations`, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
+  let res!: Response
+  const attemptedFields: string[] = []
+
+  if (refs.length === 0) {
+    res = await postTokenRouterImageRequest(baseUrl, key, baseBody)
+  } else {
+    // Cycle through the known-likely field names. Stop on the first 2xx.
+    let lastErrorBody = ''
+    let success = false
+    for (const fieldName of TOKENROUTER_IMAGE_REF_FIELDS) {
+      attemptedFields.push(fieldName)
+      const body = { ...baseBody, [fieldName]: refs }
+      res = await postTokenRouterImageRequest(baseUrl, key, body)
+      if (res.ok) { success = true; break }
+      lastErrorBody = (await res.clone().text()).slice(0, 400)
+      console.warn(
+        `[image] TokenRouter rejected refs via field "${fieldName}" (HTTP ${res.status}): ${lastErrorBody}`,
+      )
+    }
+
+    if (!success) {
+      // All ref-carrying variants failed. Before giving up, try text-only —
+      // but make it VISIBLE in the response that refs were dropped, so the
+      // user (and downstream tools) can act. The previous version did this
+      // silently, which is what masked the regression for weeks.
+      console.warn(
+        `[image] TokenRouter accepted none of [${attemptedFields.join(', ')}] as the ref-image field — ` +
+          `falling back to text-only generation. Set ENABLE_FAL_IMAGE_FALLBACK=1 to route ref-image requests ` +
+          `to FAL flux-pro (single image_url) when this happens. Last error: ${lastErrorBody}`,
+      )
+      if (process.env.ENABLE_FAL_IMAGE_FALLBACK === '1') {
+        return runFalFluxImage(prompt, aspect, numImages, refs[0])
+      }
+      res = await postTokenRouterImageRequest(baseUrl, key, baseBody)
+    }
   }
+
   if (!res.ok) throw new Error(`TokenRouter image ${res.status}: ${await res.text()}`)
 
   const data = (await res.json()) as { data?: Array<{ url?: string; b64_json?: string }>; images?: Array<{ url?: string; b64_json?: string }> }
@@ -721,7 +765,7 @@ async function submitSeedanceTaskOnce(opts: {
   const headers = { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' }
 
   const body: Record<string, unknown> = {
-    model: opts.model ?? 'doubao-seedance-2-0-fast-260128',
+    model: opts.model ?? 'doubao-seedance-2-0-260128',
     content: opts.contentParts,
     resolution: opts.resolution ?? '480p',
     ratio: opts.aspect ?? '16:9',
@@ -792,7 +836,7 @@ async function textToVideo(req: CapReq): Promise<CapRes> {
 
   const url = await submitSeedanceTask({
     contentParts,
-    model: (req.params?.model as string) || 'doubao-seedance-2-0-fast-260128',
+    model: (req.params?.model as string) || 'doubao-seedance-2-0-260128',
     resolution: (req.params?.resolution as string) || '480p',
     aspect: (req.params?.aspect as string) || '16:9',
     duration: Number(req.params?.duration ?? 5),
@@ -816,7 +860,7 @@ async function universalToVideo(req: CapReq): Promise<CapRes> {
 
   const url = await submitSeedanceTask({
     contentParts,
-    model: (req.params?.model as string) || 'doubao-seedance-2-0-fast-260128',
+    model: (req.params?.model as string) || 'doubao-seedance-2-0-260128',
     resolution: (req.params?.resolution as string) || '480p',
     aspect: (req.params?.aspect as string) || '16:9',
     duration: Number(req.params?.duration ?? 5),
@@ -1119,7 +1163,7 @@ export function capabilitiesPlugin(): Plugin {
             { id: 'gpt-image-1', label: 'GPT Image 1', provider: 'openai', costPer: 0.04, supportsRef: false },
           ],
           video: [
-            { id: 'doubao-seedance-2-0-fast-260128', label: 'Seedance 2.0 Fast', provider: 'doubao', costPer: 0.35, supportsAudio: true, supportsRef: true, durations: [5, 10] },
+            { id: 'doubao-seedance-2-0-260128', label: 'Seedance 2.0 Fast', provider: 'doubao', costPer: 0.35, supportsAudio: true, supportsRef: true, durations: [5, 10] },
             { id: 'doubao-seedance-2-0-260128', label: 'Seedance 2.0', provider: 'doubao', costPer: 0.70, supportsAudio: true, supportsRef: true, durations: [5, 10] },
             { id: 'doubao-seedance-1-5-pro-251215', label: 'Seedance 1.5 Pro', provider: 'doubao', costPer: 0.50, supportsAudio: true, supportsRef: true, durations: [5, 10] },
             { id: 'fal-ai/kling-video/v1.5/pro/text-to-video', label: 'Kling v1.5 Pro', provider: 'fal', costPer: 0.45, supportsAudio: false, supportsRef: false, durations: [5, 10] },
