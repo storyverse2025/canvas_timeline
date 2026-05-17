@@ -9,6 +9,11 @@ output: text (image generation prompt)
 360-degree equirectangular panoramic image of {{sceneDescription}}, seamless wrap, ultra-detailed.
 
 CRITICAL — 禁止出现人物在图中 / NO HUMANS IN THIS IMAGE:
+- 不要出现任何人物、角色、面孔、人体剪影或人形雕像。这是空场景 (empty
+  environment plate)，人物会在视频生成时由 Seedance 合成进画面。
+- No characters, no people, no human figures, no faces, no human silhouettes,
+  no mannequins. NPCs in the distance, crowd in the background, statues with
+  human features — all forbidden.
 - 不要出现任何人物、角色、面孔、人体剪影、人形雕像、模特、NPC、远景路人。
 - This is an EMPTY ENVIRONMENT PLATE — characters get composited in later by
   Seedance during video generation. Even partial bodies / silhouettes /
