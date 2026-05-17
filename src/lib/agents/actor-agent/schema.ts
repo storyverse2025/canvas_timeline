@@ -76,6 +76,8 @@ export type EnrichTableResult = Record<string, EnrichedPerformanceFields>
 /** Compact voice metadata sent to the LLM for casting picks. */
 export interface VoiceCandidateSummary {
   id: string
+  /** Filename basename (sans extension + attribution tail) — the most
+   *  informative signal for tone (e.g. "AD学姐", "霸总", "御姐"). */
   displayName: string
   /** Optional one-line sample of the spoken content for tone reference. */
   sampleSnippet?: string

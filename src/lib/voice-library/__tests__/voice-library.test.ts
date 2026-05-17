@@ -60,4 +60,30 @@ describe('voice-library', () => {
     const broad = shortlistForCard({}, 25)
     expect(broad.length).toBe(25)
   })
+
+  it('catalog detection reaches reasonable coverage on the 4-bucket scheme', () => {
+    // Regression: previous scanner left ~80% of voices unknown on both
+    // gender + age. The expanded keyword pass + "known gender → middle"
+    // fallback should classify the bulk of the catalog so prefilter is
+    // actually useful for the LLM.
+    const all = listVoices()
+    const knownGender = all.filter((v) => v.gender !== 'unknown').length
+    const knownAge = all.filter((v) => v.age !== 'unknown').length
+    expect(knownGender / all.length).toBeGreaterThanOrEqual(0.45) // was 16%
+    expect(knownAge / all.length).toBeGreaterThanOrEqual(0.45)     // was 19%
+  })
+
+  it("never emits age='adult' anymore — folded into 'middle' for the 4-bucket scheme", () => {
+    for (const v of listVoices()) {
+      expect(v.age).not.toBe('adult')
+    }
+  })
+
+  it('shortlistForCard accepts 幼儿 / 少年 / 中年 / 老年 vocabulary on the card', () => {
+    // Each bucket should produce SOMETHING (not empty); narrows correctly.
+    expect(shortlistForCard({ age_range: '幼儿', gender_presentation: 'male' }, 10).length).toBeGreaterThan(0)
+    expect(shortlistForCard({ age_range: '少年', gender_presentation: 'female' }, 10).length).toBeGreaterThan(0)
+    expect(shortlistForCard({ age_range: '中年', gender_presentation: 'male' }, 10).length).toBeGreaterThan(0)
+    expect(shortlistForCard({ age_range: '老年', gender_presentation: 'female' }, 10).length).toBeGreaterThan(0)
+  })
 })
