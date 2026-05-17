@@ -222,20 +222,18 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
             playsInline
           />
         ) : item.kind === 'audio' ? (
-          // nodrag + nopan tell React Flow to skip its pointer-handling on
-          // this subtree, so the <audio> controls actually respond to clicks
-          // and scrubbing instead of starting a node drag. stopPropagation
-          // belt-and-suspenders for the play/pause button itself.
-          //
           // Layout note: native <audio controls> needs ~320×54 to render
           // without clipping the play button. Voice nodes spawn at 340×140
           // (see spawnVoiceCanvasNodes); kept overflow-y auto + flex so
           // anyone manually resizing smaller still sees the bar at the top.
-          <div
-            className="w-full h-full flex flex-col gap-2 bg-gradient-to-br from-amber-950/40 to-zinc-900 p-3 nodrag nopan overflow-y-auto"
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
-          >
+          //
+          // Pointer handling: stopPropagation lives ONLY on the <audio>
+          // element so the play/seek button works without React Flow
+          // intercepting. The surrounding wrapper deliberately does NOT
+          // stop propagation — clicking the Mic header / filename / padding
+          // must still bubble up so React Flow selects the node (which
+          // populates the Inspector with the 音色来源 metadata card).
+          <div className="w-full h-full flex flex-col gap-2 bg-gradient-to-br from-amber-950/40 to-zinc-900 p-3 overflow-y-auto">
             <div className="flex items-center gap-1.5 text-amber-400/70 shrink-0">
               <Mic className="w-3.5 h-3.5" />
               <span className="text-[10px] uppercase tracking-wider">音色</span>
@@ -248,6 +246,7 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
               style={{ minHeight: 40 }}
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
             />
             <div className="text-[10px] text-zinc-300 truncate" title={item.name}>
               {item.name}
