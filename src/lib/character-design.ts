@@ -181,16 +181,20 @@ export function spawnCharacterBioCanvasNodes(): void {
     }
 
     // Wire character image → bio text, when both are on the canvas.
-    const characterElement = Object.values(projectDB.elements).find(
-      (el) =>
-        el.kind === 'image' &&
-        el.role === 'character' &&
-        el.name.trim().toLowerCase() === card.name.trim().toLowerCase(),
+    // Character image canvas items live in useCanvasItemStore (NOT in
+    // projectDB.elements — that's a different store the legacy asset
+    // pipeline used). Lookup by item.role === 'character' + name.
+    const items = useCanvasItemStore.getState().items
+    const characterItem = Object.values(items).find(
+      (it) =>
+        it.kind === 'image' &&
+        it.role === 'character' &&
+        it.name.trim().toLowerCase() === card.name.trim().toLowerCase(),
     )
-    if (characterElement) {
+    if (characterItem) {
       const charNode = useCanvasStore.getState().nodes.find((n) => {
-        const data = n.data as { assetId?: string }
-        return data.assetId === characterElement.id
+        const data = n.data as { itemId?: string }
+        return data.itemId === characterItem.id
       })
       if (charNode) {
         const existingEdge = useCanvasStore

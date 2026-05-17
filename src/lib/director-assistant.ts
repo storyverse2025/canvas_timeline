@@ -237,14 +237,28 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
     { scriptText: scriptAnalysis, stylePreset: artDir.stylePreset, customStyle: artDir.customStyle, extraction: augmentedExtraction },
   )
 
-  // After character images land, spawn 人物小传 + 外貌 text nodes on the
-  // canvas, edge-wired from each character image node.
+  // After asset image placeholders land, spawn the matching text canvas
+  // nodes (one per asset, edge-wired from its image node):
+  //   - character → 人物小传 + 外貌 (from character-design)
+  //   - scene     → 场景描述 (location / lighting / mood + image prompt)
+  //   - prop      → 道具描述 (description + image prompt)
+  // All non-fatal — pipeline survives even when one spawner trips.
   try {
     const { spawnCharacterBioCanvasNodes } = await import('@/lib/character-design')
     spawnCharacterBioCanvasNodes()
   } catch (e) {
     // eslint-disable-next-line no-console
     console.warn('[director-assistant] spawning bio text nodes failed:', (e as Error).message)
+  }
+  try {
+    const { spawnSceneDescriptionCanvasNodes, spawnPropDescriptionCanvasNodes } = await import(
+      '@/lib/asset-description-nodes'
+    )
+    spawnSceneDescriptionCanvasNodes(augmentedExtraction.scenes)
+    spawnPropDescriptionCanvasNodes(augmentedExtraction.props)
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn('[director-assistant] spawning scene/prop description nodes failed:', (e as Error).message)
   }
   const elementCtx = buildElementContext(inv)
   setStep(state, 0, 5, 'done', `${inv.characters.length} 角色, ${inv.scenes.length} 场景`); onUpdate(state)

@@ -24,7 +24,17 @@ export type CanvasItemKind = 'image' | 'text' | 'video' | 'audio';
  *                  Renders via PanoramaViewer (drag to look around) instead
  *                  of a flat <img>.
  */
-export type CanvasItemRole = 'style' | 'system' | 'keyframe' | 'voice' | 'character-bio' | 'scene';
+export type CanvasItemRole =
+  | 'style'
+  | 'system'
+  | 'keyframe'
+  | 'voice'
+  | 'character'
+  | 'character-bio'
+  | 'scene'
+  | 'scene-description'
+  | 'prop'
+  | 'prop-description';
 
 export interface CanvasItem {
   id: string;

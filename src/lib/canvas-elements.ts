@@ -270,7 +270,7 @@ export async function ensureElements(
     for (let i = 0; i < Math.min(preppedExtraction.characters.length, CHAR_CAP); i++) {
       const ch = preppedExtraction.characters[i]!
       const itemId = useCanvasItemStore.getState().addItem({
-        kind: 'image', name: ch.name, content: '', prompt: '',
+        kind: 'image', name: ch.name, content: '', prompt: '', role: 'character',
       })
       const nodeId = useCanvasStore.getState().addItemNode(
         itemId, 'image', { x: 50, y: 50 + inventory.characters.length * 220 }, { width: 200, height: 200 },
@@ -303,7 +303,7 @@ export async function ensureElements(
     for (let i = 0; i < Math.min(preppedExtraction.props.length, PROP_CAP); i++) {
       const pr = preppedExtraction.props[i]!
       const itemId = useCanvasItemStore.getState().addItem({
-        kind: 'image', name: pr.name, content: '', prompt: '',
+        kind: 'image', name: pr.name, content: '', prompt: '', role: 'prop',
       })
       const nodeId = useCanvasStore.getState().addItemNode(
         itemId, 'image', { x: 50, y: 950 + inventory.props.length * 220 }, { width: 200, height: 200 },
