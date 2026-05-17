@@ -210,14 +210,22 @@ export async function generateOneImage(
   ctx: ProjectContext,
   timeoutMs: number,
 ): Promise<{ url: string | undefined; prompt: string }> {
-  const prompt = element.image_prompt && element.image_prompt.trim().length > 0
+  // ALWAYS run the template. The earlier `image_prompt ? raw : template`
+  // short-circuit meant the LLM-built image_prompt bypassed every
+  // template directive (360° + NO HUMANS + turnaround + no-face). With
+  // the extractor always producing a non-empty image_prompt, the
+  // templates were dead code on every real run. Now the extracted prompt
+  // feeds into the template's *Description slot and the template wraps
+  // it with the kind-specific composition + negative directives.
+  const description = element.image_prompt && element.image_prompt.trim().length > 0
     ? element.image_prompt
-    : fillTemplate(imgCtx.template, {
-        characterDescription: imgCtx.buildDescription(element),
-        sceneDescription: imgCtx.buildDescription(element),
-        propDescription: imgCtx.buildDescription(element),
-        artStyle: imgCtx.artStyle,
-      })
+    : imgCtx.buildDescription(element)
+  const prompt = fillTemplate(imgCtx.template, {
+    characterDescription: description,
+    sceneDescription: description,
+    propDescription: description,
+    artStyle: imgCtx.artStyle,
+  })
   void ctx
   const label = `art-director text-to-image (${element.name})`
   const r = await withTimeout(

@@ -235,26 +235,19 @@ export async function ensureElements(
     // Wrap AI-generated image_prompts with global-style guidance before
     // sending; the per-asset background tasks forward them as-is.
     //   characters → three-view material system prompt
-    //   scenes     → append art style
-    //   props      → append art style (the prop-image.md template owns the
-    //                turnaround layout; we only ensure the style flows in)
-    const preppedExtraction = {
-      ...extraction,
-      characters: extraction.characters.map((c) => ({
-        ...c,
-        image_prompt: c.image_prompt
-          ? buildCharacterMaterialPrompt(c.image_prompt, artStyle)
-          : '',
-      })),
-      scenes: extraction.scenes.map((s) => ({
-        ...s,
-        image_prompt: s.image_prompt ? `${s.image_prompt}. ${artStyle}` : '',
-      })),
-      props: extraction.props.map((p) => ({
-        ...p,
-        image_prompt: p.image_prompt ? `${p.image_prompt}. ${artStyle}` : '',
-      })),
-    }
+    // Pass the extraction through unchanged. We used to pre-wrap each
+    // image_prompt with style + composition guidance HERE, but that
+    // collided with the kind-specific templates (character-image.md /
+    // scene-image.md / prop-image.md) which were silently bypassed
+    // whenever image_prompt was non-empty. Now the templates always
+    // run (see generateOneImage) and they own all the wrapping:
+    //   character-image.md → three-view + Sony Venice rig
+    //   scene-image.md     → 360° equirectangular + NO HUMANS
+    //   prop-image.md      → 4-panel turnaround + no faces/hands
+    // Each template references {{artStyle}} so the style still threads
+    // through; it's just sourced from the agent boundary rather than
+    // injected by the caller.
+    const preppedExtraction = extraction
 
     // Caps mirror the legacy synchronous agent verb defaults so behavior
     // stays the same modulo concurrency / blocking.

@@ -116,7 +116,10 @@ describe('generateAssetImages', () => {
       }, ctx),
     )
     expect(result.characters[0]!.img_url).toMatch(/^https:\/\/assets\//)
-    expect(result.characters[0]!.generation_prompt).toBe('CHAR-PROMPT')
+    // The extracted image_prompt now feeds INTO the template (`{{characterDescription}}`),
+    // not used verbatim — the template wraps it with three-view + lens/cam guidance.
+    expect(result.characters[0]!.generation_prompt).toContain('CHAR-PROMPT')
+    expect(result.characters[0]!.generation_prompt).toContain('three-view full body reference')
     expect(result.scenes[0]!.img_url).toMatch(/^https:\/\/assets\//)
     expect(result.props[0]!.img_url).toMatch(/^https:\/\/assets\//)
   })
@@ -251,7 +254,10 @@ describe('generateAssetImages', () => {
       }, ctx),
     )
     expect(result.characters[0]!.img_url).toBeUndefined()
-    expect(result.characters[0]!.generation_prompt).toBe('p')
+    // image_prompt 'p' is wrapped by character-image.md template now
+    // (template always runs, even when img_url isn't returned).
+    expect(result.characters[0]!.generation_prompt).toContain('p')
+    expect(result.characters[0]!.generation_prompt).toContain('Sony Venice camera')
   })
 
   it('falls back to template-built prompts when image_prompt is empty', async () => {
