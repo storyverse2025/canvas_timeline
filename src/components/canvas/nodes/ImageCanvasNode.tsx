@@ -226,23 +226,37 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
           // this subtree, so the <audio> controls actually respond to clicks
           // and scrubbing instead of starting a node drag. stopPropagation
           // belt-and-suspenders for the play/pause button itself.
+          //
+          // Layout note: native <audio controls> needs ~320×54 to render
+          // without clipping the play button. Voice nodes spawn at 340×140
+          // (see spawnVoiceCanvasNodes); kept overflow-y auto + flex so
+          // anyone manually resizing smaller still sees the bar at the top.
           <div
-            className="w-full h-full flex flex-col items-center justify-center gap-2 bg-gradient-to-br from-amber-950/40 to-zinc-900 p-3 nodrag nopan"
+            className="w-full h-full flex flex-col gap-2 bg-gradient-to-br from-amber-950/40 to-zinc-900 p-3 nodrag nopan overflow-y-auto"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
           >
-            <Mic className="w-6 h-6 text-amber-400/70 shrink-0" />
+            <div className="flex items-center gap-1.5 text-amber-400/70 shrink-0">
+              <Mic className="w-3.5 h-3.5" />
+              <span className="text-[10px] uppercase tracking-wider">音色</span>
+            </div>
             <audio
               src={item.content}
               controls
               preload="metadata"
-              className="w-full nodrag nopan"
+              className="w-full nodrag nopan shrink-0"
+              style={{ minHeight: 40 }}
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => e.stopPropagation()}
             />
-            <div className="text-[10px] text-zinc-400 truncate w-full text-center" title={item.name}>
+            <div className="text-[10px] text-zinc-300 truncate" title={item.name}>
               {item.name}
             </div>
+            {item.description && (
+              <div className="text-[10px] text-zinc-400 line-clamp-2" title={item.description}>
+                {item.description}
+              </div>
+            )}
           </div>
         ) : asset?.type === 'scene' ? (
           // Scene assets are 360° equirectangular panoramas — use the draggable

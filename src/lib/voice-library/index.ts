@@ -38,6 +38,17 @@ export function voicePublicUrl(id: string | undefined | null): string | undefine
   return getVoice(id)?.urlPath
 }
 
+/**
+ * Reverse lookup — find a voice catalog entry by its public URL. Used by
+ * the canvas inspector / debug panels to enrich an audio item with its
+ * source voice metadata when only the URL was persisted on the item.
+ */
+const BY_URL: Record<string, VoiceEntry> = Object.fromEntries(catalog.voices.map((v) => [v.urlPath, v]))
+export function findVoiceByUrl(urlPath: string | undefined | null): VoiceEntry | undefined {
+  if (!urlPath) return undefined
+  return BY_URL[urlPath]
+}
+
 export interface VoiceFilter {
   gender?: VoiceGender
   age?: VoiceAge

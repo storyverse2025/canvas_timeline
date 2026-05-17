@@ -13,6 +13,7 @@ import { useViewStore } from '@/stores/view-store'
 import { useTimelineStore } from '@/stores/timeline-store'
 import { useMappingStore } from '@/stores/mapping-store'
 import { generateImage } from '@/lib/fal-client'
+import { findVoiceByUrl } from '@/lib/voice-library'
 import type { Asset } from '@/types/asset'
 import type { Tag as TagType } from '@/types/canvas'
 
@@ -337,25 +338,7 @@ function CanvasItemPanel({ nodeId }: { nodeId: string }) {
 function ItemContentPanel({ item }: { item: CanvasItem }) {
   const updateItem = useCanvasItemStore((s) => s.updateItem)
   if (item.kind === 'audio') {
-    return (
-      <div>
-        <label className="text-xs text-muted-foreground">音频预览</label>
-        <div className="mt-1 p-3 rounded border border-border bg-secondary/30 flex flex-col gap-2">
-          <audio src={item.content} controls preload="metadata" className="w-full" />
-          {item.content && (
-            <a
-              href={item.content}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[10px] text-muted-foreground truncate font-mono hover:text-foreground"
-              title={item.content}
-            >
-              {item.content}
-            </a>
-          )}
-        </div>
-      </div>
-    )
+    return <AudioItemContentPanel item={item} />
   }
   if (item.kind === 'video') {
     return (
@@ -382,6 +365,80 @@ function ItemContentPanel({ item }: { item: CanvasItem }) {
         onChange={(e) => updateItem(item.id, { content: e.target.value })}
         className="mt-1 text-xs min-h-[200px] bg-secondary/50 font-mono"
       />
+    </div>
+  )
+}
+
+function AudioItemContentPanel({ item }: { item: CanvasItem }) {
+  // For role='voice' audio, look up the source voice library entry by URL
+  // so the inspector can surface its real display name + spoken sample +
+  // gender/age/collection metadata instead of leaving the user staring at
+  // a URL-encoded path.
+  const voice = findVoiceByUrl(item.content)
+  return (
+    <div className="space-y-2">
+      <div>
+        <label className="text-xs text-muted-foreground">音频预览</label>
+        <div className="mt-1 p-3 rounded border border-border bg-secondary/30">
+          <audio src={item.content} controls preload="metadata" className="w-full" />
+        </div>
+      </div>
+      {voice && (
+        <div className="rounded border border-amber-500/30 bg-amber-500/5 p-3 space-y-2">
+          <div className="flex items-center gap-1.5">
+            <Mic className="w-3.5 h-3.5 text-amber-400" />
+            <span className="text-xs font-medium">音色来源</span>
+          </div>
+          <div className="text-xs">
+            <div className="text-foreground">{voice.displayName}</div>
+            <div className="text-[10px] text-muted-foreground font-mono mt-0.5">id: {voice.id}</div>
+          </div>
+          {voice.sampleSnippet && (
+            <div>
+              <div className="text-[10px] text-muted-foreground uppercase">示例文本</div>
+              <div className="text-[11px] text-foreground/80 mt-0.5 italic">"{voice.sampleSnippet}"</div>
+            </div>
+          )}
+          <div className="flex flex-wrap gap-1">
+            {voice.gender !== 'unknown' && (
+              <span className="text-[9px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300">{voice.gender === 'male' ? '男声' : '女声'}</span>
+            )}
+            {voice.age !== 'unknown' && (
+              <span className="text-[9px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300">{voice.age}</span>
+            )}
+            {voice.tags.slice(0, 5).map((t) => (
+              <span key={t} className="text-[9px] px-1.5 py-0.5 rounded bg-zinc-800/70 text-zinc-400">{t}</span>
+            ))}
+          </div>
+          <div>
+            <div className="text-[10px] text-muted-foreground uppercase">所属合集</div>
+            <div className="text-[11px] text-muted-foreground/80 mt-0.5 font-mono break-all">{voice.collection}</div>
+          </div>
+          <div>
+            <div className="text-[10px] text-muted-foreground uppercase">音色文件</div>
+            <a
+              href={voice.urlPath}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[10px] text-muted-foreground font-mono hover:text-foreground break-all"
+              title={voice.relativePath}
+            >
+              {voice.relativePath}
+            </a>
+          </div>
+        </div>
+      )}
+      {!voice && item.content && (
+        <a
+          href={item.content}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block text-[10px] text-muted-foreground truncate font-mono hover:text-foreground"
+          title={item.content}
+        >
+          {item.content}
+        </a>
+      )}
     </div>
   )
 }
