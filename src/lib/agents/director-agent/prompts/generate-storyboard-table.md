@@ -35,6 +35,13 @@ director-agent / generate-storyboard-table
 - 表格必须补充角色动机、心理状态、表演指导：演员为什么这样演、此刻面对什么处境、内在纠结是什么。
 - 角色心理描写要来自剧本上下文，但输出要能指导表演和镜头，不能只写空泛文学句。
 
+【单 row 演员/场景上限（硬约束）】
+- 每一行 row 只能承载 **一个场景 (scene)** 和 **至多两位主要角色 (character1 + character2)**。
+- 如果剧本同一个 beat 里出现 3 位以上有戏份的角色，**必须拆成多行**：第一行带主线角色对，下一行立刻切到新角色对（同场景不同人物 / 视点切换）。每行仍满足 2 ≤ duration ≤ 15s 和总时长锁定。
+- 同理，如果一个 beat 跨越两个空间（例：从屋内拍到屋外），**必须为每个空间各开一行 row**，scene 字段填该行实际所在的那一个，不要把两个场景塞进同一个 scene.description。
+- 拆分原则：保持因果与情绪连续（A 行结尾的动作 → B 行开头的反应/承接），但每行 character / scene 数量都不得超过上限。
+- 字段意图：character1 / character2 是这一行需要参考其外形 / 表演的核心人物，不是路人。背景群演不要塞进 character 字段。
+
 【多格导演分镜图与长视频 row 规则】
 - 不要把连续动作机械拆成一堆 2-3 秒碎镜；对同一地点、同一动作链、同一情绪推进的内容，尽量合并为单个 10-15秒 长视频 row（仍 ≤ 15s）。
 - 每个 row 的 storyboard_prompts 必须生成一张"多格导演分镜图 / multi-panel director storyboard sheet/grid"，而不是单张电影 still。
@@ -74,6 +81,7 @@ scene 的 description 必须使用场景提取步骤中的详细描述。这样�
 字段硬约束：
 - 每一行的 duration ∈ [2, 15]（秒）。任何超出区间的行都视为违反硬约束，整张表作废。
 - 所有 row 的 duration 字段之和必须等于 {{totalDurationSeconds}} 秒（容差 ±0.5s）。这是 hard constraint，违反则整张表作废。
+- **每一行只能填 1 个 scene + 至多 2 个 character (character1, character2)**。剧本同一 beat 有 3+ 角色 → 拆成多行；跨 2 个场景 → 拆成多行。违反则整张表作废。
 - emotion_atmosphere 不等于 lighting_atmosphere；前者是情绪/氛围目标，后者是光影实现。
 - character_motivation 必须回答"为什么这样表演/行动"。
 - character_psychology 必须回答"心理纠结/潜台词/处境压力"。
