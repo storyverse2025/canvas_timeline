@@ -2,6 +2,26 @@ import { useCanvasStore } from '@/stores/canvas-store'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { useAssetStore } from '@/stores/asset-store'
 
+// Summarize an image/media URL for the LLM system prompt. We never dump
+// `data:image/...;base64,...` URLs verbatim — a few of them pushed the
+// system prompt past 22MB in production, exceeding Linux ARG_MAX and
+// crashing the hermes bridge with spawn E2BIG. The LLM doesn't need the
+// bytes; it only needs to know "this slot has an image".
+const URL_MAX = 200
+export function summarizeMediaUrl(url: string | undefined | null): string {
+  if (!url) return '(无)'
+  if (url.startsWith('data:')) {
+    const semi = url.indexOf(';')
+    const mime = semi > 5 ? url.slice(5, semi) : 'data'
+    const kb = Math.round(url.length / 1024)
+    return `[${mime} ~${kb}KB inline]`
+  }
+  if (url.length > URL_MAX) {
+    return `${url.slice(0, URL_MAX)}… [+${url.length - URL_MAX}c]`
+  }
+  return url
+}
+
 /**
  * Build a text snapshot of the canvas for injection into the LLM system prompt,
  * so the model can answer questions like "based on the canvas, generate a shot list".
@@ -29,7 +49,7 @@ export function buildCanvasContext(): string {
         const preview = (it.content ?? '').replace(/\s+/g, ' ').slice(0, 200)
         lines.push(`${idx + 1}. [文本 ${short}] "${it.name}" @(${x},${y}) · 内容: ${preview || '(空)'}`)
       } else {
-        lines.push(`${idx + 1}. [图片 ${short}] "${it.name}" @(${x},${y}) · URL: ${it.content || '(无)'}`)
+        lines.push(`${idx + 1}. [图片 ${short}] "${it.name}" @(${x},${y}) · URL: ${summarizeMediaUrl(it.content)}`)
       }
     } else if (n.data.assetId) {
       const a = assetMap.get(n.data.assetId)
@@ -37,7 +57,7 @@ export function buildCanvasContext(): string {
       lines.push(
         `${idx + 1}. [${a.type} ${short}] "${a.name}" @(${x},${y})` +
           (a.description ? ` · ${a.description}` : '') +
-          (a.imageUrl ? ` · URL: ${a.imageUrl}` : ''),
+          (a.imageUrl ? ` · URL: ${summarizeMediaUrl(a.imageUrl)}` : ''),
       )
     }
   })
