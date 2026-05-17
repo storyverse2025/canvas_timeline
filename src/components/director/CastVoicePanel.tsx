@@ -3,7 +3,7 @@ import { Drama, Mic, RefreshCw, Search, X } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { runCastVoicesAndSpawnAudio, spawnVoiceCanvasNodes } from '@/lib/voice-binding'
-import { getVoice, listVoices, searchVoices } from '@/lib/voice-library'
+import { getVoice, listVoices, normalizeVoiceUrl, searchVoices } from '@/lib/voice-library'
 import type { VoiceEntry, VoiceGender } from '@/lib/voice-library'
 import { useProjectDB, type PersistedCastingCard } from '@/stores/project-db'
 import { cn } from '@/lib/utils'
@@ -143,7 +143,7 @@ function CastRow({
           <div className="mt-1 flex items-center gap-1.5">
             <Mic className="w-3 h-3 text-emerald-400/80" />
             <span className="text-[10px] truncate text-emerald-300">{voice.displayName}</span>
-            <audio src={voice.urlPath} controls className="h-6 max-w-[160px]" preload="none" />
+            <audio src={normalizeVoiceUrl(voice.urlPath)} controls className="h-6 max-w-[160px]" preload="none" />
           </div>
         ) : (
           <div className="mt-1 text-[10px] text-amber-400/80">未绑定音色</div>
@@ -277,7 +277,7 @@ function VoiceCandidateRow({
           ))}
         </div>
       </div>
-      <audio src={voice.urlPath} controls className="h-6 max-w-[180px]" preload="none" />
+      <audio src={normalizeVoiceUrl(voice.urlPath)} controls className="h-6 max-w-[180px]" preload="none" />
       <button
         onClick={onPick}
         className={cn(

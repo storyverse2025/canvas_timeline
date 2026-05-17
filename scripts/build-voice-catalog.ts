@@ -132,7 +132,14 @@ function buildEntry(absPath: string): VoiceEntry {
   const collectionParse = parseFromCollection(collection)
   const { gender, age } = parseFromFilename(filename, collectionParse)
   const { displayName, sampleSnippet } = parseDisplayName(filename)
-  const urlPath = `/voices/${rel.split(sep).map((s) => encodeURIComponent(s)).join('/')}`
+  // encodeURIComponent escapes `+` to %2B, but Vite's static-file middleware
+  // doesn't decode %2B back to `+` when matching disk paths — the request
+  // falls through to the SPA index.html (HTTP 200 text/html 635 bytes), so
+  // <audio> "loads" but plays silently. The fix: keep `+` as a literal path
+  // character (RFC 3986 allows it unencoded in path segments). Same goes
+  // for any other "safe" path characters we don't want over-encoded.
+  const encodeSegment = (s: string) => encodeURIComponent(s).replace(/%2B/g, '+')
+  const urlPath = `/voices/${rel.split(sep).map(encodeSegment).join('/')}`
   const sizeBytes = statSync(absPath).size
   return {
     id: stableId(rel),

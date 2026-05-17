@@ -13,7 +13,7 @@ import { useViewStore } from '@/stores/view-store'
 import { useTimelineStore } from '@/stores/timeline-store'
 import { useMappingStore } from '@/stores/mapping-store'
 import { generateImage } from '@/lib/fal-client'
-import { findVoiceByUrl } from '@/lib/voice-library'
+import { findVoiceByUrl, normalizeVoiceUrl } from '@/lib/voice-library'
 import type { Asset } from '@/types/asset'
 import type { Tag as TagType } from '@/types/canvas'
 
@@ -380,7 +380,7 @@ function AudioItemContentPanel({ item }: { item: CanvasItem }) {
       <div>
         <label className="text-xs text-muted-foreground">音频预览</label>
         <div className="mt-1 p-3 rounded border border-border bg-secondary/30">
-          <audio src={item.content} controls preload="metadata" className="w-full" />
+          <audio src={normalizeVoiceUrl(item.content)} controls preload="metadata" className="w-full" />
         </div>
       </div>
       {voice && (

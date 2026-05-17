@@ -11,6 +11,7 @@ import { useStoryboardStore } from '@/stores/storyboard-store'
 import { runCapability } from '@/lib/capabilities/client'
 import { VoiceFeedbackButton, type VoicePlan, type VoiceElementKind } from '@/components/canvas/VoiceFeedbackButton'
 import { PanoramaViewer } from '@/components/canvas/PanoramaViewer'
+import { normalizeVoiceUrl } from '@/lib/voice-library'
 
 export interface ImageNodeData {
   itemId: string;
@@ -239,7 +240,7 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
               <span className="text-[10px] uppercase tracking-wider">音色</span>
             </div>
             <audio
-              src={item.content}
+              src={normalizeVoiceUrl(item.content)}
               controls
               preload="metadata"
               className="w-full nodrag nopan shrink-0"
