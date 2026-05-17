@@ -215,9 +215,24 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
             playsInline
           />
         ) : item.kind === 'audio' ? (
-          <div className="w-full h-full flex flex-col items-center justify-center gap-2 bg-gradient-to-br from-amber-950/40 to-zinc-900 p-3">
-            <Mic className="w-6 h-6 text-amber-400/70" />
-            <audio src={item.content} controls className="w-full" />
+          // nodrag + nopan tell React Flow to skip its pointer-handling on
+          // this subtree, so the <audio> controls actually respond to clicks
+          // and scrubbing instead of starting a node drag. stopPropagation
+          // belt-and-suspenders for the play/pause button itself.
+          <div
+            className="w-full h-full flex flex-col items-center justify-center gap-2 bg-gradient-to-br from-amber-950/40 to-zinc-900 p-3 nodrag nopan"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Mic className="w-6 h-6 text-amber-400/70 shrink-0" />
+            <audio
+              src={item.content}
+              controls
+              preload="metadata"
+              className="w-full nodrag nopan"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+            />
             <div className="text-[10px] text-zinc-400 truncate w-full text-center" title={item.name}>
               {item.name}
             </div>
