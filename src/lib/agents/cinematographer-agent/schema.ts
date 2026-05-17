@@ -89,6 +89,14 @@ export interface ShootRequest {
     | Promise<string | { videoPrompt: string; voiceAudioUrls?: string[] }>
     | string
     | { videoPrompt: string; voiceAudioUrls?: string[] }
+  /**
+   * BytePlus digital-asset ids (returned from
+   * `byteplus-digital-asset.registerAndWait`) that should travel as
+   * `invited_images` alongside the keyframe so the moderator sees the
+   * referenced characters as approved. Used by the privacy-block fallback
+   * chain in useStoryboardGenerate; empty / undefined in the normal path.
+   */
+  invitedImageAssetIds?: string[]
 }
 
 export interface BeatVideoResult {

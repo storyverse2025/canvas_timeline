@@ -394,6 +394,7 @@ export function useStoryboardGenerate() {
      *  can show the user exactly what the model received. */
     const attemptShoot = async (
       keyframeUrl: string,
+      opts: { invitedImageAssetIds?: string[] } = {},
     ): Promise<{ url: string; prompt: string; voiceAudioUrls: string[] }> => {
       // Track what the augmenter actually attached so we can return it
       // to the caller. The cinematographer's shoot result only carries
@@ -473,10 +474,13 @@ export function useStoryboardGenerate() {
       const shootResult = await runAgentWithChatBridge(
         'cinematographer-agent',
         cinematographerShoot(
-          { row, visualStyle, keyframeUrl, contextRefs, aspect: '16:9', promptPostProcessor },
+          {
+            row, visualStyle, keyframeUrl, contextRefs, aspect: '16:9', promptPostProcessor,
+            invitedImageAssetIds: opts.invitedImageAssetIds,
+          },
           agentCtx,
         ),
-        { verb: 'shoot' },
+        { verb: opts.invitedImageAssetIds?.length ? 'shoot (with digital-asset whitelist)' : 'shoot' },
       )
       return { ...shootResult, voiceAudioUrls: attachedVoiceAudioUrls }
     }
@@ -497,11 +501,66 @@ export function useStoryboardGenerate() {
         const msg = String((firstErr as Error).message ?? firstErr)
         if (!isPrivacyBlock(msg)) throw firstErr
 
-        // Seedance flagged the keyframe as containing real-person privacy
-        // content. Ask director-agent to render a 2D-stylized keyframe
-        // (faces no longer trip the safety filter) and reshoot from that.
-        // The new keyframe lands as its own canvas node (kept alongside
-        // the original) and becomes the row's adopted ⭐ keyframe.
+        // ── Fallback 1: BytePlus digital-asset 开白 ────────────────────
+        // Register each character ref image as a BytePlus digital asset.
+        // Once they reach Active, reshoot the SAME keyframe with the asset
+        // ids attached as invited_images. The intent: the moderator sees
+        // the characters as approved/owned references and stops flagging.
+        // See skills/byteplus-seedance-digital-asset-open-whitelist.
+        let digitalAssetSucceeded = false
+        const characterRefUrls = [row.character1?.image, row.character2?.image]
+          .filter((u): u is string => Boolean(u && /^https?:\/\//i.test(u)))
+        if (characterRefUrls.length > 0) {
+          toast.info('Seedance 隐私检测拒绝了 keyframe — 尝试 BytePlus 数字资产开白', {
+            description: `注册 ${characterRefUrls.length} 张角色参考图到 digital asset，审核通过后用 invited_images 重试`,
+          })
+          try {
+            const { registerCharacterRefs } = await import('@/lib/byteplus-digital-asset')
+            const { approved, rejected } = await registerCharacterRefs(characterRefUrls)
+            if (approved.length > 0) {
+              if (rejected.length > 0) {
+                toast.message(
+                  `数字资产部分通过 (${approved.length} 通过 / ${rejected.length} 拒绝)`,
+                  { description: rejected[0]?.reason?.slice(0, 200) ?? '' },
+                )
+              } else {
+                toast.success(`数字资产开白通过 (${approved.length} 张)`)
+              }
+              try {
+                result = await attemptShoot(keyframeUrl, { invitedImageAssetIds: approved })
+                digitalAssetSucceeded = true
+              } catch (assetShootErr) {
+                const assetMsg = String((assetShootErr as Error).message ?? assetShootErr)
+                if (!isPrivacyBlock(assetMsg)) throw assetShootErr
+                toast.warning('数字资产重试仍被隐私检测拒绝 — 回退到 2D 风格化', {
+                  description: assetMsg.slice(0, 200),
+                })
+              }
+            } else {
+              toast.warning(`数字资产全部被拒 — 回退到 2D 风格化`, {
+                description: rejected[0]?.reason?.slice(0, 200) ?? '',
+              })
+            }
+          } catch (registerErr) {
+            // Endpoint 401/404, ARK_API_KEY missing, BytePlus needs AK/SK, etc.
+            // Don't surface as a hard error — just degrade to stylization
+            // and log so the user knows why this path didn't help.
+            // eslint-disable-next-line no-console
+            console.warn('[useStoryboardGenerate] BytePlus digital-asset registration failed:', (registerErr as Error).message)
+            toast.message('BytePlus 数字资产开白失败 — 回退到 2D 风格化', {
+              description: String((registerErr as Error).message).slice(0, 200),
+            })
+          }
+        }
+
+        if (digitalAssetSucceeded) {
+          // Skip the 2D-stylize fallback; `result` already holds the
+          // successful reshoot.
+        } else {
+        // ── Fallback 2: 2D-stylized keyframe ──────────────────────────
+        // Director re-renders the keyframe with 3DCG faces so the safety
+        // filter no longer reads it as a real person. New keyframe lands
+        // as its own canvas node and becomes the row's adopted ⭐.
         toast.info('Seedance 隐私检测拒绝了当前 keyframe — 让 director 重画 2D 风格化版本', {
           description: '保留原 keyframe，新版会成为表格采用的 keyframe',
         })
@@ -516,6 +575,7 @@ export function useStoryboardGenerate() {
         const retryRow = useStoryboardStore.getState().rows.find((r) => r.id === row.id) ?? row
         Object.assign(row, retryRow)
         result = await attemptShoot(keyframeUrl)
+        } // end if (digitalAssetSucceeded) else
       }
       const url = result.url
 
