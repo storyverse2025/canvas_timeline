@@ -5,7 +5,7 @@
   "type": "module",
   "packageManager": "pnpm@11.1.0",
   "scripts": {
-    "dev": "concurrently -n bridge,vite -c blue,green \"node claude-bridge.mjs\" \"vite --port 8080\"",
+    "dev": "concurrently -n bridge,vite -c blue,green --restart-tries -1 --restart-after 1000 \"node claude-bridge.mjs\" \"vite --port 8080\"",
     "bridge": "node claude-bridge.mjs",
     "build": "tsc -b && vite build",
     "lint": "eslint .",

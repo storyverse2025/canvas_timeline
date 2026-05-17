@@ -6,7 +6,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { ChatMessage } from './ChatMessage'
 import { SkillProgress } from './SkillProgress'
 import { InterviewCard } from './InterviewCard'
-import { QuickActions } from './QuickActions'
+import { QuickActions, type QuickActionId } from './QuickActions'
 import { useChatStore } from '@/stores/chat-store'
 import { useAssetStore } from '@/stores/asset-store'
 import { useCanvasStore } from '@/stores/canvas-store'
@@ -21,6 +21,20 @@ import { upsertKeyframeRow } from '@/lib/keyframe-sync'
 import { ensureElements, buildElementContext, type ElementInventory } from '@/lib/canvas-elements'
 import { useProjectDB } from '@/stores/project-db'
 import { useProjectStore } from '@/stores/project-store'
+import { useStoryboardGenerate } from '@/hooks/useStoryboardGenerate'
+import { summarizeGaps } from '@/lib/gap-finder'
+import {
+  quickAddMissingStoryboardRows,
+  quickGenerateMissingAssets,
+  quickGenerateMissingKeyframes,
+  quickGenerateMissingVideos,
+  quickUpdateDownstreamVideos,
+  type QuickActionDeps,
+} from '@/lib/chat-quick-actions'
+import { interpretRequest, type PMAction, type PMGapSummary, type PMRecentMessage } from '@/lib/agents/project-manager-agent'
+import { runAgentWithChatBridge } from '@/lib/agents/chat-bridge'
+import { createMemoryContext } from '@/lib/agents/_shared/context/memory'
+import { createCapabilityLLM } from '@/lib/agents/_shared/llm/capability'
 import type { ClaudeMessage } from '@/lib/claude-client'
 
 const CHAT_SYSTEM_PROMPT = `You are StoryVerse AI, a creative assistant for animated video production.
@@ -98,9 +112,146 @@ export function ChatPanel() {
   const updateMessage = useChatStore((s) => s.updateMessage)
   const setIsLoading = useChatStore((s) => s.setIsLoading)
   const clearHistory = useChatStore((s) => s.clearHistory)
+  const { generateKeyframe, generateBeatVideo } = useStoryboardGenerate()
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // Deps bundle reused by both QuickAction clicks and PM action dispatch.
+  // useStoryboardGenerate returns fresh closures each render, so we
+  // rebuild on demand at call site rather than memoizing here.
+  const buildQuickActionDeps = (): QuickActionDeps => ({
+    log: (msg) => addMessage('system', msg),
+    generateKeyframe: async (row) => { await generateKeyframe(row) },
+    generateBeatVideo: async (row) => { await generateBeatVideo(row) },
+  })
+
+  // ─── QuickAction handlers (top-of-input chips + PM dispatch reuse) ───
+
+  const runQuickAction = useCallback(async (id: QuickActionId) => {
+    const deps = buildQuickActionDeps()
+    setIsLoading(true)
+    try {
+      switch (id) {
+        case 'generate-missing-assets':
+          await quickGenerateMissingAssets(deps)
+          break
+        case 'generate-missing-keyframes':
+          await quickGenerateMissingKeyframes(deps)
+          break
+        case 'add-missing-storyboard-rows':
+          await quickAddMissingStoryboardRows(deps)
+          break
+        case 'generate-missing-videos':
+          await quickGenerateMissingVideos(deps)
+          break
+        case 'update-downstream-videos':
+          await quickUpdateDownstreamVideos(deps)
+          break
+      }
+    } finally {
+      setIsLoading(false)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addMessage, generateKeyframe, generateBeatVideo, setIsLoading])
+
+  /** Execute one PM-planned action. Mirrors runQuickAction but covers
+   *  the row-specific and director-assistant actions PM can additionally
+   *  emit. Returns true when the action consumed the request (so the
+   *  caller can stop processing the rest of the plan if needed). */
+  const executePMAction = useCallback(async (action: PMAction): Promise<void> => {
+    const deps = buildQuickActionDeps()
+    switch (action.type) {
+      case 'run-director-assistant':
+        addMessage('system', 'PM: 启动导演助手 — 请在弹出的对话框里输入剧本 / 总时长后点「开始优化」')
+        // The director-assistant pipeline is dialog-gated for user input;
+        // PM surfaces the suggestion here, the user clicks 导演助手 in the
+        // main toolbar. A future "open dialog programmatically" hook
+        // could automate this.
+        break
+      case 'generate-missing-assets':
+        await quickGenerateMissingAssets(deps)
+        break
+      case 'generate-missing-keyframes':
+        await quickGenerateMissingKeyframes(deps, action.rowIds)
+        break
+      case 'generate-missing-videos':
+        await quickGenerateMissingVideos(deps, action.rowIds)
+        break
+      case 'add-missing-storyboard-rows':
+        await quickAddMissingStoryboardRows(deps)
+        break
+      case 'update-downstream-videos':
+        await quickUpdateDownstreamVideos(deps, action.rowIds)
+        break
+      case 'actor-enrich-row': {
+        const row = useStoryboardStore.getState().rows.find((r) => r.id === action.rowId)
+        if (!row) { addMessage('system', `PM: 找不到 rowId=${action.rowId}`); break }
+        addMessage('system', `PM: 让 actor-agent 补 ${row.shot_number} 的表演 (run right-click 「演员完善表演」 effect)`)
+        // Reuse the table-context-menu path so behavior stays identical:
+        // dynamic import to keep the chat bundle small.
+        const { enrichRow } = await import('@/lib/agents/actor-agent')
+        const db = useProjectDB.getState()
+        const cards = db.script.castingCards ?? []
+        if (cards.length === 0) { addMessage('system', 'PM: 暂无 casting cards — 先跑导演助手'); break }
+        try {
+          const ctx = createMemoryContext({ llm: createCapabilityLLM() })
+          const enriched = await runAgentWithChatBridge(
+            'actor-agent',
+            enrichRow(
+              {
+                row,
+                castingCards: cards,
+                creativeBrief: db.script.creativeBrief,
+                visualStyle: db.artDirection.customStyle || db.artDirection.stylePreset,
+              },
+              ctx,
+            ),
+            { verb: 'enrich-row' },
+          )
+          useStoryboardStore.getState().updateRow(row.id, enriched)
+          addMessage('system', `✓ 镜头 ${row.shot_number} 表演已完善`)
+        } catch (e) {
+          addMessage('system', `✗ actor-enrich 失败: ${(e as Error).message}`)
+        }
+        break
+      }
+      case 'sound-design-row': {
+        const row = useStoryboardStore.getState().rows.find((r) => r.id === action.rowId)
+        if (!row) { addMessage('system', `PM: 找不到 rowId=${action.rowId}`); break }
+        const { designRow } = await import('@/lib/agents/sound-agent')
+        const db = useProjectDB.getState()
+        try {
+          const ctx = createMemoryContext({ llm: createCapabilityLLM() })
+          const brief = await runAgentWithChatBridge(
+            'sound-agent',
+            designRow(
+              {
+                row,
+                creativeBrief: db.script.creativeBrief,
+                visualStyle: db.artDirection.customStyle || db.artDirection.stylePreset,
+                overwrite: true,
+              },
+              ctx,
+            ),
+            { verb: 'design-row' },
+          )
+          useStoryboardStore.getState().updateRow(row.id, brief)
+          addMessage('system', `✓ 镜头 ${row.shot_number} 音频设计完成`)
+        } catch (e) {
+          addMessage('system', `✗ sound-design 失败: ${(e as Error).message}`)
+        }
+        break
+      }
+      case 'chat-response':
+        addMessage('assistant', action.text)
+        break
+      case 'ask-user':
+        addMessage('assistant', action.question)
+        break
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addMessage, generateKeyframe, generateBeatVideo])
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -218,8 +369,52 @@ export function ChatPanel() {
     setIsLoading(true)
 
     try {
+      // Route free-form input through project-manager-agent FIRST. PM
+      // inspects the gap summary + recent messages and either dispatches
+      // to a downstream agent (skipping the Claude call entirely) or
+      // emits a chat-response we can render directly.
+      //
+      // Storyboard-generation requests (the JSON-array trigger words)
+      // and intent-router matches still take precedence over PM, since
+      // those have first-class flows that the PM would just re-discover.
+      const isStoryboardRequest = /分镜|storyboard|shot.?list|表格|生成.*表|重新生成/i.test(text)
+      const intentMatch = detectIntent(text)
+      if (!isStoryboardRequest && !intentMatch) {
+        try {
+          const gap = summarizeGaps()
+          const pmGap: PMGapSummary = {
+            totalRows: useStoryboardStore.getState().rows.length,
+            missingAssetsCount: gap.missingAssets.length,
+            missingAssets: gap.missingAssets.map((m) => ({ kind: m.kind, name: m.name })),
+            rowsMissingKeyframe: gap.rowsMissingKeyframe.map((r) => ({ id: r.id, shot_number: r.shot_number })),
+            rowsMissingBeatVideo: gap.rowsMissingBeatVideo.map((r) => ({ id: r.id, shot_number: r.shot_number })),
+            rowsWithBothKeyframeAndVideo: gap.rowsWithBothKeyframeAndVideo.map((r) => ({ id: r.id, shot_number: r.shot_number })),
+            nextSuggestion: gap.nextSuggestion,
+          }
+          const recent: PMRecentMessage[] = useChatStore.getState().messages
+            .slice(-6)
+            .filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'system')
+            .map((m) => ({ role: m.role as 'user' | 'assistant' | 'system', content: m.content.slice(0, 300) }))
+          const ctx = createMemoryContext({ llm: createCapabilityLLM() })
+          const plan = await runAgentWithChatBridge(
+            'project-manager-agent',
+            interpretRequest({ userMessage: text, gapSummary: pmGap, recentMessages: recent }, ctx),
+            { verb: 'interpret-request' },
+          )
+          if (plan.reasoning) addMessage('system', `PM: ${plan.reasoning}`)
+          for (const action of plan.actions) {
+            await executePMAction(action)
+          }
+          return
+        } catch (e) {
+          // PM unavailable / parse failure → fall through to the legacy
+          // Claude streaming path so the user still gets a response.
+          addMessage('system', `PM 路由失败 (fallback 到 Claude 直接对话): ${(e as Error).message}`)
+        }
+      }
+
       // Check for intent match before calling Claude
-      const intent = detectIntent(text)
+      const intent = intentMatch
       if (intent) {
         // Most skills hit the StoryVerse backend at /api/v1/projects/{projectId}/...
         // When no backend project is loaded, pass 'test' as a sentinel — the
@@ -237,7 +432,7 @@ export function ChatPanel() {
       }
 
       // Pre-process: if this is a storyboard request, classify canvas elements first
-      const isStoryboardRequest = /分镜|storyboard|shot.?list|表格|生成.*表|重新生成/i.test(text)
+      // (isStoryboardRequest already captured above for PM routing)
       let elementInventory: ElementInventory | null = null
       if (isStoryboardRequest) {
         try {
@@ -323,7 +518,8 @@ export function ChatPanel() {
     } finally {
       setIsLoading(false)
     }
-  }, [isLoading, addMessage, updateMessage, setIsLoading])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading, addMessage, updateMessage, setIsLoading, executePMAction])
 
   const handleSend = async () => {
     const text = input.trim()
@@ -366,8 +562,8 @@ export function ChatPanel() {
       {/* Skill Progress */}
       {skillProgress && <SkillProgress progress={skillProgress} />}
 
-      {/* Quick Actions */}
-      <QuickActions onAction={sendMessage} />
+      {/* Quick Actions — gap-driven, no LLM call. See chat-quick-actions.ts. */}
+      <QuickActions onAction={runQuickAction} />
 
       {/* Input */}
       <div className="border-t border-border p-2">
