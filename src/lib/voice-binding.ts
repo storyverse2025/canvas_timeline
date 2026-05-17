@@ -144,11 +144,14 @@ export function spawnVoiceCanvasNodes(bindings: VoiceBindings): void {
     } else {
       // Stack the audio nodes near the canvas origin with a vertical stagger
       // so they don't pile on top of one another.
+      // Native <audio controls> needs ~320×54 min to render; 340×140
+      // leaves room for the Mic header + audio bar + filename caption
+      // without the play button getting squashed or clipped.
       audioNodeId = useCanvasStore.getState().addItemNode(
         audioItemId,
         'audio',
-        { x: 420, y: 40 + stagger * 110 },
-        { width: 280, height: 90 },
+        { x: 420, y: 40 + stagger * 160 },
+        { width: 340, height: 140 },
       )
       stagger++
     }

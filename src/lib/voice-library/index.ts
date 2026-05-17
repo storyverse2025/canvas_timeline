@@ -38,6 +38,31 @@ export function voicePublicUrl(id: string | undefined | null): string | undefine
   return getVoice(id)?.urlPath
 }
 
+/**
+ * Vite's static handler doesn't decode `%2B` back to `+` when matching
+ * disk paths, so any URL where `+` was URL-encoded falls through to the
+ * SPA index.html (audio plays silently). The build-voice-catalog scanner
+ * now keeps `+` literal, but legacy items already persisted in IDB still
+ * have `%2B` in their `content`. Normalize on read to keep them playable
+ * without forcing a re-spawn.
+ */
+export function normalizeVoiceUrl(urlPath: string | undefined | null): string {
+  if (!urlPath) return ''
+  return urlPath.replace(/%2B/g, '+')
+}
+
+/**
+ * Reverse lookup — find a voice catalog entry by its public URL. Used by
+ * the canvas inspector / debug panels to enrich an audio item with its
+ * source voice metadata when only the URL was persisted on the item.
+ * Tolerant of legacy `%2B`-encoded urls (normalized before lookup).
+ */
+const BY_URL: Record<string, VoiceEntry> = Object.fromEntries(catalog.voices.map((v) => [v.urlPath, v]))
+export function findVoiceByUrl(urlPath: string | undefined | null): VoiceEntry | undefined {
+  if (!urlPath) return undefined
+  return BY_URL[urlPath] ?? BY_URL[normalizeVoiceUrl(urlPath)]
+}
+
 export interface VoiceFilter {
   gender?: VoiceGender
   age?: VoiceAge
