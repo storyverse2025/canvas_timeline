@@ -15,9 +15,20 @@
  */
 
 import { STYLE_PRESETS_DATA } from './data'
+import { STYLE_LABELS_ZH } from './labels.zh'
 import type { StyleCategory, StyleGuide, StylePresetDefinition } from './types'
 
 export type { StyleCategory, StyleGuide, StylePresetDefinition } from './types'
+
+/**
+ * Display label for a preset — prefers the canvas_timeline Chinese
+ * translation, falls back to the upstream English label. Use this in any
+ * user-facing surface (grid, panels, dropdowns); never render the raw
+ * `preset.label` directly.
+ */
+export function styleDisplayLabel(preset: StylePresetDefinition): string {
+  return STYLE_LABELS_ZH[preset.style_id] ?? preset.label
+}
 
 export const STYLE_LIBRARY_DEFAULT_ID: string = STYLE_PRESETS_DATA.default_style_id
 
