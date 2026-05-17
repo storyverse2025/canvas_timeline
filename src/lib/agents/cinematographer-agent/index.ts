@@ -132,6 +132,7 @@ async function callSeedance(opts: {
   voiceAudioUrls?: string[]
   durationSeconds: number
   aspect: '16:9' | '9:16' | '1:1' | '4:3'
+  invitedImageAssetIds?: string[]
 }): Promise<string> {
   // ONE image input: the keyframe (omni-reference / 全能参考). We deliberately
   // don't ship character / scene / prop asset images alongside — the model
@@ -165,6 +166,12 @@ async function callSeedance(opts: {
       // Hints to the capability plugin to use omni-reference mode if the
       // provider exposes it as a flag (Doubao Seedance 2.0 supports it).
       reference_mode: 'omni',
+      // Privacy-block fallback: BytePlus digital-asset ids the caller
+      // pre-registered. The capability plugin translates these to the
+      // Seedance body's `invited_images` field.
+      ...(opts.invitedImageAssetIds?.length
+        ? { invitedImageAssetIds: opts.invitedImageAssetIds }
+        : {}),
     },
   })
   const url = r.outputs[0]?.url
@@ -215,7 +222,10 @@ export async function* shoot(
       voiceAudioUrls?.length ? ` + ${voiceAudioUrls.length} voice ref${voiceAudioUrls.length === 1 ? '' : 's'}` : ''
     }`,
   }
-  const url = await callSeedance({ prompt, keyframeUrl: req.keyframeUrl, voiceAudioUrls, durationSeconds, aspect })
+  const url = await callSeedance({
+    prompt, keyframeUrl: req.keyframeUrl, voiceAudioUrls, durationSeconds, aspect,
+    invitedImageAssetIds: req.invitedImageAssetIds,
+  })
 
   yield {
     type: 'result',

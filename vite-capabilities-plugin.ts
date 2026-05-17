@@ -759,6 +759,7 @@ async function submitSeedanceTaskOnce(opts: {
   duration?: number
   generateAudio?: boolean
   seed?: number
+  invitedImageAssetIds?: string[]
 }): Promise<string> {
   const key = process.env.ARK_API_KEY
   if (!key) throw new Error('ARK_API_KEY not set')
@@ -773,6 +774,12 @@ async function submitSeedanceTaskOnce(opts: {
     generate_audio: opts.generateAudio ?? true,
   }
   if (opts.seed != null && opts.seed >= 0) body.seed = opts.seed
+  // Privacy-block fallback: when the caller pre-registered character refs
+  // as BytePlus digital assets, ship them as invited_images so the
+  // moderator treats those characters as approved. Empty array = omit.
+  if (opts.invitedImageAssetIds?.length) {
+    body.invited_images = opts.invitedImageAssetIds.map((id) => ({ asset_id: id }))
+  }
 
   const createRes = await fetch('https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks', {
     method: 'POST', headers,
@@ -803,6 +810,7 @@ async function submitSeedanceTask(opts: {
   duration?: number
   generateAudio?: boolean
   seed?: number
+  invitedImageAssetIds?: string[]
 }): Promise<string> {
   try {
     return await submitSeedanceTaskOnce(opts)
@@ -842,6 +850,9 @@ async function textToVideo(req: CapReq): Promise<CapRes> {
     duration: Number(req.params?.duration ?? 5),
     generateAudio: req.params?.generate_audio !== false,
     seed: req.params?.seed != null ? Number(req.params.seed) : undefined,
+    invitedImageAssetIds: Array.isArray(req.params?.invitedImageAssetIds)
+      ? (req.params!.invitedImageAssetIds as string[])
+      : undefined,
   })
   return { outputs: [{ kind: 'video', url }] }
 }
@@ -866,6 +877,9 @@ async function universalToVideo(req: CapReq): Promise<CapRes> {
     duration: Number(req.params?.duration ?? 5),
     generateAudio: req.params?.generate_audio !== false,
     seed: req.params?.seed != null ? Number(req.params.seed) : undefined,
+    invitedImageAssetIds: Array.isArray(req.params?.invitedImageAssetIds)
+      ? (req.params!.invitedImageAssetIds as string[])
+      : undefined,
   })
   return { outputs: [{ kind: 'video', url }] }
 }
