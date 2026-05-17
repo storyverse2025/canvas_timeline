@@ -249,11 +249,16 @@ export async function ensureElements(
     // injected by the caller.
     const preppedExtraction = extraction
 
-    // Caps mirror the legacy synchronous agent verb defaults so behavior
-    // stays the same modulo concurrency / blocking.
-    const CHAR_CAP = needCharacters ? 2 : 0
-    const SCENE_CAP = needScenes ? 2 : 0
-    const PROP_CAP = needProps ? 3 : 0
+    // Generate an image for EVERY extracted character — the earlier
+    // CHAR_CAP=2 was dropping 3rd/4th characters silently (user reported:
+    // 3 个角色的人物小传和音色都有，但只有 2 个角色的图生成成功). Bumped to
+    // 6 to bound runaway scripts but cover ensemble casts. Scenes / props
+    // stay at their tighter caps because they're typically fewer + cheaper
+    // to add back manually if needed; lift them if a similar drop is
+    // reported.
+    const CHAR_CAP = needCharacters ? Math.min(preppedExtraction.characters.length, 6) : 0
+    const SCENE_CAP = needScenes ? Math.min(preppedExtraction.scenes.length, 4) : 0
+    const PROP_CAP = needProps ? Math.min(preppedExtraction.props.length, 5) : 0
 
     // Pre-create the canvas items + nodes with EMPTY content so the
     // downstream director-assistant pipeline immediately has stable
