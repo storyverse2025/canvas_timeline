@@ -152,6 +152,24 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
     { verb: 'expand-script', interactive: true },
   )
   const scriptToCastingReport = JSON.stringify(dossier, null, 2)
+
+  // Persist a distilled creative brief so every downstream keyframe pulls
+  // TYPE / TONE / GENRE from the same source of truth. The dossier's
+  // framework_calibration carries the labels the script-agent locked in.
+  const fc = dossier.framework_calibration
+  const briefType = fc.duration_or_episode_type?.trim() || ''
+  const briefTone = fc.core_emotion?.trim() || ''
+  const briefGenre = [briefType, briefTone].filter(Boolean).join(' · ') || undefined
+  const { useProjectDB: useProjectDBImport } = await import('@/stores/project-db')
+  useProjectDBImport.getState().updateScript({
+    creativeBrief: {
+      projectType: briefType || undefined,
+      tone: briefTone || undefined,
+      genre: briefGenre,
+      platformAudience: fc.platform_bias?.trim() || undefined,
+    },
+  })
+
   setStep(state, 0, 0, 'done', '已按 script-framework-qa 完成七层框架校准'); onUpdate(state)
   setStep(state, 0, 1, 'done', '已按 script-writing-expansion 生成/补齐完整剧本基准'); onUpdate(state)
   setStep(state, 0, 2, 'done', '已按 script-doctor-roundtable 完成结构会诊摘要'); onUpdate(state)

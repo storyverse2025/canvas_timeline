@@ -5,7 +5,16 @@ import { v4 as uuid } from 'uuid';
 import { createIdbStorage } from '@/lib/storage/idb-storage';
 
 export type CanvasItemKind = 'image' | 'text' | 'video' | 'audio';
-export type CanvasItemRole = 'style' | 'system';
+/**
+ * Semantic role for an item.
+ *   - 'style'    : the global art-style text node
+ *   - 'system'   : a system-prompt text node
+ *   - 'keyframe' : a director-storyboard keyframe rendered by
+ *                  director-agent.generateKeyframe. Used by ImageCanvasNode
+ *                  to render an adopted-keyframe ⭐ badge when this item's
+ *                  content matches some storyboard row's keyframeUrl.
+ */
+export type CanvasItemRole = 'style' | 'system' | 'keyframe';
 
 export interface CanvasItem {
   id: string;
@@ -13,7 +22,7 @@ export interface CanvasItem {
   name: string;
   /** image/video/audio: url, text: content */
   content: string;
-  /** Semantic tag for text items. 'style' = global art style, 'system' = system prompt. */
+  /** Semantic tag. See CanvasItemRole. */
   role?: CanvasItemRole;
   /** Generation metadata (set when AI-generated, for Edit panel) */
   prompt?: string;

@@ -6,7 +6,9 @@ import {
   Eye, Clapperboard, ArrowUpRight, Layers, Move3d,
   SplitSquareHorizontal, PaintBucket, Volume2,
   AudioLines, TextCursorInput, Music, FolderPlus,
+  Download,
 } from 'lucide-react'
+import { toast } from 'sonner'
 import { useCanvasStore } from '@/stores/canvas-store'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { useGenerateDialogStore } from '@/stores/generate-dialog-store'
@@ -14,6 +16,7 @@ import { useCapabilityDialogStore } from '@/stores/capability-dialog-store'
 import { gatherUpstream } from '@/lib/canvas-graph'
 import { getCapabilitiesForNodeType } from '@/lib/capabilities/registry'
 import { CreateAssetDialog } from '@/components/asset-library/CreateAssetDialog'
+import { downloadFromUrl, type DownloadKind } from '@/lib/download'
 import type { CapabilitySpec } from '@/lib/capabilities/types'
 import { cn } from '@/lib/utils'
 
@@ -136,6 +139,35 @@ export function NodeContextMenu({ menu, onClose }: Props) {
     onClose()
   }
 
+  const download = async () => {
+    if (!item || !item.content) {
+      toast.error('该节点没有可下载的内容')
+      return
+    }
+    const downloadKind: DownloadKind | null = item.kind === 'image' || item.kind === 'video' || item.kind === 'audio'
+      ? item.kind
+      : null
+    if (!downloadKind) {
+      toast.error('文本节点暂不支持下载')
+      return
+    }
+    onClose()
+    try {
+      await downloadFromUrl(item.content, item.name || 'asset', downloadKind)
+      toast.success('已开始下载')
+    } catch (e) {
+      toast.error('下载失败', { description: String((e as Error).message).slice(0, 200) })
+    }
+  }
+
+  // Whether the current node carries downloadable media (item-backed image /
+  // video / audio with a non-empty URL). Text items hide the option.
+  const downloadable = Boolean(
+    item &&
+      item.content &&
+      (item.kind === 'image' || item.kind === 'video' || item.kind === 'audio'),
+  )
+
   const aiGenerate = () => {
     if (!item) return
     const upstream = gatherUpstream(menu.nodeId)
@@ -224,6 +256,7 @@ export function NodeContextMenu({ menu, onClose }: Props) {
 
       <div className="my-1 border-t border-border" />
       <MenuItem icon={FolderPlus} label="创建资产" onClick={() => { setCreateAssetOpen(true); onClose() }} />
+      {downloadable && <MenuItem icon={Download} label="下载到本地" onClick={download} />}
       <MenuItem icon={Copy} label="复制节点" onClick={duplicate} />
       <MenuItem icon={Trash2} label="删除节点" onClick={remove} danger />
       {createAssetOpen && item && (

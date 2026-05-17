@@ -113,8 +113,15 @@ export interface GenerateKeyframeRequest {
 
   /** Header-bar project info. All optional — defaults render gracefully. */
   projectTitle?: string
+  /** TYPE — e.g. "短视频 (30-60秒)", "AI 漫剧". Sourced from
+   *  project-db.script.creativeBrief.projectType (script-agent dossier). */
   projectType?: string
+  /** TONE — e.g. "感动观众", "悬疑救赎". Same source. */
   projectTone?: string
+  /** GENRE — combined type+tone label (e.g. "短视频 · 感动观众"). When set,
+   *  rendered as its own prominent line in the project header bar so the
+   *  image model sees genre intent before composition. */
+  genre?: string
   /** Single-line visual style descriptor (e.g., "Cold-toned filmic"). */
   visualStyle?: string
 
@@ -133,6 +140,16 @@ export interface GenerateKeyframeRequest {
 
   /** Aspect ratio for the rendered keyframe. Defaults to 16:9. */
   aspect?: '16:9' | '9:16' | '1:1' | '4:3'
+
+  /**
+   * When true, append a 2D stylization instruction so the rendered faces
+   * don't trigger Seedance's privacy filter
+   * (InputImageSensitiveContentDetected.PrivacyInformation). The
+   * cinematographer-agent's shoot path retries with this flag after a
+   * privacy block; everything else (composition, palette, lighting)
+   * stays unchanged.
+   */
+  stylizeFacesFor2D?: boolean
 }
 
 export interface KeyframeResult {

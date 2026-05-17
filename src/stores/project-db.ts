@@ -105,12 +105,33 @@ export interface ArtDirection {
   updatedAt: number
 }
 
+/**
+ * Distilled facts from the script-agent's expand-script dossier — used by
+ * the keyframe generator to thread TYPE / TONE / GENRE into the prompt
+ * header so gpt-image-2 knows what kind of project it's rendering for.
+ *
+ * director-assistant populates this right after script-agent runs; the
+ * useStoryboardGenerate hook reads it when building each keyframe request.
+ */
+export interface CreativeBrief {
+  /** Project type label (e.g., "短视频 (30-60秒)", "AI 漫剧"). */
+  projectType?: string
+  /** Story goal / TONE (e.g., "感动观众", "悬疑救赎"). */
+  tone?: string
+  /** Derived "GENRE" line combining type + tone (e.g., "短视频 · 感动观众"). */
+  genre?: string
+  /** Platform / audience label from the dossier. */
+  platformAudience?: string
+}
+
 export interface Script {
   text: string
   optimizedText: string
   /** Total duration (seconds) the storyboard rows must sum to. Required by
    *  the director-assistant pipeline; the LLM treats it as a hard constraint. */
   totalDurationSeconds: number
+  /** Distilled facts from the most recent script-agent run. */
+  creativeBrief?: CreativeBrief
   updatedAt: number
 }
 
@@ -194,6 +215,7 @@ const DEFAULT_SCRIPT: Script = {
   text: '',
   optimizedText: '',
   totalDurationSeconds: 30,
+  creativeBrief: undefined,
   updatedAt: 0,
 }
 

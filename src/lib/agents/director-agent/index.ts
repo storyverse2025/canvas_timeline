@@ -283,6 +283,13 @@ function buildKeyframePrompt(req: GenerateKeyframeRequest): string {
   const title = req.projectTitle ?? '未命名 / Untitled'
   const projectType = req.projectType ?? '未指定'
   const tone = req.projectTone ?? '未指定'
+  // GENRE derives from type + tone when not explicitly supplied — gives the
+  // image model a single-line genre cue alongside the more granular fields.
+  const genre = req.genre ?? (
+    req.projectType && req.projectTone
+      ? `${req.projectType} · ${req.projectTone}`
+      : '未指定'
+  )
   const visualStyle = req.visualStyle ?? '冷调写实电影质感 / cold-toned filmic'
 
   const characters = req.characters ?? []
@@ -339,16 +346,17 @@ function buildKeyframePrompt(req: GenerateKeyframeRequest): string {
     ``,
     `## Project header bar`,
     `- Title: ${title}`,
-    `- Type: ${projectType}`,
+    `- **TYPE**: ${projectType}`,
+    `- **TONE**: ${tone}`,
+    `- **GENRE**: ${genre}`,
     `- Shot duration: ${req.shotDurationSeconds}s`,
-    `- Tone: ${tone}`,
     `- Visual style: ${visualStyle}`,
     `- Aspect ratio: ${aspect}`,
     ``,
     `## Layout (${hasCharacters ? '6' : '5'} modules, professional film production layout)`,
     ``,
     `### ${next()}. TOP — Project info bar`,
-    `Print "${title}" along with duration ${req.shotDurationSeconds}s, type ${projectType}, tonality ${tone}.`,
+    `Print "${title}" along with TYPE: ${projectType}, TONE: ${tone}, GENRE: ${genre}, duration ${req.shotDurationSeconds}s.`,
     ``,
     // Character module — only when the row actually has character refs.
     ...(hasCharacters
@@ -390,6 +398,9 @@ function buildKeyframePrompt(req: GenerateKeyframeRequest): string {
     `- ULTRA-DETAILED, PROFESSIONAL FILM PRODUCTION LAYOUT`,
     `- High-end typography, no text errors, no image breaks, no facial breakdown`,
     `- Aspect ratio ${aspect}, compatible with SEEDANCE 2.0 video generation pipeline`,
+    req.stylizeFacesFor2D
+      ? `- **3DCG STYLIZATION (privacy retry)**: 把原来人物脸部3DCG风格化，尽量保持面部细节，但可以避免系统误认真人；其他地方保持原来美术风格 / Re-stylize every human face into a 3DCG render — keep the facial structure / expression / lighting cues so the character is still recognizable, but push it just far enough from photoreal that downstream content-safety filters no longer flag it as a real person. Composition, palette, lighting, props, and the rest of the frame stay identical to a non-stylized render.`
+      : '',
     ``,
     legendLines.length
       ? `## REFERENCE IMAGES (use them as labeled, maintain character + scene consistency)`

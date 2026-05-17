@@ -14,7 +14,9 @@ interface Props {
 }
 
 const ROLE_CYCLE: (CanvasItemRole | undefined)[] = [undefined, 'style', 'system']
-const ROLE_STYLES: Record<NonNullable<CanvasItemRole>, { border: string; ring: string; chipBg: string; chipText: string; label: string }> = {
+// Only style + system are user-cycleable from a text node; 'keyframe' is set
+// programmatically by director-agent on image items and never appears here.
+const ROLE_STYLES: Partial<Record<NonNullable<CanvasItemRole>, { border: string; ring: string; chipBg: string; chipText: string; label: string }>> = {
   style:  { border: 'border-purple-400', ring: 'ring-purple-400', chipBg: 'bg-purple-500/90', chipText: 'text-white',  label: '全局风格' },
   system: { border: 'border-blue-400',   ring: 'ring-blue-400',   chipBg: 'bg-blue-500/90',   chipText: 'text-white',  label: '系统提示' },
 }
