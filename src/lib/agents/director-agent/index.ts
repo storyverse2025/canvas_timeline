@@ -399,7 +399,7 @@ function buildKeyframePrompt(req: GenerateKeyframeRequest): string {
     `- High-end typography, no text errors, no image breaks, no facial breakdown`,
     `- Aspect ratio ${aspect}, compatible with SEEDANCE 2.0 video generation pipeline`,
     req.stylizeFacesFor2D
-      ? `- **2D STYLIZATION (privacy retry)**: 把3D人物脸部2D风格化，避免系统误认真人；其他地方保持原来美术风格 / Stylize all human faces as 2D / anime-like so downstream content-safety filters do not flag them as real people. Keep composition, palette, lighting, and props identical to a non-stylized render.`
+      ? `- **3DCG STYLIZATION (privacy retry)**: 把原来人物脸部3DCG风格化，尽量保持面部细节，但可以避免系统误认真人；其他地方保持原来美术风格 / Re-stylize every human face into a 3DCG render — keep the facial structure / expression / lighting cues so the character is still recognizable, but push it just far enough from photoreal that downstream content-safety filters no longer flag it as a real person. Composition, palette, lighting, props, and the rest of the frame stay identical to a non-stylized render.`
       : '',
     ``,
     legendLines.length

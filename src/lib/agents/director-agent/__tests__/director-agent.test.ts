@@ -234,23 +234,25 @@ describe('generateKeyframe (Hollywood 6-module visual development board)', () =>
     expect(prompt).not.toContain('image1 =')
   })
 
-  it('appends the 2D-stylization clause when stylizeFacesFor2D is set (Seedance privacy retry)', () => {
+  it('appends the 3DCG-stylization clause when stylizeFacesFor2D is set (Seedance privacy retry)', () => {
     const baseline = buildKeyframePrompt({
       row: { storyboard_prompts: 'p' },
       shotDurationSeconds: 5,
     })
-    expect(baseline).not.toContain('2D STYLIZATION')
+    expect(baseline).not.toContain('3DCG STYLIZATION')
 
     const stylized = buildKeyframePrompt({
       row: { storyboard_prompts: 'p' },
       shotDurationSeconds: 5,
       stylizeFacesFor2D: true,
     })
-    expect(stylized).toContain('2D STYLIZATION (privacy retry)')
-    expect(stylized).toContain('把3D人物脸部2D风格化，避免系统误认真人')
+    expect(stylized).toContain('3DCG STYLIZATION (privacy retry)')
+    expect(stylized).toContain('把原来人物脸部3DCG风格化')
+    expect(stylized).toContain('尽量保持面部细节')
+    expect(stylized).toContain('避免系统误认真人')
     expect(stylized).toContain('其他地方保持原来美术风格')
     // Composition / palette / lighting must be preserved across the retry.
-    expect(stylized).toContain('Keep composition, palette, lighting, and props identical')
+    expect(stylized).toContain('Composition, palette, lighting, props')
   })
 
   it('labels the character module per actual count (1 / 2 / 3+)', () => {
