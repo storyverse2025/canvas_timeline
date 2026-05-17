@@ -396,11 +396,15 @@ export function useStoryboardGenerate() {
       // character on stage. Pure no-op when there are no voice bindings.
       const castingCards = db.script.castingCards ?? []
       const voiceBindings = db.script.voiceBindings ?? {}
-      const promptPostProcessor = async (basePrompt: string): Promise<string> => {
-        if (Object.keys(voiceBindings).length === 0 || castingCards.length === 0) return basePrompt
+      const promptPostProcessor = async (
+        basePrompt: string,
+      ): Promise<{ videoPrompt: string; voiceAudioUrls: string[] }> => {
+        if (Object.keys(voiceBindings).length === 0 || castingCards.length === 0) {
+          return { videoPrompt: basePrompt, voiceAudioUrls: [] }
+        }
         try {
           const { attachVoiceRefs } = await import('@/lib/agents/actor-agent')
-          const { voicePublicUrl } = await import('@/lib/voice-library')
+          const { voicePublicUrl, normalizeVoiceUrl } = await import('@/lib/voice-library')
           const subCtx = createMemoryContext({ llm: createCapabilityLLM() })
           const { driveAuto } = await import('@/lib/agents/_shared/runtime/runner')
           const augmented = await driveAuto(
@@ -410,17 +414,25 @@ export function useStoryboardGenerate() {
                 row,
                 castingCards,
                 voiceBindings,
-                voiceUrlFor: (id) => voicePublicUrl(id),
+                // Normalize so any legacy %2B-encoded urls from IDB don't 404
+                // when Seedance fetches them.
+                voiceUrlFor: (id) => {
+                  const u = voicePublicUrl(id)
+                  return u ? normalizeVoiceUrl(u) : undefined
+                },
               },
               subCtx,
             ),
           )
-          return augmented.videoPrompt
+          return {
+            videoPrompt: augmented.videoPrompt,
+            voiceAudioUrls: augmented.voiceAudioUrls,
+          }
         } catch (e) {
           // Augmentation must never block the shoot — fall back to the base prompt.
           // eslint-disable-next-line no-console
           console.warn('[useStoryboardGenerate] attachVoiceRefs failed, shooting without voice refs:', (e as Error).message)
-          return basePrompt
+          return { videoPrompt: basePrompt, voiceAudioUrls: [] }
         }
       }
 

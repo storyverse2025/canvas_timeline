@@ -386,11 +386,16 @@ describe('attachVoiceRefs', () => {
     )
     expect(result.videoPrompt).toContain('BASE PROMPT')
     expect(result.videoPrompt).toContain('角色对白与音色')
-    expect(result.videoPrompt).toContain('林清')
+    expect(result.videoPrompt).toContain('音色1 = 林清')
+    expect(result.videoPrompt).toContain('音色2 = 阿澈')
     expect(result.videoPrompt).toContain('"不要回头。"')
-    expect(result.videoPrompt).toContain('/voices/A.mp3')
-    expect(result.videoPrompt).toContain('voice_id: vox-c')
+    expect(result.videoPrompt).toContain('"一直走，别停。"')
+    // URLs now travel as separate audio inputs (Seedance audio_url parts),
+    // not inlined into the prompt text. Verify via voiceAudioUrls instead.
+    expect(result.videoPrompt).not.toContain('/voices/A.mp3')
+    expect(result.voiceAudioUrls).toEqual(['/voices/A.mp3', '/voices/C.mp3'])
     expect(result.attached.map((a) => a.character)).toEqual(['林清', '阿澈'])
+    expect(result.attached.map((a) => a.slot)).toEqual([1, 2])
   })
 
   it('leaves the prompt unchanged when no character has both a binding + a line', async () => {
