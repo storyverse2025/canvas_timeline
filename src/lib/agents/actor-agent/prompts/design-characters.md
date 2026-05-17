@@ -44,8 +44,8 @@ actor-agent / design-characters
       "features":        "Pillar 3 · 五官特征：眉/眼/鼻/唇/耳-毛流-痣-疤-雀斑",
       "expression":      "Pillar 4 · 面部神态：视线/嘴角/微表情，与 personality_layers 一致",
       "texture_light":   "Pillar 5 · 材质光影：肤/妆/发/服装/光线",
-      "quality":         "Pillar 6 · 画质修饰：渲染指令一行；与全局视觉风格匹配（写实摄影 / 2D 动漫 / 3D CG）",
-      "anti_ai":         "Pillar 7 · 防 AI 提示词：不要网红脸/磨皮/夸张大眼/欧美鼻/甜妹卧蚕/二次元（除非风格就是）"
+      "quality":         "Pillar 6 · 画质修饰：**单一句**「Rendering style: {{visualStyle}}」。**禁止**叠加 Sony Venice / Panavision / Final Fantasy CG / Unreal Engine 5 / 8K 等额外相机/镜头/引擎/分辨率术语 —— 全局美术风格是唯一渲染指令",
+      "anti_ai":         "Pillar 7 · 防 AI 提示词：根据角色本身的处境写 2-4 条针对性负面提示（例：反派"不做漫画式邪笑"、童星"不做夸张大眼"、写实老者"不做磨皮"）。**禁止**整段复制套话清单"
     },
     "appearance_prompt": "把 7 个 pillars 连贯拼成一段中文 prompt，pillar 之间用句号或换行分隔。最后一段必须是 Pillar 7 的负面提示词清单。这段是直接发给图像模型的。"
   }

@@ -482,8 +482,8 @@ describe('designCharacters', () => {
         features: '深灰棕平眉，长杏眼带凤眼感，细直秀气鼻，中薄唇',
         expression: '视线冷静克制，瞳孔聚焦但不咄咄逼人，嘴角自然平直微收',
         texture_light: '冷白皮雾面妆，黑色长发中分；冷光定向补光，背景压暗虚化',
-        quality: '电影级真实摄影质感，8K，Kodak Vision3 色彩，Sony Venice + Panavision 镜头感',
-        anti_ai: '不做网红脸/磨皮/欧美鼻/甜妹卧蚕/二次元；不做夸张笑容',
+        quality: 'Rendering style: Cold-toned filmic noir',
+        anti_ai: '不做磨皮水光肌；不做夸张笑容',
       },
       appearance_prompt: 'composed-prompt-林清-very-long-string-for-image-model-' + 'x'.repeat(200),
     },
@@ -496,7 +496,7 @@ describe('designCharacters', () => {
         features: '一字眉偏低，长凤眼但内眦角度极锐；山根高直鼻梁窄；薄唇嘴角微微下垂；左眉骨上一道极淡旧伤',
         expression: '凝视过久，眨眼极慢；嘴角向斜上方扯出几乎不可察的弧度，但眼睛纹丝不动',
         texture_light: '皮肤偏蜡黄哑光，下睑泪沟深陷；黑色后梳短发，墨绿哑光呢西装；硬侧光从右下打来制造眼窝阴影；色温偏冷',
-        quality: '电影级真实摄影质感，8K，胶片颗粒，Sony Venice + Panavision 镜头感',
+        quality: 'Rendering style: Cold-toned filmic noir',
         anti_ai: '不做漫画式邪笑/狞笑/狰狞；不做美型反派模板；不做眼睛发红或瞳孔变形；保留一处让人本能戒备的违和（颧骨过窄+泪沟深陷）',
       },
       appearance_prompt: 'composed-prompt-陆判-very-long-string-for-image-model-' + 'x'.repeat(200),
@@ -527,7 +527,8 @@ describe('designCharacters', () => {
     expect(result).toHaveLength(2)
     expect(result[0]!.name).toBe('林清')
     expect(result[0]!.biography.length).toBeGreaterThan(40)
-    expect(result[0]!.appearance_pillars.anti_ai).toContain('网红脸')
+    // anti_ai is now per-character — the fixture for 林清 picked 磨皮 / 夸张笑容.
+    expect(result[0]!.appearance_pillars.anti_ai).toContain('磨皮')
     expect(result[1]!.appearance_pillars.bone_structure).toContain('长方')
   })
 
@@ -538,9 +539,10 @@ describe('designCharacters', () => {
     const result = await driveAuto(
       designCharacters({ extractedCharacters: [extracted[0]!], castingCards: [castingCards[0]!] }, ctx),
     )
-    // Recomposed prompt must include pillar content + end on the anti_ai line.
+    // Recomposed prompt must include pillar content + end on the anti_ai line
+    // (the role-targeted negative directives, no longer the canned 不做网红脸 list).
     expect(result[0]!.appearance_prompt).toContain('窄鹅蛋')
-    expect(result[0]!.appearance_prompt).toContain('网红脸')
+    expect(result[0]!.appearance_prompt).toContain('磨皮')
     const lastLine = result[0]!.appearance_prompt.trim().split(/\n+/).pop() ?? ''
     expect(lastLine).toContain('不做')
   })
