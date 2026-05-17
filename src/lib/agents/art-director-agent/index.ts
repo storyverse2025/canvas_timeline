@@ -127,7 +127,7 @@ export async function* extractElements(
 
 // ─── Verb: generateAssetImages ──────────────────────────────────────
 
-interface AssetImageContext {
+export interface AssetImageContext {
   artStyle: string
   template: string
   buildDescription: (e: ExtractedCharacter | ExtractedScene | ExtractedProp) => string
@@ -138,10 +138,77 @@ interface AssetImageContext {
   extraParams?: Record<string, unknown>
 }
 
-async function generateOneImage(
+/**
+ * Templates each kind uses + the per-kind timeout. Exported so callers that
+ * want to fire individual image generations (e.g. canvas-elements running
+ * them in parallel as a background task) can reuse the agent's authoritative
+ * prompts + deadlines instead of duplicating them.
+ */
+export function characterImageContext(artStyle: string): AssetImageContext {
+  return {
+    artStyle,
+    template: TPL.characterImage,
+    buildDescription: (e) => {
+      const c = e as ExtractedCharacter
+      return `${c.name}, ${c.gender}, ${c.appearance}, wearing ${c.clothing}, ${c.expression}`
+    },
+    aspect: '1:1',
+  }
+}
+export function sceneImageContext(artStyle: string): AssetImageContext {
+  return {
+    artStyle,
+    template: TPL.sceneImage,
+    buildDescription: (e) => {
+      const s = e as ExtractedScene
+      return `${s.name}, ${s.location}, ${s.lighting}, ${s.mood}`
+    },
+    aspect: '16:9',
+    extraParams: { quality: 'hd', resolution: '4k' },
+  }
+}
+export function propImageContext(artStyle: string): AssetImageContext {
+  return {
+    artStyle,
+    template: TPL.propImage,
+    buildDescription: (e) => {
+      const p = e as ExtractedProp
+      return `${p.name}, ${p.description}`
+    },
+    aspect: '1:1',
+  }
+}
+
+// Per-asset deadlines. runCapability has no built-in timeout, so a hung
+// provider would otherwise freeze the entire director pipeline (no way
+// to ever recover without a page reload). Generous enough for slow
+// remote image models on a cold start; aggressive enough to fail-and-
+// move-on instead of waiting forever.
+export const ASSET_TIMEOUT_MS = {
+  character: 3 * 60_000,
+  prop: 3 * 60_000,
+  // 4K HD equirectangular panoramas can legitimately take 90-150s on
+  // gpt-image-2; give them more headroom but still cap the wait.
+  scene: 6 * 60_000,
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s — provider hung; moving on`)),
+        ms,
+      ),
+    ),
+  ])
+}
+
+export async function generateOneImage(
   element: ExtractedCharacter | ExtractedScene | ExtractedProp,
   imgCtx: AssetImageContext,
   ctx: ProjectContext,
+  timeoutMs: number,
 ): Promise<{ url: string | undefined; prompt: string }> {
   const prompt = element.image_prompt && element.image_prompt.trim().length > 0
     ? element.image_prompt
@@ -152,11 +219,16 @@ async function generateOneImage(
         artStyle: imgCtx.artStyle,
       })
   void ctx
-  const r = await runCapability({
-    capability: 'text-to-image',
-    inputs: [{ kind: 'text', text: prompt }],
-    params: { aspect: imgCtx.aspect, ...(imgCtx.extraParams ?? {}) },
-  })
+  const label = `art-director text-to-image (${element.name})`
+  const r = await withTimeout(
+    runCapability({
+      capability: 'text-to-image',
+      inputs: [{ kind: 'text', text: prompt }],
+      params: { aspect: imgCtx.aspect, ...(imgCtx.extraParams ?? {}) },
+    }),
+    timeoutMs,
+    label,
+  )
   return { url: r.outputs[0]?.url, prompt }
 }
 
@@ -193,11 +265,15 @@ export async function* generateAssetImages(
           aspect: '1:1',
         },
         ctx,
+        ASSET_TIMEOUT_MS.character,
       )
       ch.img_url = url
       ch.generation_prompt = prompt
+      yield { type: 'progress', message: `art-director: ✓ character ${ch.name} ready` }
     } catch (e) {
-      ctx.log(`art-director: character ${ch.name} image failed: ${(e as Error).message}`)
+      const msg = (e as Error).message
+      ctx.log(`art-director: ✗ character ${ch.name} image failed: ${msg}`)
+      yield { type: 'progress', message: `art-director: ✗ character ${ch.name} failed — ${msg}` }
     }
   }
 
@@ -225,11 +301,15 @@ export async function* generateAssetImages(
           extraParams: { quality: 'hd', resolution: '4k' },
         },
         ctx,
+        ASSET_TIMEOUT_MS.scene,
       )
       sc.img_url = url
       sc.generation_prompt = prompt
+      yield { type: 'progress', message: `art-director: ✓ scene ${sc.name} panorama ready` }
     } catch (e) {
-      ctx.log(`art-director: scene ${sc.name} image failed: ${(e as Error).message}`)
+      const msg = (e as Error).message
+      ctx.log(`art-director: ✗ scene ${sc.name} panorama failed: ${msg}`)
+      yield { type: 'progress', message: `art-director: ✗ scene ${sc.name} failed — ${msg}` }
     }
   }
 
@@ -250,11 +330,15 @@ export async function* generateAssetImages(
           aspect: '1:1',
         },
         ctx,
+        ASSET_TIMEOUT_MS.prop,
       )
       pr.img_url = url
       pr.generation_prompt = prompt
+      yield { type: 'progress', message: `art-director: ✓ prop ${pr.name} ready` }
     } catch (e) {
-      ctx.log(`art-director: prop ${pr.name} image failed: ${(e as Error).message}`)
+      const msg = (e as Error).message
+      ctx.log(`art-director: ✗ prop ${pr.name} image failed: ${msg}`)
+      yield { type: 'progress', message: `art-director: ✗ prop ${pr.name} failed — ${msg}` }
     }
   }
 

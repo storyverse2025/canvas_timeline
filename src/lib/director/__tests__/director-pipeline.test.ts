@@ -21,9 +21,9 @@ function resetDB() {
 describe('Director Pipeline — Art Direction Config', () => {
   beforeEach(resetDB)
 
-  it('has cinematic defaults', () => {
+  it('defaults to the storyverse_skills_v2 library default preset', () => {
     const art = useProjectDB.getState().artDirection
-    expect(art.stylePreset).toBe('cinematic')
+    expect(art.stylePreset).toBe('anime_psych_thriller_motion_comic')
     expect(art.defaultAspectRatio).toBe('16:9')
     expect(art.defaultImageModel).toBe('openai/gpt-5.4-image-2')
     expect(art.defaultVideoModel).toBe('doubao-seedance-2-0-fast-260128')

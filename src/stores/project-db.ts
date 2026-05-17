@@ -124,6 +124,42 @@ export interface CreativeBrief {
   platformAudience?: string
 }
 
+/**
+ * Casting card persisted from the script-agent dossier. actor-agent reads
+ * these to "play" each character — voice_print drives dialogue tone,
+ * performance_anchors drive performance_guidance, personality_layers drive
+ * character_psychology.
+ *
+ * Mirrors src/lib/agents/script-agent/schema.ts CastingCard. Stored on
+ * projectDB.script.castingCards so the agent survives reloads + can be
+ * read from anywhere without touching script-agent internals.
+ */
+export interface PersistedCastingCard {
+  name: string
+  dramatic_function?: string
+  age_range?: string
+  gender_presentation?: string
+  appearance_for_image?: string
+  personality_layers?: string
+  voice_print?: string
+  performance_anchors?: string
+  casting_notes?: string
+  /** Biography written by actor-agent.designCharacters — 200-400 字 narrative. */
+  biography?: string
+  /** 7-pillar appearance breakdown from actor-agent.designCharacters. */
+  appearance_pillars?: {
+    subject: string
+    bone_structure: string
+    features: string
+    expression: string
+    texture_light: string
+    quality: string
+    anti_ai: string
+  }
+  /** Composed appearance prompt the art-director hands to the image model. */
+  appearance_prompt?: string
+}
+
 export interface Script {
   text: string
   optimizedText: string
@@ -132,6 +168,13 @@ export interface Script {
   totalDurationSeconds: number
   /** Distilled facts from the most recent script-agent run. */
   creativeBrief?: CreativeBrief
+  /** Casting cards from the most recent script-agent dossier. Consumed by
+   *  actor-agent to play each character's lines + performance. */
+  castingCards?: PersistedCastingCard[]
+  /** characterName -> voiceLibrary id mapping produced by actor-agent.castVoices.
+   *  Consumed by cinematographer prompt augmentation + by the canvas audio
+   *  node spawner so every character has a paired voice asset on the canvas. */
+  voiceBindings?: Record<string, string>
   updatedAt: number
 }
 
@@ -203,7 +246,7 @@ interface ProjectDBActions {
 // ─── Default values ──────────────────────────────────────────────────
 
 const DEFAULT_ART_DIRECTION: ArtDirection = {
-  stylePreset: 'cinematic',
+  stylePreset: 'anime_psych_thriller_motion_comic',
   customStyle: '',
   defaultImageModel: 'openai/gpt-5.4-image-2',
   defaultVideoModel: 'doubao-seedance-2-0-fast-260128',
@@ -216,6 +259,7 @@ const DEFAULT_SCRIPT: Script = {
   optimizedText: '',
   totalDurationSeconds: 30,
   creativeBrief: undefined,
+  castingCards: undefined,
   updatedAt: 0,
 }
 

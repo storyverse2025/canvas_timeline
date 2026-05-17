@@ -153,14 +153,27 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   )
   const scriptToCastingReport = JSON.stringify(dossier, null, 2)
 
-  // Persist a distilled creative brief so every downstream keyframe pulls
-  // TYPE / TONE / GENRE from the same source of truth. The dossier's
-  // framework_calibration carries the labels the script-agent locked in.
+  // Persist a distilled creative brief + the casting cards so every
+  // downstream agent (keyframe generator pulls TYPE/TONE/GENRE; actor-agent
+  // pulls casting cards to play each character) reads from the same source
+  // of truth. dossier.framework_calibration carries the labels script-agent
+  // locked in; dossier.casting_cards carries the per-character bios.
   const fc = dossier.framework_calibration
   const briefType = fc.duration_or_episode_type?.trim() || ''
   const briefTone = fc.core_emotion?.trim() || ''
   const briefGenre = [briefType, briefTone].filter(Boolean).join(' · ') || undefined
   const { useProjectDB: useProjectDBImport } = await import('@/stores/project-db')
+  const persistedCastingCards = dossier.casting_cards.map((c) => ({
+    name: c.name,
+    dramatic_function: c.dramatic_function,
+    age_range: c.age_range,
+    gender_presentation: c.gender_presentation,
+    appearance_for_image: c.appearance_for_image,
+    personality_layers: c.personality_layers,
+    voice_print: c.voice_print,
+    performance_anchors: c.performance_anchors,
+    casting_notes: c.casting_notes,
+  }))
   useProjectDBImport.getState().updateScript({
     creativeBrief: {
       projectType: briefType || undefined,
@@ -168,7 +181,24 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
       genre: briefGenre,
       platformAudience: fc.platform_bias?.trim() || undefined,
     },
+    castingCards: persistedCastingCards,
   })
+
+  // Actor-agent casts a voice per character right after the dossier
+  // lands, so the storyboard table + cinematographer downstream both have
+  // voiceBindings available without an extra manual step. Failures here
+  // are non-fatal: log + continue (user can re-cast voices manually from
+  // the 演员表 panel).
+  try {
+    const { runCastVoicesAndSpawnAudio } = await import('@/lib/voice-binding')
+    await runCastVoicesAndSpawnAudio({
+      castingCards: persistedCastingCards,
+      creativeBrief: { projectType: briefType, tone: briefTone, genre: briefGenre },
+    })
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn('[director-assistant] voice casting failed, continuing without voiceBindings:', (e as Error).message)
+  }
 
   setStep(state, 0, 0, 'done', '已按 script-framework-qa 完成七层框架校准'); onUpdate(state)
   setStep(state, 0, 1, 'done', '已按 script-writing-expansion 生成/补齐完整剧本基准'); onUpdate(state)
@@ -178,16 +208,44 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
 
   const scriptAnalysis = scriptToCastingReport
   const extraction = await extractElementsFromScript(scriptAnalysis, artStyle)
-  const characterDesigns = JSON.stringify(extraction.characters, null, 2)
-  const sceneDesigns = JSON.stringify(extraction.scenes, null, 2)
-  const propDesigns = JSON.stringify(extraction.props, null, 2)
+
+  // Actor-agent.designCharacters runs BEFORE art-director generates the
+  // character images, so each character image is rendered against the
+  // actor-built biography + 7-pillar appearance instead of the bland
+  // one-liner the extractor produced. Failures are non-fatal: log + fall
+  // through with the original extraction.
+  let augmentedExtraction = extraction
+  try {
+    const { runDesignCharactersAndPersist } = await import('@/lib/character-design')
+    const designed = await runDesignCharactersAndPersist({
+      extractedCharacters: extraction.characters,
+    })
+    augmentedExtraction = { ...extraction, characters: designed.augmentedExtraction }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn('[director-assistant] actor-agent designCharacters failed; continuing with bland extraction:', (e as Error).message)
+  }
+
+  const characterDesigns = JSON.stringify(augmentedExtraction.characters, null, 2)
+  const sceneDesigns = JSON.stringify(augmentedExtraction.scenes, null, 2)
+  const propDesigns = JSON.stringify(augmentedExtraction.props, null, 2)
 
   // Step 6: 素材生成 (角色/场景图片)
   setStep(state, 0, 5, 'running'); onUpdate(state)
   const inv = await ensureElements(
     (msg) => { /* silent — progress shown via pipeline UI */ },
-    { scriptText: scriptAnalysis, stylePreset: artDir.stylePreset, customStyle: artDir.customStyle, extraction },
+    { scriptText: scriptAnalysis, stylePreset: artDir.stylePreset, customStyle: artDir.customStyle, extraction: augmentedExtraction },
   )
+
+  // After character images land, spawn 人物小传 + 外貌 text nodes on the
+  // canvas, edge-wired from each character image node.
+  try {
+    const { spawnCharacterBioCanvasNodes } = await import('@/lib/character-design')
+    spawnCharacterBioCanvasNodes()
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn('[director-assistant] spawning bio text nodes failed:', (e as Error).message)
+  }
   const elementCtx = buildElementContext(inv)
   setStep(state, 0, 5, 'done', `${inv.characters.length} 角色, ${inv.scenes.length} 场景`); onUpdate(state)
 

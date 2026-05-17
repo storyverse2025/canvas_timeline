@@ -41,3 +41,6 @@ public/uploads/
 .env.local
 .env.bak*
 .gstack/
+
+# Voice library — 562MB of voice .mp3/.wav samples, served by Vite at /voices/
+public/voices/

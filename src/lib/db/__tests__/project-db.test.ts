@@ -216,7 +216,7 @@ describe('ProjectDB — Art Direction & Script', () => {
 
   it('has defaults', () => {
     const art = useProjectDB.getState().artDirection
-    expect(art.stylePreset).toBe('cinematic')
+    expect(art.stylePreset).toBe('anime_psych_thriller_motion_comic')
     expect(art.defaultAspectRatio).toBe('16:9')
   })
 
@@ -246,6 +246,6 @@ describe('ProjectDB — clearAll', () => {
     expect(Object.keys(useProjectDB.getState().elements)).toHaveLength(0)
     expect(Object.keys(useProjectDB.getState().storyboardRows)).toHaveLength(0)
     expect(useProjectDB.getState().script.text).toBe('')
-    expect(useProjectDB.getState().artDirection.stylePreset).toBe('cinematic')
+    expect(useProjectDB.getState().artDirection.stylePreset).toBe('anime_psych_thriller_motion_comic')
   })
 })

@@ -68,6 +68,13 @@ export interface ShootRequest {
    * clamped to [5, 15] (Seedance's supported range).
    */
   durationSecondsOverride?: number
+  /**
+   * Optional caller-supplied post-processor that runs *after* the
+   * cinematographer assembles its prompt and *before* the Seedance call.
+   * Used by actor-agent.attachVoiceRefs to append per-character voice
+   * file URLs + dialogue lines. Pure transform; no side effects.
+   */
+  promptPostProcessor?: (prompt: string) => Promise<string> | string
 }
 
 export interface BeatVideoResult {

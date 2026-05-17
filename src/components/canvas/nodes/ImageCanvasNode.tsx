@@ -11,6 +11,7 @@ import { useStoryboardStore } from '@/stores/storyboard-store'
 import { runCapability } from '@/lib/capabilities/client'
 import { VoiceFeedbackButton, type VoicePlan, type VoiceElementKind } from '@/components/canvas/VoiceFeedbackButton'
 import { PanoramaViewer } from '@/components/canvas/PanoramaViewer'
+import { normalizeVoiceUrl } from '@/lib/voice-library'
 
 export interface ImageNodeData {
   itemId: string;
@@ -151,26 +152,33 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
       <Handle id="r" type="source" position={Position.Right}  className="bragi-handle" />
       <Handle id="b" type="source" position={Position.Bottom} className="bragi-handle" />
 
-      {/* Voice-feedback mic — top-left so it doesn't collide with the 替换 button */}
-      <div className="absolute top-1 left-1 z-20">
-        <VoiceFeedbackButton
-          elementKind={(asset?.type as VoiceElementKind | undefined) ?? 'keyframe'}
-          elementId={data.assetId ?? data.itemId}
-          label={asset?.name ?? item.name}
-          elementContext={{
-            id: data.assetId ?? data.itemId,
-            assetId: data.assetId,
-            itemId: data.itemId,
-            name: asset?.name ?? item.name,
-            prompt: item.prompt ?? asset?.prompt ?? '',
-            currentImage: item.content ?? asset?.imageUrl ?? '',
-            type: asset?.type,
-            kind: item.kind,
-          }}
-          onPlanReady={handleVoicePlanReady}
-          compact
-        />
-      </div>
+      {/* Voice-feedback mic — top-left so it doesn't collide with the 替换 button.
+          Skipped for non-visual canvas items (audio voice, character bios, style/
+          system text) — those don't have a generated image to give voice feedback
+          on, and the button's stopPropagation was eating clicks on top of the
+          audio player + blocking React Flow's node-selection so the Inspector
+          stayed empty. Only renders for image / video items. */}
+      {(item.kind === 'image' || item.kind === 'video') && (
+        <div className="absolute top-1 left-1 z-20">
+          <VoiceFeedbackButton
+            elementKind={(asset?.type as VoiceElementKind | undefined) ?? 'keyframe'}
+            elementId={data.assetId ?? data.itemId}
+            label={asset?.name ?? item.name}
+            elementContext={{
+              id: data.assetId ?? data.itemId,
+              assetId: data.assetId,
+              itemId: data.itemId,
+              name: asset?.name ?? item.name,
+              prompt: item.prompt ?? asset?.prompt ?? '',
+              currentImage: item.content ?? asset?.imageUrl ?? '',
+              type: asset?.type,
+              kind: item.kind,
+            }}
+            onPlanReady={handleVoicePlanReady}
+            compact
+          />
+        </div>
+      )}
 
       {/* Typed badge — only when this image node is the canvas representation of an asset */}
       {asset && TYPE_BADGE[asset.type] && (
@@ -215,12 +223,40 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
             playsInline
           />
         ) : item.kind === 'audio' ? (
-          <div className="w-full h-full flex flex-col items-center justify-center gap-2 bg-gradient-to-br from-amber-950/40 to-zinc-900 p-3">
-            <Mic className="w-6 h-6 text-amber-400/70" />
-            <audio src={item.content} controls className="w-full" />
-            <div className="text-[10px] text-zinc-400 truncate w-full text-center" title={item.name}>
+          // Layout note: native <audio controls> needs ~320×54 to render
+          // without clipping the play button. Voice nodes spawn at 340×140
+          // (see spawnVoiceCanvasNodes); kept overflow-y auto + flex so
+          // anyone manually resizing smaller still sees the bar at the top.
+          //
+          // Pointer handling: stopPropagation lives ONLY on the <audio>
+          // element so the play/seek button works without React Flow
+          // intercepting. The surrounding wrapper deliberately does NOT
+          // stop propagation — clicking the Mic header / filename / padding
+          // must still bubble up so React Flow selects the node (which
+          // populates the Inspector with the 音色来源 metadata card).
+          <div className="w-full h-full flex flex-col gap-2 bg-gradient-to-br from-amber-950/40 to-zinc-900 p-3 overflow-y-auto">
+            <div className="flex items-center gap-1.5 text-amber-400/70 shrink-0">
+              <Mic className="w-3.5 h-3.5" />
+              <span className="text-[10px] uppercase tracking-wider">音色</span>
+            </div>
+            <audio
+              src={normalizeVoiceUrl(item.content)}
+              controls
+              preload="metadata"
+              className="w-full nodrag nopan shrink-0"
+              style={{ minHeight: 40 }}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+            />
+            <div className="text-[10px] text-zinc-300 truncate" title={item.name}>
               {item.name}
             </div>
+            {item.description && (
+              <div className="text-[10px] text-zinc-400 line-clamp-2" title={item.description}>
+                {item.description}
+              </div>
+            )}
           </div>
         ) : asset?.type === 'scene' ? (
           // Scene assets are 360° equirectangular panoramas — use the draggable

@@ -391,11 +391,44 @@ export function useStoryboardGenerate() {
       const db = useProjectDB.getState()
       const visualStyle = db.artDirection.customStyle || db.artDirection.stylePreset
 
+      // actor-agent post-processor: appends per-character voice file URLs
+      // + dialogue lines so Seedance sees a 音色文件 reference for every
+      // character on stage. Pure no-op when there are no voice bindings.
+      const castingCards = db.script.castingCards ?? []
+      const voiceBindings = db.script.voiceBindings ?? {}
+      const promptPostProcessor = async (basePrompt: string): Promise<string> => {
+        if (Object.keys(voiceBindings).length === 0 || castingCards.length === 0) return basePrompt
+        try {
+          const { attachVoiceRefs } = await import('@/lib/agents/actor-agent')
+          const { voicePublicUrl } = await import('@/lib/voice-library')
+          const subCtx = createMemoryContext({ llm: createCapabilityLLM() })
+          const { driveAuto } = await import('@/lib/agents/_shared/runtime/runner')
+          const augmented = await driveAuto(
+            attachVoiceRefs(
+              {
+                videoPrompt: basePrompt,
+                row,
+                castingCards,
+                voiceBindings,
+                voiceUrlFor: (id) => voicePublicUrl(id),
+              },
+              subCtx,
+            ),
+          )
+          return augmented.videoPrompt
+        } catch (e) {
+          // Augmentation must never block the shoot — fall back to the base prompt.
+          // eslint-disable-next-line no-console
+          console.warn('[useStoryboardGenerate] attachVoiceRefs failed, shooting without voice refs:', (e as Error).message)
+          return basePrompt
+        }
+      }
+
       const agentCtx = createMemoryContext({ llm: createCapabilityLLM() })
       return runAgentWithChatBridge(
         'cinematographer-agent',
         cinematographerShoot(
-          { row, visualStyle, keyframeUrl, contextRefs, aspect: '16:9' },
+          { row, visualStyle, keyframeUrl, contextRefs, aspect: '16:9', promptPostProcessor },
           agentCtx,
         ),
         { verb: 'shoot' },

@@ -2,12 +2,17 @@ import { useCanvasStore } from '@/stores/canvas-store'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { runCapability } from '@/lib/capabilities/client'
 import {
+  ASSET_TIMEOUT_MS,
+  characterImageContext,
   extractElements as artDirectorExtractElements,
-  generateAssetImages as artDirectorGenerateAssetImages,
+  generateOneImage as artDirectorGenerateOneImage,
+  propImageContext,
+  sceneImageContext,
 } from '@/lib/agents/art-director-agent'
 import { runAgentWithChatBridge } from '@/lib/agents/chat-bridge'
 import { createMemoryContext } from '@/lib/agents/_shared/context/memory'
 import { createCapabilityLLM } from '@/lib/agents/_shared/llm/capability'
+import { styleFragmentFor } from '@/lib/style-library'
 
 export type ElementRole = 'character' | 'prop' | 'scene' | 'keyframe' | 'unknown'
 
@@ -176,19 +181,6 @@ export interface EnsureElementsOptions {
   extraction?: ExtractionResult
 }
 
-const STYLE_MAP: Record<string, string> = {
-  cinematic: 'cinematic film style, dramatic lighting',
-  anime: 'anime style, cel-shaded, vibrant colors, Japanese animation',
-  realistic: 'photorealistic, detailed, 8k photograph',
-  watercolor: 'watercolor painting style, soft edges',
-  'pixel-art': '8-bit pixel art, retro game style',
-  '3d-render': '3D CGI render, Pixar quality',
-  comic: 'comic book illustration, ink and color',
-  'oil-painting': 'oil painting, impressionist brushstrokes',
-  gothic: 'gothic dark art, dramatic shadows',
-  cyberpunk: 'cyberpunk neon aesthetic, futuristic',
-}
-
 export const CHARACTER_MATERIAL_SYSTEM_PROMPT = 'Sony Venice camera, Panavision C-series lenses, 24mm focal length, f/1.4 aperture, full-frame capture, clean shadows, cinematic lighting, anamorphic lens, wide angle, ultra-high detail, 8k, Final Fantasy CG game style, refined CG, Unreal Engine 5 render. pure white background. Composition requirement: top 1/3 is a front-face extreme close-up with natural expression; lower 2/3 is divided into three blocks showing the character from neck down to feet only, no head visible, three-view full body reference: front view, side view, back view, hands naturally hanging down.'
 
 export function buildCharacterMaterialPrompt(basePrompt: string, artStyle: string): string {
@@ -197,8 +189,8 @@ export function buildCharacterMaterialPrompt(basePrompt: string, artStyle: strin
 
 export function getArtStyle(opts?: EnsureElementsOptions): string {
   if (opts?.customStyle) return opts.customStyle
-  if (opts?.stylePreset) return STYLE_MAP[opts.stylePreset] ?? opts.stylePreset
-  return 'cinematic'
+  if (opts?.stylePreset) return styleFragmentFor(opts.stylePreset)
+  return styleFragmentFor(undefined)
 }
 
 export async function ensureElements(
@@ -241,7 +233,7 @@ export async function ensureElements(
 
   if (extraction && (needCharacters || needScenes || needProps)) {
     // Wrap AI-generated image_prompts with global-style guidance before
-    // sending; the agent forwards them as-is.
+    // sending; the per-asset background tasks forward them as-is.
     //   characters → three-view material system prompt
     //   scenes     → append art style
     //   props      → append art style (the prop-image.md template owns the
@@ -264,79 +256,135 @@ export async function ensureElements(
       })),
     }
 
-    const agentCtx = createMemoryContext({
-      llm: createCapabilityLLM(),
-      log: (m) => onStatus(m),
-    })
-    const generated = await runAgentWithChatBridge(
-      'art-director-agent',
-      artDirectorGenerateAssetImages({
-        artStyle,
-        extraction: preppedExtraction,
-        maxPerKind: {
-          characters: needCharacters ? 2 : 0,
-          scenes: needScenes ? 2 : 0,
-          // Props are typically 0-5 per script (the extract-props prompt
-          // caps the extractor at 5); generate up to 3 here so we keep
-          // image-gen cost bounded but the storyboard table has real prop
-          // refs to bind to.
-          props: needProps ? 3 : 0,
-        },
-      }, agentCtx),
-      { verb: 'generate-asset-images' },
-    )
+    // Caps mirror the legacy synchronous agent verb defaults so behavior
+    // stays the same modulo concurrency / blocking.
+    const CHAR_CAP = needCharacters ? 2 : 0
+    const SCENE_CAP = needScenes ? 2 : 0
+    const PROP_CAP = needProps ? 3 : 0
 
-    for (const char of generated.characters) {
-      if (!char.img_url) continue
-      onStatus(`正在生成角色: ${char.name}…`)
+    // Pre-create the canvas items + nodes with EMPTY content so the
+    // downstream director-assistant pipeline immediately has stable
+    // node short-ids for buildElementContext / storyboard slot wiring.
+    // The actual image URLs land later in the background, patching the
+    // item.content via useCanvasItemStore.updateItem.
+    const queued: Array<{
+      kind: 'character' | 'scene' | 'prop'
+      element: ExtractedCharacter | ExtractedScene | ExtractedProp
+      itemId: string
+      name: string
+    }> = []
+
+    for (let i = 0; i < Math.min(preppedExtraction.characters.length, CHAR_CAP); i++) {
+      const ch = preppedExtraction.characters[i]!
       const itemId = useCanvasItemStore.getState().addItem({
-        kind: 'image', name: char.name, content: char.img_url, prompt: char.generation_prompt ?? '',
+        kind: 'image', name: ch.name, content: '', prompt: '',
       })
       const nodeId = useCanvasStore.getState().addItemNode(
         itemId, 'image', { x: 50, y: 50 + inventory.characters.length * 220 }, { width: 200, height: 200 },
       )
       inventory.characters.push({
-        nodeId, itemId, name: char.name,
-        imageUrl: char.img_url, role: 'character',
-        description: `${char.appearance}, ${char.clothing}`,
+        nodeId, itemId, name: ch.name,
+        imageUrl: '', role: 'character',
+        description: `${ch.appearance}, ${ch.clothing}`,
       })
+      queued.push({ kind: 'character', element: ch, itemId, name: ch.name })
     }
-
-    for (const scene of generated.scenes) {
-      if (!scene.img_url) continue
-      onStatus(`正在生成场景: ${scene.name}…`)
+    for (let i = 0; i < Math.min(preppedExtraction.scenes.length, SCENE_CAP); i++) {
+      const sc = preppedExtraction.scenes[i]!
       const itemId = useCanvasItemStore.getState().addItem({
-        kind: 'image', name: scene.name, content: scene.img_url, prompt: scene.generation_prompt ?? '',
+        kind: 'image', name: sc.name, content: '', prompt: '',
       })
       const nodeId = useCanvasStore.getState().addItemNode(
         itemId, 'image', { x: 50, y: 500 + inventory.scenes.length * 220 }, { width: 320, height: 180 },
       )
       inventory.scenes.push({
-        nodeId, itemId, name: scene.name,
-        imageUrl: scene.img_url, role: 'scene',
-        description: `${scene.location}, ${scene.mood}`,
+        nodeId, itemId, name: sc.name,
+        imageUrl: '', role: 'scene',
+        description: `${sc.location}, ${sc.mood}`,
       })
+      queued.push({ kind: 'scene', element: sc, itemId, name: sc.name })
     }
-
-    for (const prop of generated.props) {
-      if (!prop.img_url) continue
-      onStatus(`正在生成道具: ${prop.name}…`)
+    for (let i = 0; i < Math.min(preppedExtraction.props.length, PROP_CAP); i++) {
+      const pr = preppedExtraction.props[i]!
       const itemId = useCanvasItemStore.getState().addItem({
-        kind: 'image', name: prop.name, content: prop.img_url, prompt: prop.generation_prompt ?? '',
+        kind: 'image', name: pr.name, content: '', prompt: '',
       })
       const nodeId = useCanvasStore.getState().addItemNode(
         itemId, 'image', { x: 50, y: 950 + inventory.props.length * 220 }, { width: 200, height: 200 },
       )
       inventory.props.push({
-        nodeId, itemId, name: prop.name,
-        imageUrl: prop.img_url, role: 'prop',
-        description: prop.description,
+        nodeId, itemId, name: pr.name,
+        imageUrl: '', role: 'prop',
+        description: pr.description,
       })
+      queued.push({ kind: 'prop', element: pr, itemId, name: pr.name })
     }
+
+    onStatus(`已为 ${queued.length} 个素材创建画布节点；图片在后台并行生成中…`)
+
+    // Fire every asset's image generation in parallel. Each settles
+    // independently and patches its canvas item content via
+    // useCanvasItemStore.updateItem. We do NOT await this — the director
+    // pipeline proceeds immediately to allocateShots / composeShots /
+    // generateStoryboardTable (those only need node short-ids + textual
+    // descriptions, not the rendered image URLs).
+    const bgCtx = createMemoryContext({
+      llm: createCapabilityLLM(),
+      log: (m) => onStatus(m),
+    })
+    void runAssetImageGenerationInBackground(queued, artStyle, bgCtx, onStatus)
   }
 
-  onStatus(`元素准备完成：${inventory.characters.length} 角色, ${inventory.props.length} 道具, ${inventory.scenes.length} 场景`)
+  onStatus(`元素准备完成：${inventory.characters.length} 角色, ${inventory.props.length} 道具, ${inventory.scenes.length} 场景 (图片可能仍在后台生成)`)
   return inventory
+}
+
+/**
+ * Per-asset image generation, fired in parallel and patched into the
+ * canvas item store as each settles. Caller does NOT await this — it's a
+ * fire-and-forget background task so the director-assistant pipeline can
+ * advance to storyboard generation without being blocked by 4K panorama
+ * latency.
+ *
+ * Failures are non-fatal: the canvas item just stays at empty content,
+ * the user can click 上传 / URL to fill it in manually (existing empty-
+ * state UI in ImageCanvasNode handles this gracefully).
+ */
+async function runAssetImageGenerationInBackground(
+  queued: Array<{
+    kind: 'character' | 'scene' | 'prop'
+    element: ExtractedCharacter | ExtractedScene | ExtractedProp
+    itemId: string
+    name: string
+  }>,
+  artStyle: string,
+  ctx: ReturnType<typeof createMemoryContext>,
+  onStatus: (msg: string) => void,
+): Promise<void> {
+  const tasks = queued.map(async (q) => {
+    onStatus(`art-director: → 生成 ${q.kind} ${q.name}…`)
+    const imgCtx =
+      q.kind === 'character' ? characterImageContext(artStyle)
+        : q.kind === 'scene' ? sceneImageContext(artStyle)
+        : propImageContext(artStyle)
+    const timeoutMs =
+      q.kind === 'scene' ? ASSET_TIMEOUT_MS.scene
+        : q.kind === 'character' ? ASSET_TIMEOUT_MS.character
+        : ASSET_TIMEOUT_MS.prop
+    try {
+      const { url, prompt } = await artDirectorGenerateOneImage(q.element, imgCtx, ctx, timeoutMs)
+      if (url) {
+        useCanvasItemStore.getState().updateItem(q.itemId, { content: url, prompt })
+        onStatus(`art-director: ✓ ${q.kind} ${q.name} 完成`)
+      } else {
+        onStatus(`art-director: ✗ ${q.kind} ${q.name} 失败 — provider 返回空 URL`)
+      }
+    } catch (e) {
+      onStatus(`art-director: ✗ ${q.kind} ${q.name} 失败 — ${(e as Error).message}`)
+    }
+  })
+  await Promise.allSettled(tasks)
+  onStatus(`art-director: 所有后台图片生成结束`)
 }
 
 /** Build element context string for the storyboard generation prompt. */
