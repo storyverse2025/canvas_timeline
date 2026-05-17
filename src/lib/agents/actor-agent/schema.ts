@@ -173,10 +173,18 @@ export interface DesignCharactersRequest {
 
 export interface AttachVoiceRefsResult {
   /** videoPrompt with an appended `角色对白与音色` block (or unchanged if
-   *  no character had both a line + a voice binding). */
+   *  no character had both a line + a voice binding). The block labels each
+   *  voice with a positional `音色N` tag matching `voiceAudioUrls[N-1]`. */
   videoPrompt: string
+  /** Ordered voice file URLs to pass to Seedance as `kind: 'audio'` inputs.
+   *  Position is the source of truth: `voiceAudioUrls[0]` is the file the
+   *  prompt refers to as 音色1, `[1]` is 音色2, etc. Empty when no
+   *  character has both a dialogue line + a voice binding. */
+  voiceAudioUrls: string[]
   /** Per-character refs that were attached (for logging / inspection). */
   attached: Array<{
+    /** 1-indexed position label used in the prompt (音色1, 音色2, ...). */
+    slot: number
     character: string
     voiceId: string
     voiceUrl: string

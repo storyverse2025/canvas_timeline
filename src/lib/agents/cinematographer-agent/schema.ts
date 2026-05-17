@@ -20,6 +20,10 @@ export interface BeatVideoRow {
   performance_guidance?: string
   lighting_atmosphere?: string
   shot_size?: string
+  /** Dialogue spoken in this beat — baked into the motion description so the
+   *  model knows what's being said. actor-agent.attachVoiceRefs additionally
+   *  pairs each line with its 音色N audio reference. */
+  dialogue?: string
 }
 
 /**
@@ -69,12 +73,22 @@ export interface ShootRequest {
    */
   durationSecondsOverride?: number
   /**
-   * Optional caller-supplied post-processor that runs *after* the
-   * cinematographer assembles its prompt and *before* the Seedance call.
-   * Used by actor-agent.attachVoiceRefs to append per-character voice
-   * file URLs + dialogue lines. Pure transform; no side effects.
+   * Optional caller-supplied augmenter that runs *after* the cinematographer
+   * assembles its base prompt and *before* the Seedance call. Returns BOTH
+   * the augmented prompt AND the list of 音色N voice audio URLs that should
+   * travel as audio inputs to Seedance (so the model can match each spoken
+   * line to its corresponding character voice). Used by actor-agent.
+   * attachVoiceRefs.
+   *
+   * The augmenter is also allowed to be a plain string-returning function
+   * (legacy shape) — in that case no voice audio inputs are added.
    */
-  promptPostProcessor?: (prompt: string) => Promise<string> | string
+  promptPostProcessor?: (
+    prompt: string,
+  ) =>
+    | Promise<string | { videoPrompt: string; voiceAudioUrls?: string[] }>
+    | string
+    | { videoPrompt: string; voiceAudioUrls?: string[] }
 }
 
 export interface BeatVideoResult {

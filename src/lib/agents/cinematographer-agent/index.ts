@@ -84,6 +84,10 @@ function buildMotionDescription(req: {
     r.performance_guidance ? `performance guidance: ${r.performance_guidance}` : '',
     r.lighting_atmosphere,
     r.shot_size ? `${r.shot_size} shot` : '',
+    // Dialogue must travel as part of the motion description so the model
+    // knows what is being SAID in this beat — actor-agent.attachVoiceRefs
+    // additionally pairs each line with its 音色N audio reference below.
+    r.dialogue && r.dialogue.trim() ? `对白 / dialogue spoken in this beat:\n${r.dialogue.trim()}` : '',
     buildContextRefLine(req.contextRefs ?? []),
   ]
     .filter((s): s is string => Boolean(s && s.trim()))
@@ -120,17 +124,29 @@ function assembleShootPrompt(req: {
 async function callSeedance(opts: {
   prompt: string
   keyframeUrl: string
+  voiceAudioUrls?: string[]
   durationSeconds: number
   aspect: '16:9' | '9:16' | '1:1' | '4:3'
 }): Promise<string> {
-  // Omni-reference mode: exactly one image (the keyframe) goes in. The
-  // motion text + Director Reference block tells Seedance to read casting,
-  // scene, blocking, lighting from this single reference image.
+  // ONE image input: the keyframe (omni-reference / 全能参考). We deliberately
+  // don't ship character / scene / prop asset images alongside — the model
+  // reads casting, scene, blocking, lighting from the keyframe itself.
+  //
+  // PER-CHARACTER voice files travel as audio inputs (when dialogue exists)
+  // so Seedance can match each spoken line to its corresponding 音色N
+  // reference. The capability dispatcher auto-routes audios → universal-to-
+  // video mode.
+  const voiceInputs = (opts.voiceAudioUrls ?? [])
+    .filter((u): u is string => Boolean(u && u.trim()))
+    .slice(0, 3) // Seedance universal-to-video accepts up to 3 audios
+    .map((url) => ({ kind: 'audio' as const, url }))
+
   const r = await runCapability({
     capability: 'text-to-video',
     inputs: [
       { kind: 'text', text: opts.prompt },
       { kind: 'image', url: opts.keyframeUrl },
+      ...voiceInputs,
     ],
     params: {
       provider: SHOOT_PROVIDER,
@@ -176,16 +192,21 @@ export async function* shoot(
   })
 
   void ctx
-  // Caller-supplied post-processor runs after the cinematographer prompt
-  // is assembled and before Seedance is invoked — actor-agent uses this
-  // to append per-character voice file URLs + dialogue.
-  const prompt = req.promptPostProcessor ? await req.promptPostProcessor(basePrompt) : basePrompt
+  // Caller-supplied augmenter runs after the cinematographer prompt is
+  // assembled and before Seedance is invoked. actor-agent.attachVoiceRefs
+  // both rewrites the prompt (adds 音色1/音色2 dialogue block) AND returns
+  // the audio URLs to ship as inputs alongside the keyframe.
+  const augmented = req.promptPostProcessor ? await req.promptPostProcessor(basePrompt) : basePrompt
+  const prompt = typeof augmented === 'string' ? augmented : augmented.videoPrompt
+  const voiceAudioUrls = typeof augmented === 'string' ? undefined : augmented.voiceAudioUrls
 
   yield {
     type: 'progress',
-    message: `cinematographer: rolling on Seedance (${SHOOT_PROVIDER}/${SHOOT_MODEL})`,
+    message: `cinematographer: rolling on Seedance (${SHOOT_PROVIDER}/${SHOOT_MODEL})${
+      voiceAudioUrls?.length ? ` + ${voiceAudioUrls.length} voice ref${voiceAudioUrls.length === 1 ? '' : 's'}` : ''
+    }`,
   }
-  const url = await callSeedance({ prompt, keyframeUrl: req.keyframeUrl, durationSeconds, aspect })
+  const url = await callSeedance({ prompt, keyframeUrl: req.keyframeUrl, voiceAudioUrls, durationSeconds, aspect })
 
   yield {
     type: 'result',

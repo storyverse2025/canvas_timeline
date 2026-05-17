@@ -291,11 +291,14 @@ export async function ensureElements(
     }
     for (let i = 0; i < Math.min(preppedExtraction.scenes.length, SCENE_CAP); i++) {
       const sc = preppedExtraction.scenes[i]!
+      // role: 'scene' tags the canvas item as a 360° equirectangular
+      // panorama so ImageCanvasNode renders it through PanoramaViewer
+      // (drag-to-pan) instead of a flat <img>.
       const itemId = useCanvasItemStore.getState().addItem({
-        kind: 'image', name: sc.name, content: '', prompt: '',
+        kind: 'image', name: sc.name, content: '', prompt: '', role: 'scene',
       })
       const nodeId = useCanvasStore.getState().addItemNode(
-        itemId, 'image', { x: 50, y: 500 + inventory.scenes.length * 220 }, { width: 320, height: 180 },
+        itemId, 'image', { x: 50, y: 500 + inventory.scenes.length * 220 }, { width: 360, height: 220 },
       )
       inventory.scenes.push({
         nodeId, itemId, name: sc.name,

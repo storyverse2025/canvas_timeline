@@ -258,8 +258,10 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
               </div>
             )}
           </div>
-        ) : asset?.type === 'scene' ? (
-          // Scene assets are 360° equirectangular panoramas — use the draggable
+        ) : asset?.type === 'scene' || item.role === 'scene' ? (
+          // Scene canvas items (whether they came in via asset.type === 'scene'
+          // or via item.role === 'scene' — the canvas-elements path) are 360°
+          // equirectangular panoramas. Render through the draggable
           // PanoramaViewer so the user can pan to different viewpoints inside
           // the canvas node. Non-scene image assets stay as plain <img>.
           <PanoramaViewer src={item.content} alt={item.name} />
