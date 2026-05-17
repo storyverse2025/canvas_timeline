@@ -24,6 +24,13 @@ const PROJECT_ROOT = path.dirname(fileURLToPath(import.meta.url))
 const HERMES_BIN = process.env.HERMES_BIN || 'hermes'
 const CODEX_BIN = process.env.CODEX_BIN || 'codex'
 const CODEX_TIMEOUT_MS = Number(process.env.CODEX_TIMEOUT_MS || 120000)
+// Linux ARG_MAX is typically ~2MB (getconf ARG_MAX → 2097152). hermes
+// takes the prompt as an argv string, so anything close to that limit
+// crashes spawn() with synchronous E2BIG — and because it's synchronous,
+// `child.on('error')` never fires and the bridge process dies. Cap the
+// prompt at 1MB to leave headroom for env, other argv, and the kernel's
+// per-string overhead; reject with 413 otherwise.
+const MAX_PROMPT_BYTES = Number(process.env.MAX_PROMPT_BYTES || 1_000_000)
 
 const CANDIDATE_PLUGIN_DIRS = [
   path.join(HOME, 'repos/storyverse-skills'),
@@ -277,8 +284,37 @@ const server = http.createServer((req, res) => {
     blog(reqId, `→ POST ${req.url} stream=${!!stream} model=${model || '∅'} msgs=${messages.length} [${roleSeq}] systemBytes=${(system || '').length} promptBytes=${prompt.length}`)
     blog(reqId, `  lastUser: ${userPreview || '(empty)'}`)
 
-    const child = spawn(HERMES_BIN, args, { env, cwd: PROJECT_ROOT, stdio: ['ignore', 'pipe', 'pipe'] })
+    // Guard against E2BIG: spawn throws synchronously for argv > ARG_MAX,
+    // bypassing `child.on('error')` and killing the bridge process. Reject
+    // oversized prompts up front with a clear 413.
+    if (prompt.length > MAX_PROMPT_BYTES) {
+      berr(reqId, `✗ prompt too large: ${prompt.length} bytes > MAX_PROMPT_BYTES=${MAX_PROMPT_BYTES} → 413`)
+      const message = `Prompt is ${prompt.length} bytes, exceeds bridge limit ${MAX_PROMPT_BYTES} (hermes CLI argv cannot exceed kernel ARG_MAX ~2MB). Reduce system prompt or message history.`
+      if (stream) {
+        res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' })
+        writeSse(res, { type: 'error', error: { type: 'payload_too_large', message } })
+        res.write('data: [DONE]\n\n')
+        res.end()
+      } else {
+        res.writeHead(413, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: { type: 'payload_too_large', message } }))
+      }
+      return
+    }
+
+    let child
     const hermesStartedAt = Date.now()
+    try {
+      child = spawn(HERMES_BIN, args, { env, cwd: PROJECT_ROOT, stdio: ['ignore', 'pipe', 'pipe'] })
+    } catch (err) {
+      // Belt-and-braces for the synchronous spawn error path (E2BIG, ENOMEM,
+      // ENOENT if HERMES_BIN is wrong, …). Without this catch the process
+      // dies and concurrently restarts it — every request post-restart sees
+      // a connection reset and the user gets a confusing 500/502 from nginx.
+      berr(reqId, `✗ hermes spawn threw synchronously: ${err.code || ''} ${err.message}`)
+      handleHermesFailure({ res, prompt, stream: !!stream, reason: `spawn ${err.code || ''}: ${err.message}`, finalize: () => {}, reqId })
+      return
+    }
 
     // ── streaming ─────────────────────────────────────────────────────────────
     if (stream) {
