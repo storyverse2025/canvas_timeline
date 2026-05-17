@@ -151,26 +151,33 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
       <Handle id="r" type="source" position={Position.Right}  className="bragi-handle" />
       <Handle id="b" type="source" position={Position.Bottom} className="bragi-handle" />
 
-      {/* Voice-feedback mic — top-left so it doesn't collide with the 替换 button */}
-      <div className="absolute top-1 left-1 z-20">
-        <VoiceFeedbackButton
-          elementKind={(asset?.type as VoiceElementKind | undefined) ?? 'keyframe'}
-          elementId={data.assetId ?? data.itemId}
-          label={asset?.name ?? item.name}
-          elementContext={{
-            id: data.assetId ?? data.itemId,
-            assetId: data.assetId,
-            itemId: data.itemId,
-            name: asset?.name ?? item.name,
-            prompt: item.prompt ?? asset?.prompt ?? '',
-            currentImage: item.content ?? asset?.imageUrl ?? '',
-            type: asset?.type,
-            kind: item.kind,
-          }}
-          onPlanReady={handleVoicePlanReady}
-          compact
-        />
-      </div>
+      {/* Voice-feedback mic — top-left so it doesn't collide with the 替换 button.
+          Skipped for non-visual canvas items (audio voice, character bios, style/
+          system text) — those don't have a generated image to give voice feedback
+          on, and the button's stopPropagation was eating clicks on top of the
+          audio player + blocking React Flow's node-selection so the Inspector
+          stayed empty. Only renders for image / video items. */}
+      {(item.kind === 'image' || item.kind === 'video') && (
+        <div className="absolute top-1 left-1 z-20">
+          <VoiceFeedbackButton
+            elementKind={(asset?.type as VoiceElementKind | undefined) ?? 'keyframe'}
+            elementId={data.assetId ?? data.itemId}
+            label={asset?.name ?? item.name}
+            elementContext={{
+              id: data.assetId ?? data.itemId,
+              assetId: data.assetId,
+              itemId: data.itemId,
+              name: asset?.name ?? item.name,
+              prompt: item.prompt ?? asset?.prompt ?? '',
+              currentImage: item.content ?? asset?.imageUrl ?? '',
+              type: asset?.type,
+              kind: item.kind,
+            }}
+            onPlanReady={handleVoicePlanReady}
+            compact
+          />
+        </div>
+      )}
 
       {/* Typed badge — only when this image node is the canvas representation of an asset */}
       {asset && TYPE_BADGE[asset.type] && (
