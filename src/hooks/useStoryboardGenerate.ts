@@ -310,10 +310,27 @@ export function useStoryboardGenerate() {
       prompt: result.prompt,
       role: 'keyframe',
     })
+
+    // Stagger regenerated keyframes horizontally so they don't stack on
+    // the original (every new node would otherwise land at the same
+    // (baseX, baseY) and the user would only see the topmost one — the
+    // ⭐ star + privacy retry both became invisible because of this).
+    // Count existing role='keyframe' items belonging to this row by name
+    // match (KF-S1 etc.) and offset by (count × (width + gap)).
+    const KF_WIDTH = 280
+    const KF_GAP = 24
+    const existingItems = useCanvasItemStore.getState().items
+    const siblingCount = Object.values(existingItems).filter(
+      (it) =>
+        it.id !== kfItemId &&
+        it.role === 'keyframe' &&
+        it.name === `KF-${row.shot_number}`,
+    ).length
+    const kfX = baseX + siblingCount * (KF_WIDTH + KF_GAP)
     const kfNodeId = useCanvasStore.getState().addItemNode(
       kfItemId, 'image',
-      { x: baseX, y: baseY },
-      { width: 280, height: 180 },
+      { x: kfX, y: baseY },
+      { width: KF_WIDTH, height: 180 },
     )
 
     // Wire edges from each resolved ref node into the keyframe and persist
