@@ -49,13 +49,25 @@ function resolveSlotNode(
   const assetStore = useAssetStore.getState()
 
   // 1. Honor existing slot.nodeId if the node still exists.
+  // Read the URL LIVE from whichever store actually owns the image:
+  //   - asset-store (legacy upload pipeline)
+  //   - canvas-item-store (art-director-agent's parallel background asset
+  //     generation — items are created with content:'' and patched later
+  //     as runAssetImageGenerationInBackground settles). Without this live
+  //     read, a storyboard parsed BEFORE assets finished would persist
+  //     slot.image:'' forever, and the keyframe call would receive an
+  //     empty imageUrls[] for character/scene/prop refs.
   if (slot.nodeId) {
     const existing = canvas.nodes.find((n) => n.id === slot.nodeId)
     if (existing) {
       const assetId = existing.data?.assetId as string | undefined
+      const itemId = existing.data?.itemId as string | undefined
+      const itemContent = itemId
+        ? useCanvasItemStore.getState().items[itemId]?.content
+        : undefined
       const url = assetId
-        ? assetStore.getAssetById(assetId)?.imageUrl ?? slot.image
-        : slot.image
+        ? assetStore.getAssetById(assetId)?.imageUrl || slot.image || itemContent
+        : itemContent || slot.image
       return { nodeId: existing.id, imageUrl: url || '' }
     }
   }
