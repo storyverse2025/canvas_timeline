@@ -1,12 +1,26 @@
 import { useRef, useState } from 'react'
-import { X, Sparkles, Loader2, Plus, FolderOpen, Wand2 } from 'lucide-react'
+import { X, Sparkles, Loader2, Plus, FolderOpen, Wand2, Music, Video as VideoIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import { useCapabilityDialogStore } from '@/stores/capability-dialog-store'
 import { useCapability } from '@/hooks/useCapability'
 import { optimizePrompt } from '@/lib/providers/client'
-import { AssetPickerDialog } from './AssetPickerDialog'
+import { AssetPickerDialog, type AssetPickKind, type PickedAsset } from './AssetPickerDialog'
 import type { CapabilityParam } from '@/lib/capabilities/types'
 import { cn } from '@/lib/utils'
+
+/** Pull the input kind out of a ref URL extension. Keeps the picker honest
+ *  when the caller seeded refImages with raw URLs but didn't ship kind info. */
+function inferKindFromUrl(url: string): AssetPickKind {
+  const path = url.split('?')[0].toLowerCase()
+  if (/\.(mp3|wav|flac|m4a|ogg|aac)$/.test(path)) return 'audio'
+  if (/\.(mp4|webm|mov|m4v|avi)$/.test(path)) return 'video'
+  return 'image'
+}
+
+interface RefAsset {
+  url: string
+  kind: AssetPickKind
+}
 
 export function CapabilityDialogMount() {
   const state = useCapabilityDialogStore((s) => s.state)
@@ -28,7 +42,10 @@ function CapabilityDialog({ state, onClose }: {
     }
     return defaults
   })
-  const [refImages, setRefImages] = useState<string[]>(state.refImages)
+  const [refs, setRefs] = useState<RefAsset[]>(
+    () => state.refImages.map((url) => ({ url, kind: inferKindFromUrl(url) })),
+  )
+  const refImages = refs.filter((r) => r.kind === 'image').map((r) => r.url)
   const [running, setRunning] = useState(false)
   const [optimizing, setOptimizing] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -44,15 +61,20 @@ function CapabilityDialog({ state, onClose }: {
   }
 
   const addRefFileRef = useRef<HTMLInputElement>(null)
-  const removeRefImage = (idx: number) => {
-    setRefImages((prev) => prev.filter((_, i) => i !== idx))
+  const removeRef = (idx: number) => {
+    setRefs((prev) => prev.filter((_, i) => i !== idx))
   }
   const addRefFromFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]; if (!f) return
     const reader = new FileReader()
     reader.onload = async () => {
       if (typeof reader.result !== 'string') return
-      // Upload to server to get a URL (avoids localStorage bloat)
+      const kind: AssetPickKind = f.type.startsWith('audio/')
+        ? 'audio'
+        : f.type.startsWith('video/')
+          ? 'video'
+          : 'image'
+      // Upload to server to get a URL (avoids localStorage bloat).
       try {
         const res = await fetch('/uploads/save', {
           method: 'POST',
@@ -60,18 +82,25 @@ function CapabilityDialog({ state, onClose }: {
           body: JSON.stringify({ dataUrl: reader.result, filename: f.name }),
         })
         const data = await res.json() as { url?: string }
-        if (data.url) setRefImages((prev) => [...prev, data.url!])
+        if (data.url) setRefs((prev) => [...prev, { url: data.url!, kind }])
       } catch {
         // Fallback: use data URL directly
-        setRefImages((prev) => [...prev, reader.result as string])
+        setRefs((prev) => [...prev, { url: reader.result as string, kind }])
       }
     }
     reader.readAsDataURL(f)
     e.target.value = ''
   }
 
-  const handlePickAssets = (urls: string[]) => {
-    setRefImages((prev) => Array.from(new Set([...prev, ...urls])))
+  const handlePickAssets = (picked: PickedAsset[]) => {
+    setRefs((prev) => {
+      const seen = new Set(prev.map((r) => r.url))
+      const merged = [...prev]
+      for (const p of picked) {
+        if (!seen.has(p.url)) { merged.push(p); seen.add(p.url) }
+      }
+      return merged
+    })
   }
 
   const handleOptimize = async () => {
@@ -99,9 +128,9 @@ function CapabilityDialog({ state, onClose }: {
   const handleSubmit = async () => {
     setRunning(true)
     try {
-      const extraInputs: { kind: 'text' | 'image'; text?: string; url?: string }[] = []
+      const extraInputs: { kind: 'text' | 'image' | 'audio' | 'video'; text?: string; url?: string }[] = []
       if (prompt.trim()) extraInputs.push({ kind: 'text', text: prompt.trim() })
-      for (const u of refImages) extraInputs.push({ kind: 'image', url: u })
+      for (const r of refs) extraInputs.push({ kind: r.kind, url: r.url })
       await runCap({
         capabilityId: cap.id,
         nodeId: state.nodeId,
@@ -172,21 +201,36 @@ function CapabilityDialog({ state, onClose }: {
         )}
 
         <div>
-          <label className="text-[10px] text-muted-foreground uppercase">参考图 ({refImages.length})</label>
+          <label className="text-[10px] text-muted-foreground uppercase">参考素材 ({refs.length})</label>
           <div className="flex gap-1.5 overflow-x-auto pb-1 mt-1">
-            {refImages.map((u, i) => (
-              <div key={i} className="relative shrink-0 group">
-                <img src={u} alt="" className="h-14 w-14 object-cover rounded border border-border" />
-                <button
-                  className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-opacity"
-                  onClick={() => removeRefImage(i)}
-                  title="移除"
-                >×</button>
-                <div className="absolute bottom-0 left-0 right-0 text-[8px] text-center bg-black/60 text-white py-0.5">
-                  图{i + 1}
+            {refs.map((r, i) => {
+              // Per-kind label so the user can see they picked an audio
+              // node (音色), not just "图N". This shipped silently as
+              // kind='image' before and either Seedance rejected the URL
+              // or the file was treated as a still.
+              const label = r.kind === 'audio' ? `音${i + 1}` : r.kind === 'video' ? `视${i + 1}` : `图${i + 1}`
+              return (
+                <div key={`${r.url}-${i}`} className="relative shrink-0 group">
+                  {r.kind === 'image' ? (
+                    <img src={r.url} alt="" className="h-14 w-14 object-cover rounded border border-border" />
+                  ) : (
+                    <div className="h-14 w-14 rounded border border-border bg-muted/40 flex items-center justify-center">
+                      {r.kind === 'audio'
+                        ? <Music className="w-5 h-5 text-muted-foreground" />
+                        : <VideoIcon className="w-5 h-5 text-muted-foreground" />}
+                    </div>
+                  )}
+                  <button
+                    className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition-opacity"
+                    onClick={() => removeRef(i)}
+                    title="移除"
+                  >×</button>
+                  <div className="absolute bottom-0 left-0 right-0 text-[8px] text-center bg-black/60 text-white py-0.5">
+                    {label}
+                  </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
             <button
               className="shrink-0 h-14 w-14 rounded border border-dashed border-border flex flex-col items-center justify-center hover:bg-accent/30"
               onClick={() => setPickerOpen(true)}
@@ -203,7 +247,22 @@ function CapabilityDialog({ state, onClose }: {
               <Plus className="w-4 h-4 text-muted-foreground" />
               <span className="text-[8px] text-muted-foreground">上传</span>
             </button>
-            <input ref={addRefFileRef} type="file" accept="image/*" className="hidden" onChange={addRefFromFile} />
+            <input
+              ref={addRefFileRef}
+              type="file"
+              accept={
+                // Universal-video accepts all three; text-to-video / first-last accept
+                // image + audio (the audio drives lip-sync via Seedance refs); image
+                // capabilities stay image-only.
+                isUniversalVideo
+                  ? 'image/*,audio/*,video/*'
+                  : isVideo
+                    ? 'image/*,audio/*'
+                    : 'image/*'
+              }
+              className="hidden"
+              onChange={addRefFromFile}
+            />
           </div>
         </div>
 
@@ -222,7 +281,19 @@ function CapabilityDialog({ state, onClose }: {
         </div>
       </div>
     </div>
-    {pickerOpen && <AssetPickerDialog onClose={() => setPickerOpen(false)} onSelect={handlePickAssets} />}
+    {pickerOpen && (
+      <AssetPickerDialog
+        onClose={() => setPickerOpen(false)}
+        onSelect={handlePickAssets}
+        allowedKinds={
+          isUniversalVideo
+            ? new Set<AssetPickKind>(['image', 'audio', 'video'])
+            : isVideo
+              ? new Set<AssetPickKind>(['image', 'audio'])
+              : new Set<AssetPickKind>(['image'])
+        }
+      />
+    )}
     </>
   )
 }

@@ -66,7 +66,11 @@ export function GenerateDialog({ initialPrompt = '', upstreamImages = [], defaul
     reader.readAsDataURL(f)
     e.target.value = ''
   }
-  const handlePickAssets = (urls: string[]) => {
+  const handlePickAssets = (picked: { url: string; kind: 'image' | 'audio' | 'video' }[]) => {
+    // GenerateDialog is image-centric (text-to-image / image-edit). Drop
+    // anything non-image so the picker can still surface audio/video for
+    // other capabilities without polluting this dialog's image list.
+    const urls = picked.filter((p) => p.kind === 'image').map((p) => p.url)
     setRefImages((prev) => Array.from(new Set([...prev, ...urls])))
   }
   const [provider, setProvider] = useState<ProviderId>('doubao')
@@ -382,7 +386,13 @@ export function GenerateDialog({ initialPrompt = '', upstreamImages = [], defaul
         </div>
       </div>
     </div>
-    {pickerOpen && <AssetPickerDialog onClose={() => setPickerOpen(false)} onSelect={handlePickAssets} />}
+    {pickerOpen && (
+      <AssetPickerDialog
+        onClose={() => setPickerOpen(false)}
+        onSelect={handlePickAssets}
+        allowedKinds={new Set(['image'])}
+      />
+    )}
     </>
   )
 }

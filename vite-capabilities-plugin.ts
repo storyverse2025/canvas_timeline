@@ -593,17 +593,38 @@ function isSupportedRasterDataUrl(url: string): boolean {
   return payload.length > 0 && payload.length % 4 !== 1
 }
 
-function isSeedanceImageUrl(url: string): boolean {
+/**
+ * A URL the Seedance call can resolve once we inline it. Three valid shapes:
+ *   - absolute http(s)://... — Seedance fetches directly
+ *   - raster data:image/(png|jpe?g|webp);base64,... — Seedance accepts inline
+ *   - root-relative path (/uploads/..., /voices/...) — local files served
+ *     by Vite. We read them off disk and rewrite to a data: URL in
+ *     `inlineLocalRefsInContentParts` BEFORE submitting, so Seedance never
+ *     has to reach back into the dev server.
+ *
+ * Previously this filter rejected root-relative paths outright, which
+ * dropped every user-uploaded image (saved under /uploads/) and every
+ * voice file (under /voices/) before they could reach the model. The
+ * symptom was either "全能生视频至少需要 1 张图片或 1 个视频" or a
+ * silently characterless video.
+ */
+function isSeedanceMediaUrl(url: string): boolean {
   const trimmed = url.trim()
-  if (trimmed.length <= 10) return false
+  if (trimmed.length <= 2) return false
   if (/^https?:\/\//i.test(trimmed)) return true
+  if (trimmed.startsWith('/uploads/') || trimmed.startsWith('/voices/')) return true
   return isSupportedRasterDataUrl(trimmed)
 }
 
-/** Only Seedance-supported absolute http(s) URLs or raster data URLs are valid for remote video APIs. */
+/** Back-compat alias — the filter is now kind-agnostic. */
+const isSeedanceImageUrl = isSeedanceMediaUrl
+
 function filterValidRefs(urls: string[]): string[] {
-  return urls.filter(isSeedanceImageUrl).map((u) => u.trim())
+  return urls.filter(isSeedanceMediaUrl).map((u) => u.trim())
 }
+
+// Exported helpers for tests in src/lib/__tests__/seedance-url-handling.test.ts.
+export { isSeedanceMediaUrl, filterValidRefs, inlineLocalRefsInContentParts, detectVideoType }
 
 // ─── Seedance video generation type helpers (inlined for Node server) ──
 // Duplicated from src/lib/capabilities/video-types.ts because Vite plugins
@@ -668,6 +689,64 @@ function buildContentParts(
   return parts
 }
 
+/**
+ * Inline every root-relative URL in a Seedance contentParts array as a
+ * data: URL by reading the local file off `public/`. Image / video /
+ * audio parts all share this path because Seedance can't reach back into
+ * our dev server — anything we want it to "see" must travel inline.
+ *
+ * Absolute http(s) and already-inline data: URLs pass through untouched.
+ */
+async function inlineLocalRefsInContentParts(
+  contentParts: Array<Record<string, unknown>>,
+): Promise<Array<Record<string, unknown>>> {
+  const out = await Promise.all(contentParts.map(async (part) => {
+    const type = part.type as string | undefined
+    if (type === 'image_url') {
+      const url = (part.image_url as { url?: string } | undefined)?.url
+      if (typeof url === 'string' && url.startsWith('/')) {
+        const inlined = await resolveImageToDataUrl(url)
+        return { ...part, image_url: { ...(part.image_url as object), url: inlined } }
+      }
+    } else if (type === 'video_url') {
+      const url = (part.video_url as { url?: string } | undefined)?.url
+      if (typeof url === 'string' && url.startsWith('/')) {
+        const inlined = await readLocalAsDataUrl(url)
+        return { ...part, video_url: { ...(part.video_url as object), url: inlined } }
+      }
+    } else if (type === 'audio_url') {
+      const url = (part.audio_url as { url?: string } | undefined)?.url
+      if (typeof url === 'string' && url.startsWith('/')) {
+        const inlined = await readLocalAsDataUrl(url)
+        return { ...part, audio_url: { ...(part.audio_url as object), url: inlined } }
+      }
+    }
+    return part
+  }))
+  return out
+}
+
+/** Generic local-file → data URL reader for non-image media (audio, video).
+ *  Picks the mime type from the extension. */
+async function readLocalAsDataUrl(localPath: string): Promise<string> {
+  const { readFileSync } = await import('fs')
+  const { join } = await import('path')
+  const decoded = decodeURIComponent(localPath)
+  const buf = readFileSync(join(process.cwd(), 'public', decoded))
+  const ext = decoded.split('.').pop()?.toLowerCase() ?? ''
+  const mime =
+    ext === 'mp3' ? 'audio/mpeg' :
+    ext === 'wav' ? 'audio/wav' :
+    ext === 'flac' ? 'audio/flac' :
+    ext === 'm4a' ? 'audio/mp4' :
+    ext === 'ogg' ? 'audio/ogg' :
+    ext === 'mp4' ? 'video/mp4' :
+    ext === 'webm' ? 'video/webm' :
+    ext === 'mov' ? 'video/quicktime' :
+    'application/octet-stream'
+  return `data:${mime};base64,${buf.toString('base64')}`
+}
+
 /** Convert a local /uploads/ path to a file:// readable buffer, or fetch remote URL as base64 data URL */
 async function resolveImageToDataUrl(imageUrl: string): Promise<string> {
   if (imageUrl.startsWith('data:')) {
@@ -677,8 +756,11 @@ async function resolveImageToDataUrl(imageUrl: string): Promise<string> {
   if (imageUrl.startsWith('/')) {
     const { readFileSync } = await import('fs')
     const { join } = await import('path')
-    const buf = readFileSync(join(process.cwd(), 'public', imageUrl))
-    const ext = imageUrl.split('.').pop()?.toLowerCase() ?? 'png'
+    // URL-decode so CJK filenames (typical for /voices/) resolve to the
+    // actual disk path. Strip query strings too — they're cache-busters.
+    const decoded = decodeURIComponent(imageUrl.split('?')[0])
+    const buf = readFileSync(join(process.cwd(), 'public', decoded))
+    const ext = decoded.split('.').pop()?.toLowerCase() ?? 'png'
     const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'webp' ? 'image/webp' : 'image/png'
     return `data:${mime};base64,${buf.toString('base64')}`
   }
@@ -765,9 +847,14 @@ async function submitSeedanceTaskOnce(opts: {
   if (!key) throw new Error('ARK_API_KEY not set')
   const headers = { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' }
 
+  // Inline any root-relative refs (/uploads/, /voices/) as data URLs so
+  // BytePlus can actually fetch them — it sits in ap-southeast and can't
+  // hit our localhost dev server.
+  const content = await inlineLocalRefsInContentParts(opts.contentParts)
+
   const body: Record<string, unknown> = {
     model: opts.model ?? 'doubao-seedance-2-0-260128',
-    content: opts.contentParts,
+    content,
     resolution: opts.resolution ?? '480p',
     ratio: opts.aspect ?? '16:9',
     duration: Math.max(4, Math.min(15, opts.duration ?? 5)),
@@ -836,11 +923,21 @@ async function submitSeedanceTask(opts: {
 async function textToVideo(req: CapReq): Promise<CapRes> {
   const text = getText(req.inputs)
   const images = filterValidRefs(getImages(req.inputs))
-  if (!text && !images.length) throw new Error('需要输入文本或参考图')
+  // Audios + videos used to be hard-coded to []. Cinematographer ships
+  // voice audio refs through this same capability id, and the storyboard
+  // beat-video flow does too — dropping them silently meant Seedance
+  // never received the 音色 references the prompt asked it to follow.
+  const videos = filterValidRefs(getVideos(req.inputs))
+  const audios = filterValidRefs(getAudios(req.inputs))
+  if (!text && !images.length && !videos.length) throw new Error('需要输入文本或参考图')
 
   const mode = (req.params?.mode as 'first-last' | 'reference' | undefined)
-  const type = detectVideoType({ images, videos: [], audios: [], mode })
-  const contentParts = buildContentParts(text, { images, videos: [], audios: [], mode }, type)
+  // When audios or videos are present, detectVideoType promotes the call
+  // to universal-to-video so the build step emits the audio_url / video_url
+  // parts BytePlus expects. Image-only calls keep the image-to-video-first
+  // / image-to-video-first-last / reference-to-video routing.
+  const type = detectVideoType({ images, videos, audios, mode })
+  const contentParts = buildContentParts(text, { images, videos, audios, mode }, type)
 
   const url = await submitSeedanceTask({
     contentParts,
