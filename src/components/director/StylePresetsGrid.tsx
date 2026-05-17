@@ -4,6 +4,7 @@ import {
   STYLE_LIBRARY_DEFAULT_ID,
   isPhotorealRiskPreset,
   listStylePresets,
+  styleDisplayLabel,
   type StyleCategory,
   type StylePresetDefinition,
 } from '@/lib/style-library'
@@ -88,7 +89,7 @@ function PresetCard({
     >
       <span className="flex items-center gap-1 font-medium">
         <span>{CATEGORY_EMOJI[preset.category]}</span>
-        <span className="line-clamp-2">{preset.label}</span>
+        <span className="line-clamp-2">{styleDisplayLabel(preset)}</span>
       </span>
       {risk && (
         <span className="text-[9px] text-amber-400/80">
