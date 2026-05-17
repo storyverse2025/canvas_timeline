@@ -106,6 +106,26 @@ describe('generateStoryboardTable', () => {
     expect(sent).toContain('2 ≤ duration ≤ 15')
     expect(sent).toContain('Σ duration == 60')
   })
+
+  it('teaches the LLM the 1-scene + ≤2-character per-row cap and the split rule', async () => {
+    const { llm, spy } = llmReturning('```json\n[]\n```')
+    const ctx = createMemoryContext({ llm })
+    await driveAuto(
+      generateStoryboardTable(
+        {
+          artStyle: 'cinematic', totalDurationSeconds: 60,
+          characterDesigns: '[]', sceneDesigns: '[]', propDesigns: '[]',
+          shotAllocation: 'A', shotComposition: 'C', visualStrategy: 'S', elementContext: 'E',
+        },
+        ctx,
+      ),
+    )
+    const sent = spy.mock.calls[0]![0]![0]!.content as string
+    expect(sent).toContain('一个场景')
+    expect(sent).toContain('至多两位主要角色')
+    expect(sent).toContain('必须拆成多行')
+    expect(sent).toContain('character1 + character2')
+  })
 })
 
 describe('critiqueTimeline', () => {
@@ -130,6 +150,16 @@ describe('critiqueTimeline', () => {
     const issues = await driveAuto(critiqueTimeline({ storyboardJson: '[]' }, ctx))
     expect(issues).toHaveLength(1)
   })
+
+  it('asks the critic to flag rows with 3+ characters or two scenes and propose a split', async () => {
+    const { llm, spy } = llmReturning('[]')
+    const ctx = createMemoryContext({ llm })
+    await driveAuto(critiqueTimeline({ storyboardJson: '[]' }, ctx))
+    const sent = spy.mock.calls[0]![0]![0]!.content as string
+    expect(sent).toContain('每行 scene + character 人数上限')
+    expect(sent).toContain('3 位以上主要角色')
+    expect(sent).toContain('拆成多行')
+  })
 })
 
 describe('applyTimelineFixes', () => {
@@ -151,6 +181,20 @@ describe('applyTimelineFixes', () => {
     expect(sent).toContain('2. S5: 时长 60s 过长 → 拆分')
     expect(sent).toContain('总时长锁定为 90 秒')
     expect(sent).toContain('duration 必须 ∈ [2, 15] 秒')
+  })
+
+  it('preserves the 1-scene + ≤2-character per-row cap during the fix pass', async () => {
+    const { llm, spy } = llmReturning('```json\n[]\n```')
+    const ctx = createMemoryContext({ llm })
+    await driveAuto(
+      applyTimelineFixes(
+        { storyboardJson: '[]', issues: ['S3: 角色过多'], totalDurationSeconds: 60 },
+        ctx,
+      ),
+    )
+    const sent = spy.mock.calls[0]![0]![0]!.content as string
+    expect(sent).toContain('每行 scene + character 人数上限')
+    expect(sent).toContain('character1/character2')
   })
 })
 
