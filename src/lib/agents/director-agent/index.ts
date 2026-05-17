@@ -163,12 +163,17 @@ export async function* critiqueTimeline(
   ctx: ProjectContext,
 ): AgentGenerator<TimelineIssue[]> {
   yield { type: 'progress', message: 'director: scanning timeline continuity' }
+  // IMPORTANT: do NOT truncate. A 30-60s multi-character drama produces a
+  // storyboard JSON well past 3000 chars, and slicing mid-row leaves the
+  // LLM seeing only the first 2-3 rows. The continuity verdict for the
+  // unseen tail rows is meaningless, and downstream apply-timeline-fixes
+  // then rewrites the whole table from a partial view, returning garbage.
   const text = await ctx.llm.complete(
     [
       {
         role: 'user',
         content: fillTemplate(TPL.critiqueTimeline, {
-          storyboardJson: req.storyboardJson.slice(0, 3000),
+          storyboardJson: req.storyboardJson,
         }),
       },
     ],
@@ -191,12 +196,15 @@ export async function* applyTimelineFixes(
 ): AgentGenerator<string> {
   yield { type: 'progress', message: 'director: applying timeline fixes' }
   const issuesList = req.issues.map((i, idx) => `${idx + 1}. ${i}`).join('\n')
+  // IMPORTANT: do NOT truncate. The prompt asks the LLM to return the
+  // FULL fixed array — slicing mid-row makes it hallucinate the missing
+  // tail or emit a short array that loses rows.
   const text = await ctx.llm.complete(
     [
       {
         role: 'user',
         content: fillTemplate(TPL.applyTimelineFixes, {
-          storyboardJson: req.storyboardJson.slice(0, 3000),
+          storyboardJson: req.storyboardJson,
           issuesList,
           totalDurationSeconds: String(req.totalDurationSeconds),
         }),

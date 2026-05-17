@@ -440,6 +440,20 @@ async function runFix(state: PipelineState, storyboardJson: string, issues: stri
     ),
     { verb: 'apply-timeline-fixes' },
   )
+
+  // Defensive fallback: if the LLM's "fixed" output is unparseable, prefer
+  // the pre-fix JSON over a dropped run. The original table at least
+  // renders so the user can review + retry, instead of an empty Storyboard
+  // tab + a transient error toast that's easy to miss.
+  const { parseAndValidateStoryboard } = await import('@/lib/storyboard-parser')
+  const parsed = parseAndValidateStoryboard(fixResult)
+  if (!parsed.ok) {
+    state.fixes = [`修复失败，已保留未修复版本（apply-timeline-fixes 返回无法解析的 JSON）`]
+    setStep(state, 2, 0, 'done', `修复失败：保留 ${issues.length} 个未修复问题，使用原始分镜表`); onUpdate(state)
+    setStep(state, 2, 1, 'done', '回退到自检前的分镜表 JSON'); onUpdate(state)
+    return storyboardJson
+  }
+
   state.fixes = issues.map((i) => `已修复: ${i}`)
   setStep(state, 2, 0, 'done', `已修复 ${issues.length} 个问题`); onUpdate(state)
 

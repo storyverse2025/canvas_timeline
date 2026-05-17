@@ -8,7 +8,6 @@ import { useChatStore } from '@/stores/chat-store'
 import { runDirectorPipeline, type PipelineState } from '@/lib/director-assistant'
 import { parseAndValidateStoryboard } from '@/lib/storyboard-parser'
 import { ArtDirectionPanel } from './ArtDirectionPanel'
-import { CastVoicePanel } from './CastVoicePanel'
 import { DirectorPipelineProgress } from './DirectorPipelineProgress'
 import { InterviewCard } from '@/components/chat/InterviewCard'
 
@@ -150,10 +149,6 @@ export function ScriptInputDialog({ onClose }: Props) {
                   美术设定
                 </button>
                 {showArt && <ArtDirectionPanel />}
-              </div>
-
-              <div>
-                <CastVoicePanel />
               </div>
             </>
           )}
