@@ -127,7 +127,7 @@ export async function* extractElements(
 
 // ─── Verb: generateAssetImages ──────────────────────────────────────
 
-interface AssetImageContext {
+export interface AssetImageContext {
   artStyle: string
   template: string
   buildDescription: (e: ExtractedCharacter | ExtractedScene | ExtractedProp) => string
@@ -138,12 +138,53 @@ interface AssetImageContext {
   extraParams?: Record<string, unknown>
 }
 
+/**
+ * Templates each kind uses + the per-kind timeout. Exported so callers that
+ * want to fire individual image generations (e.g. canvas-elements running
+ * them in parallel as a background task) can reuse the agent's authoritative
+ * prompts + deadlines instead of duplicating them.
+ */
+export function characterImageContext(artStyle: string): AssetImageContext {
+  return {
+    artStyle,
+    template: TPL.characterImage,
+    buildDescription: (e) => {
+      const c = e as ExtractedCharacter
+      return `${c.name}, ${c.gender}, ${c.appearance}, wearing ${c.clothing}, ${c.expression}`
+    },
+    aspect: '1:1',
+  }
+}
+export function sceneImageContext(artStyle: string): AssetImageContext {
+  return {
+    artStyle,
+    template: TPL.sceneImage,
+    buildDescription: (e) => {
+      const s = e as ExtractedScene
+      return `${s.name}, ${s.location}, ${s.lighting}, ${s.mood}`
+    },
+    aspect: '16:9',
+    extraParams: { quality: 'hd', resolution: '4k' },
+  }
+}
+export function propImageContext(artStyle: string): AssetImageContext {
+  return {
+    artStyle,
+    template: TPL.propImage,
+    buildDescription: (e) => {
+      const p = e as ExtractedProp
+      return `${p.name}, ${p.description}`
+    },
+    aspect: '1:1',
+  }
+}
+
 // Per-asset deadlines. runCapability has no built-in timeout, so a hung
 // provider would otherwise freeze the entire director pipeline (no way
 // to ever recover without a page reload). Generous enough for slow
 // remote image models on a cold start; aggressive enough to fail-and-
 // move-on instead of waiting forever.
-const ASSET_TIMEOUT_MS = {
+export const ASSET_TIMEOUT_MS = {
   character: 3 * 60_000,
   prop: 3 * 60_000,
   // 4K HD equirectangular panoramas can legitimately take 90-150s on
@@ -163,7 +204,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   ])
 }
 
-async function generateOneImage(
+export async function generateOneImage(
   element: ExtractedCharacter | ExtractedScene | ExtractedProp,
   imgCtx: AssetImageContext,
   ctx: ProjectContext,
