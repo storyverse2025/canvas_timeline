@@ -348,7 +348,7 @@ export async function* attachVoiceRefs(
   void ctx
   const cards = cardsForRow(req.row, req.castingCards)
   if (cards.length === 0) {
-    yield { type: 'result', payload: { videoPrompt: req.videoPrompt, attached: [] } }
+    yield { type: 'result', payload: { videoPrompt: req.videoPrompt, voiceAudioUrls: [], attached: [] } }
     return
   }
 
@@ -357,7 +357,12 @@ export async function* attachVoiceRefs(
   // dialogue has no prefix — we attribute it to the lone character.
   const lines = parseDialogueByCharacter(req.row.dialogue ?? '', cards)
 
+  // Build the attached list FIRST (positional 1-indexed slot per character
+  // that has both a dialogue line + a voice binding). The slot index maps
+  // directly to the `音色N` label in the prompt and the position in the
+  // voiceAudioUrls array Seedance receives as inputs.
   const attached: AttachVoiceRefsResult['attached'] = []
+  let slot = 0
   for (const card of cards) {
     const line = lines[card.name] ?? ''
     if (!line) continue
@@ -365,24 +370,29 @@ export async function* attachVoiceRefs(
     if (!voiceId) continue
     const voiceUrl = req.voiceUrlFor(voiceId)
     if (!voiceUrl) continue
-    attached.push({ character: card.name, voiceId, voiceUrl, line })
+    slot += 1
+    attached.push({ slot, character: card.name, voiceId, voiceUrl, line })
   }
 
   if (attached.length === 0) {
-    yield { type: 'result', payload: { videoPrompt: req.videoPrompt, attached: [] } }
+    yield { type: 'result', payload: { videoPrompt: req.videoPrompt, voiceAudioUrls: [], attached: [] } }
     return
   }
 
+  // Prompt block labels each character + line with the matching `音色N` tag
+  // so Seedance can pair the audio reference (input index N) with the
+  // dialogue spoken in this beat.
   const characterLines = attached
     .map(
-      (a: { character: string; voiceId: string; voiceUrl: string; line: string }) =>
-        `- 角色: ${a.character}\n  对白: "${a.line}"\n  音色文件: ${a.voiceUrl}\n  voice_id: ${a.voiceId}`,
+      (a) =>
+        `- 音色${a.slot} = ${a.character} 的配音 (voice file uploaded as audio reference ${a.slot})\n  对白 / dialogue: "${a.line}"`,
     )
     .join('\n')
 
   const appended = fillTemplate(TPL.attachVoiceRefs, { characterLines })
   const videoPrompt = `${req.videoPrompt.trim()}\n\n${appended.trim()}`
-  yield { type: 'result', payload: { videoPrompt, attached } }
+  const voiceAudioUrls = attached.map((a) => a.voiceUrl)
+  yield { type: 'result', payload: { videoPrompt, voiceAudioUrls, attached } }
 }
 
 function parseDialogueByCharacter(
