@@ -13,8 +13,18 @@ export type CanvasItemKind = 'image' | 'text' | 'video' | 'audio';
  *                  director-agent.generateKeyframe. Used by ImageCanvasNode
  *                  to render an adopted-keyframe ⭐ badge when this item's
  *                  content matches some storyboard row's keyframeUrl.
+ *   - 'voice'    : an audio file representing a character's voice token,
+ *                  spawned by voice-binding when actor-agent.castVoices
+ *                  picks a 音色 for a character. Routed to AudioItemContent-
+ *                  Panel in the inspector.
+ *   - 'character-bio' : a text node holding a character's biography +
+ *                  appearance pillars + composed image prompt, spawned by
+ *                  character-design.spawnCharacterBioCanvasNodes.
+ *   - 'scene'    : a 360° equirectangular panorama from art-director.
+ *                  Renders via PanoramaViewer (drag to look around) instead
+ *                  of a flat <img>.
  */
-export type CanvasItemRole = 'style' | 'system' | 'keyframe' | 'voice' | 'character-bio';
+export type CanvasItemRole = 'style' | 'system' | 'keyframe' | 'voice' | 'character-bio' | 'scene';
 
 export interface CanvasItem {
   id: string;
