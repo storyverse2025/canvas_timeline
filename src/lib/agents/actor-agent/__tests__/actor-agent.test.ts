@@ -283,6 +283,24 @@ describe('castVoices', () => {
     expect(prompt).toContain('voice_print')
   })
 
+  it('cast-voices prompt names the 4 indices the LLM should match against (biography + displayName/basename + sampleSnippet + tags)', () => {
+    const prompt = buildCastVoicesPrompt({
+      cards,
+      candidates: [...candidatesPerCard.林清, ...candidatesPerCard.阿澈],
+      creativeBrief: { tone: '悬疑' },
+    })
+    expect(prompt).toContain('biography')
+    expect(prompt).toContain('displayName')
+    expect(prompt).toContain('basename')
+    expect(prompt).toContain('sampleSnippet')
+    expect(prompt).toContain('tags')
+    // 4-bucket vocabulary surfaced to the LLM so the prefilter labels make sense.
+    expect(prompt).toContain('幼儿')
+    expect(prompt).toContain('少年')
+    expect(prompt).toContain('中年')
+    expect(prompt).toContain('老年')
+  })
+
   it('returns the LLM-picked binding map keyed by character name', async () => {
     const { llm } = llmReturning(JSON.stringify({ 林清: 'vox-a', 阿澈: 'vox-c' }))
     const ctx = createMemoryContext({ llm })

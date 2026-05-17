@@ -128,11 +128,13 @@ function guessGenderFromCard(card: { gender_presentation?: string }): VoiceGende
 function guessAgeFromCard(card: { age_range?: string }): VoiceAge {
   const s = (card.age_range ?? '').toLowerCase()
   if (!s) return 'unknown'
-  if (/(child|kid|infant|童|孩|baby|toddler)/.test(s)) return 'child'
-  if (/(teen|youth|青年|少年|少女)/.test(s)) return 'youth'
-  if (/(middle|中年|40|50)/.test(s)) return 'middle'
-  if (/(elder|老|senior|60|70|80|90)/.test(s)) return 'elderly'
-  if (/(adult|成年|20|30)/.test(s)) return 'adult'
+  // 4-bucket vocabulary (幼儿/少年/中年/老年) — `adult` is folded into
+  // `middle` because the catalog scanner emits only these four. Keeps
+  // prefilter + LLM prompt vocabulary aligned.
+  if (/(幼儿|child|kid|infant|童|孩|baby|toddler)/.test(s)) return 'child'
+  if (/(少年|少女|teen|youth|青年|学生|高中|初中|大学)/.test(s)) return 'youth'
+  if (/(老年|elder|老|senior|60|70|80|90)/.test(s)) return 'elderly'
+  if (/(中年|adult|middle|成年|20|30|40|50)/.test(s)) return 'middle'
   return 'unknown'
 }
 

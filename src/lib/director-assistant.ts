@@ -184,22 +184,6 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
     castingCards: persistedCastingCards,
   })
 
-  // Actor-agent casts a voice per character right after the dossier
-  // lands, so the storyboard table + cinematographer downstream both have
-  // voiceBindings available without an extra manual step. Failures here
-  // are non-fatal: log + continue (user can re-cast voices manually from
-  // the 演员表 panel).
-  try {
-    const { runCastVoicesAndSpawnAudio } = await import('@/lib/voice-binding')
-    await runCastVoicesAndSpawnAudio({
-      castingCards: persistedCastingCards,
-      creativeBrief: { projectType: briefType, tone: briefTone, genre: briefGenre },
-    })
-  } catch (e) {
-    // eslint-disable-next-line no-console
-    console.warn('[director-assistant] voice casting failed, continuing without voiceBindings:', (e as Error).message)
-  }
-
   setStep(state, 0, 0, 'done', '已按 script-framework-qa 完成七层框架校准'); onUpdate(state)
   setStep(state, 0, 1, 'done', '已按 script-writing-expansion 生成/补齐完整剧本基准'); onUpdate(state)
   setStep(state, 0, 2, 'done', '已按 script-doctor-roundtable 完成结构会诊摘要'); onUpdate(state)
@@ -224,6 +208,24 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   } catch (e) {
     // eslint-disable-next-line no-console
     console.warn('[director-assistant] actor-agent designCharacters failed; continuing with bland extraction:', (e as Error).message)
+  }
+
+  // Voice casting runs AFTER designCharacters so the LLM has the
+  // biography + 7-pillar appearance to semantically match against each
+  // voice's displayName / sampleSnippet / tags — instead of casting from
+  // the dossier's thin gender_presentation + voice_print one-liner.
+  // Reads the freshly-augmented castingCards from projectDB (designCharacters
+  // persists biography onto each card).
+  try {
+    const { runCastVoicesAndSpawnAudio } = await import('@/lib/voice-binding')
+    const castingCardsForVoice = useProjectDBImport.getState().script.castingCards ?? persistedCastingCards
+    await runCastVoicesAndSpawnAudio({
+      castingCards: castingCardsForVoice,
+      creativeBrief: { projectType: briefType, tone: briefTone, genre: briefGenre },
+    })
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn('[director-assistant] voice casting failed, continuing without voiceBindings:', (e as Error).message)
   }
 
   const characterDesigns = JSON.stringify(augmentedExtraction.characters, null, 2)

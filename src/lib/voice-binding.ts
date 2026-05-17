@@ -37,6 +37,10 @@ export interface CastVoicesArgs {
 export async function runCastVoicesAndSpawnAudio(args: CastVoicesArgs): Promise<VoiceBindings> {
   if (args.castingCards.length === 0) return {}
 
+  // Prefilter on gender + age (the only signals the catalog supports
+  // structurally — 4-bucket 幼儿/少年/中年/老年). Semantic match
+  // against the biography happens downstream in actor-agent.castVoices,
+  // which sees displayName + sampleSnippet + tags for every candidate.
   const candidatesPerCard: Record<string, VoiceCandidateSummary[]> = {}
   for (const card of args.castingCards) {
     candidatesPerCard[card.name] = shortlistForCard(
@@ -45,7 +49,7 @@ export async function runCastVoicesAndSpawnAudio(args: CastVoicesArgs): Promise<
         age_range: card.age_range,
         voice_print: card.voice_print,
       },
-      30,
+      40,
     ).map((v) => ({
       id: v.id,
       displayName: v.displayName,
