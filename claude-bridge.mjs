@@ -24,6 +24,13 @@ const PROJECT_ROOT = path.dirname(fileURLToPath(import.meta.url))
 const HERMES_BIN = process.env.HERMES_BIN || 'hermes'
 const CODEX_BIN = process.env.CODEX_BIN || 'codex'
 const CODEX_TIMEOUT_MS = Number(process.env.CODEX_TIMEOUT_MS || 120000)
+// Linux ARG_MAX is typically ~2MB (getconf ARG_MAX → 2097152). hermes
+// takes the prompt as an argv string, so anything close to that limit
+// crashes spawn() with synchronous E2BIG — and because it's synchronous,
+// `child.on('error')` never fires and the bridge process dies. Cap the
+// prompt at 1MB to leave headroom for env, other argv, and the kernel's
+// per-string overhead; reject with 413 otherwise.
+const MAX_PROMPT_BYTES = Number(process.env.MAX_PROMPT_BYTES || 1_000_000)
 
 const CANDIDATE_PLUGIN_DIRS = [
   path.join(HOME, 'repos/storyverse-skills'),
@@ -31,6 +38,22 @@ const CANDIDATE_PLUGIN_DIRS = [
   path.join(HOME, 'repos/fal-skills/skills/claude.ai'),
 ]
 const PLUGIN_DIRS = CANDIDATE_PLUGIN_DIRS.filter(d => existsSync(d))
+
+// ── logging ───────────────────────────────────────────────────────────────────
+// Every HTTP request gets a short monotonically-increasing id so concurrent
+// runs are decipherable in the log stream. Prefix every line with that id —
+// including hermes/codex stderr — so you can grep one request end-to-end.
+
+let nextReqSeq = 0
+function makeReqId() { return (++nextReqSeq).toString(36).padStart(4, '0') }
+function previewText(s, n = 200) {
+  if (!s) return ''
+  const oneline = String(s).replace(/\s+/g, ' ').trim()
+  return oneline.length > n ? `${oneline.slice(0, n)}…(+${oneline.length - n}c)` : oneline
+}
+function blog(reqId, ...args)  { console.log(`[bridge req=${reqId}]`, ...args) }
+function bwarn(reqId, ...args) { console.warn(`[bridge req=${reqId}]`, ...args) }
+function berr(reqId, ...args)  { console.error(`[bridge req=${reqId}]`, ...args) }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -75,9 +98,11 @@ function buildCodexPrompt(prompt) {
   ].join('\n')
 }
 
-function runCodexFallback(prompt) {
+function runCodexFallback(prompt, reqId = '----') {
   return new Promise((resolve, reject) => {
     const codexPrompt = buildCodexPrompt(prompt)
+    const startedAt = Date.now()
+    blog(reqId, `→ codex exec | promptBytes=${codexPrompt.length} timeoutMs=${CODEX_TIMEOUT_MS}`)
     const child = spawn(CODEX_BIN, ['exec', codexPrompt], {
       cwd: PROJECT_ROOT,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -91,25 +116,38 @@ function runCodexFallback(prompt) {
       if (settled) return
       settled = true
       child.kill('SIGTERM')
+      const elapsed = Date.now() - startedAt
+      berr(reqId, `✗ codex TIMEOUT after ${elapsed}ms`)
       reject(new Error(`Codex fallback timed out after ${CODEX_TIMEOUT_MS}ms`))
     }, CODEX_TIMEOUT_MS)
 
     child.stdout.on('data', chunk => { stdout += chunk.toString() })
-    child.stderr.on('data', chunk => { stderr += chunk.toString() })
+    child.stderr.on('data', chunk => {
+      const text = chunk.toString()
+      stderr += text
+      for (const line of text.split('\n').filter(Boolean)) {
+        process.stderr.write(`[bridge req=${reqId}] codex.stderr: ${line}\n`)
+      }
+    })
     child.on('error', err => {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      const elapsed = Date.now() - startedAt
+      berr(reqId, `✗ codex spawn error after ${elapsed}ms: ${err.message}`)
       reject(err)
     })
     child.on('close', code => {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      const elapsed = Date.now() - startedAt
       const text = stdout.trim()
       if (code === 0 && text) {
+        blog(reqId, `✓ codex exit=0 bytes=${text.length} elapsed=${elapsed}ms`)
         resolve(text)
       } else {
+        berr(reqId, `✗ codex exit=${code} elapsed=${elapsed}ms stderr=${previewText(stderr, 200) || 'empty'}`)
         reject(new Error(`Codex fallback failed with code ${code}: ${stderr.trim() || 'empty output'}`))
       }
     })
@@ -175,18 +213,21 @@ function sendBridgeError(res, message, stream, finalize) {
   }
 }
 
-async function handleHermesFailure({ res, prompt, stream, reason, finalize }) {
-  console.warn(`[bridge] Hermes unavailable; trying Codex fallback (${reason})`)
+async function handleHermesFailure({ res, prompt, stream, reason, finalize, reqId = '----' }) {
+  bwarn(reqId, `Hermes unavailable; trying Codex fallback. reason="${previewText(reason, 200)}"`)
   try {
-    const text = await runCodexFallback(prompt)
+    const text = await runCodexFallback(prompt, reqId)
     if (stream) {
       sendCodexSseResponse(res, text, finalize)
+      blog(reqId, `← stream done via codex bytes=${text.length}`)
     } else if (!res.headersSent) {
       sendCodexJsonResponse(res, text)
+      blog(reqId, `← 200 via codex bytes=${text.length}`)
     }
   } catch (err) {
-    console.error('[bridge] Codex fallback failed:', err.message)
+    berr(reqId, `Codex fallback failed: ${err.message}`)
     sendBridgeError(res, 'Hermes is unavailable and Codex fallback failed.', stream, finalize)
+    blog(reqId, `← 502 (hermes + codex both failed)`)
   }
 }
 
@@ -210,6 +251,9 @@ const server = http.createServer((req, res) => {
     return
   }
 
+  const reqId = makeReqId()
+  const requestStartedAt = Date.now()
+
   let body = ''
   req.on('data', chunk => { body += chunk })
   req.on('end', () => {
@@ -217,12 +261,13 @@ const server = http.createServer((req, res) => {
     try {
       reqBody = JSON.parse(body)
     } catch {
+      berr(reqId, `← 400 invalid JSON body (${body.length} bytes received)`)
       res.writeHead(400, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ error: { message: 'Invalid JSON body' } }))
       return
     }
 
-    const { messages = [], system, stream } = reqBody
+    const { messages = [], system, stream, model } = reqBody
     const prompt = buildPrompt(messages, system)
 
     const args = ['chat', '-Q', '-q', prompt, '--max-turns', '30', '--source', 'director-bridge']
@@ -233,9 +278,43 @@ const server = http.createServer((req, res) => {
       LIBTV_ACCESS_KEY: process.env.LIBTV_ACCESS_KEY || 'sk-libtv-f60919a34eac47a18cb5424ea3519d7d',
     }
 
-    console.log(`[bridge] → hermes chat -Q -q | msgs=${messages.length} plugins=${PLUGIN_DIRS.length} stream=${!!stream}`)
+    const lastUser = [...messages].reverse().find(m => m.role === 'user')
+    const userPreview = previewText(extractText(lastUser?.content), 160)
+    const roleSeq = messages.map(m => (m.role === 'user' ? 'u' : m.role === 'assistant' ? 'a' : '?')).join('')
+    blog(reqId, `→ POST ${req.url} stream=${!!stream} model=${model || '∅'} msgs=${messages.length} [${roleSeq}] systemBytes=${(system || '').length} promptBytes=${prompt.length}`)
+    blog(reqId, `  lastUser: ${userPreview || '(empty)'}`)
 
-    const child = spawn(HERMES_BIN, args, { env, cwd: PROJECT_ROOT, stdio: ['ignore', 'pipe', 'pipe'] })
+    // Guard against E2BIG: spawn throws synchronously for argv > ARG_MAX,
+    // bypassing `child.on('error')` and killing the bridge process. Reject
+    // oversized prompts up front with a clear 413.
+    if (prompt.length > MAX_PROMPT_BYTES) {
+      berr(reqId, `✗ prompt too large: ${prompt.length} bytes > MAX_PROMPT_BYTES=${MAX_PROMPT_BYTES} → 413`)
+      const message = `Prompt is ${prompt.length} bytes, exceeds bridge limit ${MAX_PROMPT_BYTES} (hermes CLI argv cannot exceed kernel ARG_MAX ~2MB). Reduce system prompt or message history.`
+      if (stream) {
+        res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' })
+        writeSse(res, { type: 'error', error: { type: 'payload_too_large', message } })
+        res.write('data: [DONE]\n\n')
+        res.end()
+      } else {
+        res.writeHead(413, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: { type: 'payload_too_large', message } }))
+      }
+      return
+    }
+
+    let child
+    const hermesStartedAt = Date.now()
+    try {
+      child = spawn(HERMES_BIN, args, { env, cwd: PROJECT_ROOT, stdio: ['ignore', 'pipe', 'pipe'] })
+    } catch (err) {
+      // Belt-and-braces for the synchronous spawn error path (E2BIG, ENOMEM,
+      // ENOENT if HERMES_BIN is wrong, …). Without this catch the process
+      // dies and concurrently restarts it — every request post-restart sees
+      // a connection reset and the user gets a confusing 500/502 from nginx.
+      berr(reqId, `✗ hermes spawn threw synchronously: ${err.code || ''} ${err.message}`)
+      handleHermesFailure({ res, prompt, stream: !!stream, reason: `spawn ${err.code || ''}: ${err.message}`, finalize: () => {}, reqId })
+      return
+    }
 
     // ── streaming ─────────────────────────────────────────────────────────────
     if (stream) {
@@ -247,6 +326,7 @@ const server = http.createServer((req, res) => {
 
       let finalized = false
       let finalText = ''   // accumulated for logging/fallback
+      let firstByteAt = 0
 
       function finalize() {
         if (finalized) return
@@ -257,6 +337,10 @@ const server = http.createServer((req, res) => {
 
       child.stdout.on('data', chunk => {
         const text = chunk.toString()
+        if (!firstByteAt) {
+          firstByteAt = Date.now()
+          blog(reqId, `  hermes first stdout byte after ${firstByteAt - hermesStartedAt}ms`)
+        }
         finalText += text
         writeSse(res, {
           type: 'content_block_delta',
@@ -266,21 +350,39 @@ const server = http.createServer((req, res) => {
 
       let stderrText = ''
       child.stderr.on('data', d => {
-        stderrText += d.toString()
-        process.stderr.write(`[bridge] ${d}`)
+        const text = d.toString()
+        stderrText += text
+        for (const line of text.split('\n').filter(Boolean)) {
+          process.stderr.write(`[bridge req=${reqId}] hermes.stderr: ${line}\n`)
+        }
       })
       child.on('close', code => {
         if (finalized) return
+        const elapsedHermes = Date.now() - hermesStartedAt
+        const elapsedTotal = Date.now() - requestStartedAt
         if (code !== 0 && !finalText.trim()) {
-          handleHermesFailure({ res, prompt, stream: true, reason: stderrText.trim() || `exit ${code}`, finalize })
+          berr(reqId, `✗ hermes exit=${code} elapsed=${elapsedHermes}ms empty stdout → fallback`)
+          handleHermesFailure({ res, prompt, stream: true, reason: stderrText.trim() || `exit ${code}`, finalize, reqId })
           return
         }
+        blog(reqId, `✓ hermes exit=${code} bytes=${finalText.length} elapsedHermes=${elapsedHermes}ms elapsedTotal=${elapsedTotal}ms`)
+        blog(reqId, `  reply: ${previewText(finalText, 160) || '(empty)'}`)
         finalize()
       })
-      child.on('error', err => handleHermesFailure({ res, prompt, stream: true, reason: err.message, finalize }))
+      child.on('error', err => {
+        const elapsedHermes = Date.now() - hermesStartedAt
+        berr(reqId, `✗ hermes spawn error after ${elapsedHermes}ms: ${err.message} → fallback`)
+        handleHermesFailure({ res, prompt, stream: true, reason: err.message, finalize, reqId })
+      })
       // Kill child only when the TCP socket closes (client truly disconnected),
       // NOT on req 'close' which fires when the request body is received.
-      req.socket?.on('close', () => { if (!finalized) { child.kill(); finalize() } })
+      req.socket?.on('close', () => {
+        if (!finalized) {
+          bwarn(reqId, `✂ client disconnected; killing hermes child mid-stream after ${Date.now() - hermesStartedAt}ms`)
+          child.kill()
+          finalize()
+        }
+      })
 
     // ── non-streaming ─────────────────────────────────────────────────────────
     } else {
@@ -292,13 +394,19 @@ const server = http.createServer((req, res) => {
 
       let stderrText = ''
       child.stderr.on('data', d => {
-        stderrText += d.toString()
-        process.stderr.write(`[bridge] ${d}`)
+        const text = d.toString()
+        stderrText += text
+        for (const line of text.split('\n').filter(Boolean)) {
+          process.stderr.write(`[bridge req=${reqId}] hermes.stderr: ${line}\n`)
+        }
       })
 
       child.on('close', code => {
+        const elapsedHermes = Date.now() - hermesStartedAt
+        const elapsedTotal = Date.now() - requestStartedAt
         if (code !== 0 || !finalText.trim()) {
-          handleHermesFailure({ res, prompt, stream: false, reason: stderrText.trim() || `exit ${code}`, finalize: () => {} })
+          berr(reqId, `✗ hermes exit=${code} bytes=${finalText.length} elapsed=${elapsedHermes}ms → fallback`)
+          handleHermesFailure({ res, prompt, stream: false, reason: stderrText.trim() || `exit ${code}`, finalize: () => {}, reqId })
           return
         }
         res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -311,11 +419,19 @@ const server = http.createServer((req, res) => {
           stop_reason: 'end_turn',
           usage: { input_tokens: 0, output_tokens: finalText.length },
         }))
+        blog(reqId, `✓ hermes exit=0 bytes=${finalText.length} elapsedHermes=${elapsedHermes}ms elapsedTotal=${elapsedTotal}ms ← 200`)
+        blog(reqId, `  reply: ${previewText(finalText, 160) || '(empty)'}`)
       })
 
-      child.on('error', err => handleHermesFailure({ res, prompt, stream: false, reason: err.message, finalize: () => {} }))
+      child.on('error', err => {
+        const elapsedHermes = Date.now() - hermesStartedAt
+        berr(reqId, `✗ hermes spawn error after ${elapsedHermes}ms: ${err.message} → fallback`)
+        handleHermesFailure({ res, prompt, stream: false, reason: err.message, finalize: () => {}, reqId })
+      })
     }
   })
+
+  req.on('error', err => { berr(reqId, `request error: ${err.message}`) })
 })
 
 server.listen(PORT, () => {
