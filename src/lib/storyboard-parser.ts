@@ -123,6 +123,12 @@ export function parseAndValidateStoryboard(response: string): ParseResult {
       if (ref.url) out.reference_image = ref.url
     }
     // Element slots: resolve [node:xxxxxx] short ids in slot.image to full URLs.
+    // IMPORTANT: art-director runs asset image generation in the background
+    // while the storyboard table is being written. If parsing happens before
+    // an asset image arrives, `ref.url` is the empty string. Use `||` (not
+    // `??`) so the empty string falls through to the original short-id —
+    // resolveSlotNode at keyframe time will re-resolve via slot.nodeId from
+    // the live item store, and a future re-parse will also recover.
     for (const slotKey of ['character1', 'character2', 'prop1', 'prop2', 'scene'] as const) {
       const slot = out[slotKey]
       if (!slot || typeof slot !== 'object') continue
@@ -132,7 +138,7 @@ export function parseAndValidateStoryboard(response: string): ParseResult {
       if (!sm) continue
       const ref = resolveCanvasReference(sm[1])
       out[slotKey] = {
-        image: ref.url ?? img,
+        image: ref.url || img,
         description: slot.description ?? '',
         nodeId: ref.nodeId ?? slot.nodeId ?? '',
       }
