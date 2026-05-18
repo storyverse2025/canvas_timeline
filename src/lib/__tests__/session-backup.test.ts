@@ -39,10 +39,19 @@ function stubIdb(initial: Record<string, string> = {}) {
   }
   const fakeDb = {
     objectStoreNames: { contains: () => true },
-    transaction: () => ({
-      objectStore: () => fakeStore,
-      onabort: null, error: null,
-    }),
+    // idbPut now waits for t.oncomplete (not just request success) so
+    // the disk commit is guaranteed before reload. Mock must fire it
+    // AFTER the request's onsuccess. setTimeout(0) lands in a later
+    // task than the microtask queue makeReq uses, so r.onsuccess (and
+    // thus the local requestOk = true flip) runs first.
+    transaction: () => {
+      const t: { objectStore: () => unknown; onabort: null; onerror: null; oncomplete: null | ((e: Event) => void); error: null } = {
+        objectStore: () => fakeStore,
+        onabort: null, onerror: null, oncomplete: null, error: null,
+      }
+      setTimeout(() => t.oncomplete?.(new Event('complete')), 0)
+      return t
+    },
   }
   const fakeOpen = vi.fn(() => {
     const req: Partial<IDBOpenDBRequest> = { onsuccess: null, onerror: null, result: fakeDb as never }
