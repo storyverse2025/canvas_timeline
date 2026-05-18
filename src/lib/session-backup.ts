@@ -157,6 +157,17 @@ export async function loadSessionById(id: string): Promise<{ restoredKeys: strin
     const ok = await idbPut(db, key, value)
     if (ok) restored.push(key)
   }
+  // Mirror the loaded snapshot onto the CALLER's own session file with
+  // x-allow-shrink:1 so the next auto-push won't get rejected by the
+  // shrink-overwrite guard (the user intentionally chose a different —
+  // possibly smaller — session).
+  try {
+    await fetch(SERVER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-allow-shrink': '1' },
+      body: JSON.stringify({ snapshot: data.snapshot }),
+    })
+  } catch { /* best-effort; next auto-push retries */ }
   return { restoredKeys: restored, savedAt: data.savedAt }
 }
 
@@ -218,7 +229,12 @@ export async function tryHydrateFromServerIfIdbEmpty(): Promise<{
   return { hydrated: restored.length > 0, restoredKeys: restored, savedAt: payload.savedAt }
 }
 
-const PUSH_DEBOUNCE_MS = 5_000
+// 30s instead of 5s — the snapshot can be 38 MB+ over the wire even
+// after gzip on dense canvases. Pushing every 5 s saturated the user's
+// upload bandwidth, queued every GET behind a multi-second POST, and
+// made the Session picker appear to hang. 30 s captures roughly one
+// idle period after a burst of edits, which is what we actually want.
+const PUSH_DEBOUNCE_MS = 30_000
 // Browsers cap a keepalive-flagged fetch body at 64 KB (per spec). Our
 // snapshot is usually 50-500 KB once canvas + items + storyboard rows
 // are populated, so keepalive: true on the debounced push rejected with
