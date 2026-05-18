@@ -119,23 +119,66 @@ function readSessionFile(file: string): SessionFileShape | null {
   }
 }
 
+/** Sidecar metadata file path. Stored as `<id>.meta.json` next to the
+ *  main snapshot. Listing the picker UI parses only the tiny sidecars
+ *  instead of the 50 MB snapshot bodies. */
+function metaFilePath(snapshotFile: string): string {
+  return snapshotFile.replace(/\.json$/, '.meta.json')
+}
+
+/**
+ * Write a separate JSON file containing only the listing metadata.
+ * Done synchronously immediately after the snapshot itself is written,
+ * so the picker's GET /list never has to read the heavy snapshot to
+ * pull out savedAt / ip / previewTitle / size.
+ */
+function writeSidecarMeta(snapshotFile: string, meta: Omit<SessionListItem, 'sizeBytes'> & { sizeBytes: number }): void {
+  try {
+    writeFileSync(metaFilePath(snapshotFile), JSON.stringify(meta), 'utf8')
+  } catch { /* best-effort; list falls back to full parse if missing */ }
+}
+
+function readSidecarMeta(snapshotFile: string): SessionListItem | null {
+  const mf = metaFilePath(snapshotFile)
+  if (!existsSync(mf)) return null
+  try {
+    return JSON.parse(readFileSync(mf, 'utf8')) as SessionListItem
+  } catch {
+    return null
+  }
+}
+
 function listAllSessions(): SessionListItem[] {
   const dir = sessionsDir()
   if (!existsSync(dir)) return []
   const out: SessionListItem[] = []
   for (const name of readdirSync(dir)) {
-    if (!name.endsWith('.json')) continue
+    if (!name.endsWith('.json') || name.endsWith('.meta.json')) continue
     const full = join(dir, name)
     const stat = statSync(full)
+    const id = name.replace(/\.json$/, '')
+
+    // Fast path: sidecar metadata. No big-file parse.
+    const sidecar = readSidecarMeta(full)
+    if (sidecar) {
+      out.push({ ...sidecar, id, sizeBytes: stat.size })
+      continue
+    }
+
+    // Slow legacy path: read + parse the full snapshot to back-fill
+    // metadata for files written before the sidecar existed. Once we
+    // see one, we eagerly write the sidecar so the next /list is fast.
     const data = readSessionFile(full)
     if (!data || !data.snapshot) continue
-    out.push({
-      id: name.replace(/\.json$/, ''),
+    const item: SessionListItem = {
+      id,
       ip: data.ip ?? '(unknown)',
       savedAt: data.savedAt ?? stat.mtime.toISOString(),
       sizeBytes: stat.size,
       previewTitle: data.previewTitle ?? derivePreviewTitle(data.snapshot),
-    })
+    }
+    writeSidecarMeta(full, item)
+    out.push(item)
   }
   out.sort((a, b) => b.savedAt.localeCompare(a.savedAt))
   return out
@@ -218,6 +261,14 @@ export function sessionSnapshotPlugin(): Plugin {
               previewTitle: derivePreviewTitle(json.snapshot),
             }
             writeFileSync(file, JSON.stringify(out), 'utf8')
+            // Sidecar for the picker's /list — avoids re-parsing the
+            // 50 MB snapshot on every listing.
+            const stat = statSync(file)
+            writeSidecarMeta(file, {
+              id: file.split('/').pop()!.replace(/\.json$/, ''),
+              ip, savedAt: out.savedAt, previewTitle: out.previewTitle ?? '',
+              sizeBytes: stat.size,
+            })
             sendJson(res, 200, { savedAt: out.savedAt, bytesIn: buf.length, bytesUncompressed: rawJson.length })
           } catch (e) {
             sendJson(res, 500, { error: `session write failed: ${(e as Error).message}` })
