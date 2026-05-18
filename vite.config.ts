@@ -6,13 +6,14 @@ import path from 'path'
 import { libtvPlugin } from './vite-libtv-plugin'
 import { providersPlugin } from './vite-providers-plugin'
 import { capabilitiesPlugin } from './vite-capabilities-plugin'
+import { sessionSnapshotPlugin } from './vite-session-snapshot-plugin'
 
 // HTTPS toggle: opt-out by setting DEV_HTTPS=0 (e.g. when port-forwarding to localhost).
 // Otherwise the dev server serves a self-signed cert so getUserMedia works over LAN/public IPs.
 const useHttps = process.env.DEV_HTTPS !== '0'
 
 export default defineConfig({
-  plugins: [react(), ...(useHttps ? [basicSsl()] : []), libtvPlugin(), providersPlugin(), capabilitiesPlugin()],
+  plugins: [react(), ...(useHttps ? [basicSsl()] : []), libtvPlugin(), providersPlugin(), capabilitiesPlugin(), sessionSnapshotPlugin()],
   server: {
     host: '0.0.0.0',
     port: 8080,

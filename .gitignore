@@ -44,3 +44,7 @@ public/uploads/
 
 # Voice library — 562MB of voice .mp3/.wav samples, served by Vite at /voices/
 public/voices/
+
+# Per-IP session snapshots written by vite-session-snapshot-plugin.ts —
+# these are user-state mirrors, not source.
+public/sessions/
