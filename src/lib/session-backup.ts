@@ -116,62 +116,97 @@ interface ServerSnapshotResponse {
 }
 
 /**
- * Pull the server snapshot if and only if IDB is empty for ALL tracked
- * stores. Designed to run BEFORE Zustand stores hydrate, so the values
- * we write to IDB get picked up by the normal hydration path.
+ * Per-store hydrate: for each tracked store whose IDB key is missing,
+ * restore it from the server snapshot. Designed to run BEFORE Zustand
+ * hydrates, so the values we write to IDB get picked up by the normal
+ * hydration path.
+ *
+ * Previously this was all-or-nothing: if ANY store had data locally we
+ * skipped the server pull entirely. Result: when (e.g.) canvas-store's
+ * IDB key was lost but storyboard-store's survived, canvas stayed empty
+ * forever even though the server had a good copy. The user hit this:
+ * "画布不能 load，表格就没问题".
+ *
+ * Returns the list of restored store keys so the caller can decide
+ * whether to reload (Zustand can't safely re-hydrate after its stores
+ * have already initialized).
  */
-export async function tryHydrateFromServerIfIdbEmpty(): Promise<{ hydrated: boolean; savedAt: string | null }> {
-  if (!hasIDB()) return { hydrated: false, savedAt: null }
+export async function tryHydrateFromServerIfIdbEmpty(): Promise<{
+  hydrated: boolean
+  restoredKeys: string[]
+  savedAt: string | null
+}> {
+  if (!hasIDB()) return { hydrated: false, restoredKeys: [], savedAt: null }
 
   const local = await readIdbSnapshot()
-  if (Object.keys(local).length > 0) {
-    // Stale data wins — server backup is a fallback, not the source of truth.
-    return { hydrated: false, savedAt: null }
+  const missing = TRACKED_STORE_KEYS.filter((k) => !(k in local))
+  if (missing.length === 0) {
+    return { hydrated: false, restoredKeys: [], savedAt: null }
   }
 
   let payload: ServerSnapshotResponse
   try {
     const res = await fetch(SERVER_URL, { method: 'GET' })
-    if (!res.ok) return { hydrated: false, savedAt: null }
+    if (!res.ok) return { hydrated: false, restoredKeys: [], savedAt: null }
     payload = (await res.json()) as ServerSnapshotResponse
   } catch {
-    return { hydrated: false, savedAt: null }
+    return { hydrated: false, restoredKeys: [], savedAt: null }
   }
 
   if (!payload.snapshot || Object.keys(payload.snapshot).length === 0) {
-    return { hydrated: false, savedAt: payload.savedAt }
+    return { hydrated: false, restoredKeys: [], savedAt: payload.savedAt }
   }
 
   const db = await openIdb()
-  if (!db) return { hydrated: false, savedAt: payload.savedAt }
-  let any = false
-  for (const [key, value] of Object.entries(payload.snapshot)) {
-    if (!TRACKED_STORE_KEYS.includes(key as (typeof TRACKED_STORE_KEYS)[number])) continue
+  if (!db) return { hydrated: false, restoredKeys: [], savedAt: payload.savedAt }
+  const restored: string[] = []
+  for (const key of missing) {
+    const value = payload.snapshot[key]
+    if (typeof value !== 'string') continue
     const ok = await idbPut(db, key, value)
-    if (ok) any = true
+    if (ok) restored.push(key)
   }
-  // eslint-disable-next-line no-console
-  console.log(`[session-backup] restored ${Object.keys(payload.snapshot).length} store(s) from server snapshot (savedAt=${payload.savedAt}); reload to see them`)
-  return { hydrated: any, savedAt: payload.savedAt }
+  if (restored.length > 0) {
+    // eslint-disable-next-line no-console
+    console.log(`[session-backup] restored ${restored.length}/${missing.length} missing store(s) from server (${restored.join(', ')}; savedAt=${payload.savedAt}); reload to see them`)
+  }
+  return { hydrated: restored.length > 0, restoredKeys: restored, savedAt: payload.savedAt }
 }
 
 const PUSH_DEBOUNCE_MS = 5_000
+// Browsers cap a keepalive-flagged fetch body at 64 KB (per spec). Our
+// snapshot is usually 50-500 KB once canvas + items + storyboard rows
+// are populated, so keepalive: true on the debounced push rejected with
+// "Failed to fetch" the moment the user actually had state worth
+// saving. Use keepalive ONLY for the urgent path (tab hiding / unload),
+// and even then keep an eye on size — bigger snapshots may still drop.
+const KEEPALIVE_BODY_LIMIT_BYTES = 60 * 1024
+
+interface PushOpts {
+  /** Tab is hiding / page is unloading — use keepalive: true so the
+   *  browser buffers the request through the transition. */
+  urgent?: boolean
+}
+
 let pendingTimer: ReturnType<typeof setTimeout> | null = null
 let inFlight: Promise<void> | null = null
 
-async function pushNow(): Promise<void> {
+async function pushNow(opts: PushOpts = {}): Promise<void> {
   if (inFlight) return inFlight
   const job = (async () => {
     try {
       const snapshot = await readIdbSnapshot()
       if (Object.keys(snapshot).length === 0) return
+      const body = JSON.stringify({ snapshot })
+      // Drop keepalive for any body that would exceed the spec limit —
+      // a normal POST that misses the unload transition is better than
+      // a guaranteed-rejected keepalive POST.
+      const useKeepalive = !!opts.urgent && body.length <= KEEPALIVE_BODY_LIMIT_BYTES
       await fetch(SERVER_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ snapshot }),
-        // Use keepalive so the request survives a unload/visibilitychange
-        // transition (browser usually buffers + sends after the tab dies).
-        keepalive: true,
+        body,
+        ...(useKeepalive ? { keepalive: true } : {}),
       })
     } catch (e) {
       // eslint-disable-next-line no-console
@@ -207,7 +242,7 @@ export function useServerBackupSync(): void {
     const unsubs = stores.map((s) => s.subscribe(() => schedulePush()))
 
     const onHidden = () => {
-      if (document.visibilityState === 'hidden') void pushNow()
+      if (document.visibilityState === 'hidden') void pushNow({ urgent: true })
     }
     document.addEventListener('visibilitychange', onHidden)
     window.addEventListener('beforeunload', onHidden)

@@ -54,17 +54,53 @@ function stubIdb(initial: Record<string, string> = {}) {
 }
 
 describe('tryHydrateFromServerIfIdbEmpty', () => {
-  it('no-ops when ANY tracked store already has data in IDB (server is fallback only)', async () => {
-    const fetchSpy = vi.fn(async () => ({ ok: true, json: async () => ({ snapshot: { 'canvas-store': 'server-data' } }) }))
+  it('no-ops when EVERY tracked store already has data in IDB (server is fallback only)', async () => {
+    const fetchSpy = vi.fn(async () => ({ ok: true, json: async () => ({ snapshot: {} }) }))
     vi.stubGlobal('fetch', fetchSpy)
-    stubIdb({ 'project-db': '{"already":"hydrated"}' })
+    // Populate every tracked store so nothing is missing.
+    const full: Record<string, string> = {}
+    for (const k of [
+      'canvas-store', 'canvas-item-store', 'asset-store', 'storyboard-store',
+      'project-db', 'timeline-store-v2', 'chat-store', 'mapping-store',
+    ]) full[k] = '{"x":1}'
+    stubIdb(full)
 
     const { tryHydrateFromServerIfIdbEmpty } = await import('@/lib/session-backup')
     const r = await tryHydrateFromServerIfIdbEmpty()
 
     expect(r.hydrated).toBe(false)
-    // Did not even talk to the server because local IDB had data.
+    expect(r.restoredKeys).toEqual([])
+    // Did not talk to the server because nothing was missing.
     expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  it('per-store: restores ONLY the missing stores even when others have data (canvas gone, table survives)', async () => {
+    // Regression for the "画布不能 load，表格就没问题" bug — old logic
+    // skipped the server pull entirely when ANY store had data.
+    const fetchSpy = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        snapshot: {
+          'canvas-store': '{"nodes":[1]}',                       // missing locally → restore
+          'storyboard-store': '{"rows":["server-version"]}',     // present locally → keep local
+          'project-db': '{"script":{"text":"server"}}',          // missing locally → restore
+        },
+        savedAt: '2026-05-18T02:00:00Z',
+      }),
+    }))
+    vi.stubGlobal('fetch', fetchSpy)
+    const { data } = stubIdb({ 'storyboard-store': '{"rows":["local-keep"]}' })
+
+    const { tryHydrateFromServerIfIdbEmpty } = await import('@/lib/session-backup')
+    const r = await tryHydrateFromServerIfIdbEmpty()
+
+    expect(r.hydrated).toBe(true)
+    expect(r.restoredKeys).toEqual(expect.arrayContaining(['canvas-store', 'project-db']))
+    expect(r.restoredKeys).not.toContain('storyboard-store')
+    expect(data['canvas-store']).toBe('{"nodes":[1]}')
+    expect(data['project-db']).toBe('{"script":{"text":"server"}}')
+    // Local storyboard-store was NOT clobbered.
+    expect(data['storyboard-store']).toBe('{"rows":["local-keep"]}')
   })
 
   it('pulls + writes the server snapshot into IDB when every tracked store is empty', async () => {
