@@ -2,8 +2,9 @@ import { useState } from 'react'
 import { X, Sparkles, Image as ImageIcon, Type as TypeIcon, Mic, Film } from 'lucide-react'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { useGenerateDialogStore } from '@/stores/generate-dialog-store'
+import { useProjectDB } from '@/stores/project-db'
 import { gatherUpstream } from '@/lib/canvas-graph'
-import { findVoiceByUrl, normalizeVoiceUrl } from '@/lib/voice-library'
+import { findVoiceByUrl, getVoice, normalizeVoiceUrl } from '@/lib/voice-library'
 
 interface Props {
   nodeId: string;
@@ -26,6 +27,22 @@ export function NodeEditPanel({ nodeId, itemId, onClose }: Props) {
   const storedRefs = item.refImages ?? []
   const storedAudios = item.refAudios ?? []
   const isVideo = item.kind === 'video' || /\.(mp4|webm|mov)(\?|$)/i.test(item.content)
+
+  // For the stale-voice-warning fix: the original UI showed "没有音色文件
+  // — 该镜头生成时还没有 voice bindings" whenever item.refAudios was
+  // empty. That was historically accurate but stale — bindings written
+  // AFTER this video was generated still couldn't be seen. We now read
+  // the LIVE bindings + materialize each one so the user knows exactly
+  // what a re-shoot would ship.
+  const liveBindings = useProjectDB((s) => s.script.voiceBindings ?? {})
+  const liveVoicesNow = isVideo
+    ? Object.entries(liveBindings)
+        .map(([characterName, voiceId]) => ({
+          characterName,
+          voice: getVoice(voiceId),
+        }))
+        .filter((b): b is { characterName: string; voice: NonNullable<ReturnType<typeof getVoice>> } => Boolean(b.voice))
+    : []
 
   const commit = () => {
     updateItem(itemId, {
@@ -156,10 +173,24 @@ export function NodeEditPanel({ nodeId, itemId, onClose }: Props) {
                   })}
                 </div>
               </div>
+            ) : liveVoicesNow.length > 0 ? (
+              <div className="space-y-1">
+                <div className="text-[10px] text-amber-400/80 flex items-center gap-1">
+                  <Mic className="w-3 h-3" />
+                  本视频生成时还未绑定音色 · 现在已绑定 {liveVoicesNow.length} 个 · 重拍生效
+                </div>
+                {liveVoicesNow.map(({ characterName, voice }) => (
+                  <div key={characterName} className="flex items-center gap-2 text-[10px] pl-4">
+                    <span className="text-muted-foreground shrink-0">{characterName}</span>
+                    <span className="text-foreground/70 truncate">→ {voice.displayName}</span>
+                    <audio src={normalizeVoiceUrl(voice.urlPath)} controls preload="none" className="h-6 ml-auto" />
+                  </div>
+                ))}
+              </div>
             ) : (
               <div className="text-[10px] text-amber-400/80 flex items-center gap-1">
                 <Mic className="w-3 h-3" />
-                没有音色文件 — 该镜头生成时还没有 voice bindings (跑过 演员表 后下次重拍生效)
+                没有音色文件 — 项目还没有 voice bindings (先跑导演助手 / 演员表)
               </div>
             )}
           </div>
