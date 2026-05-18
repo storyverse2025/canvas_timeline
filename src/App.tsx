@@ -5,6 +5,7 @@ import { AppShell } from '@/components/layout/AppShell'
 import { migrateStores } from '@/lib/migrate-stores'
 import { initStoryboardTimelineLink } from '@/lib/storyboard-timeline-sync'
 import { initCanvasStoryboardSync } from '@/lib/canvas-storyboard-sync'
+import { useServerBackupSync } from '@/lib/session-backup'
 import { useProjectDB } from '@/stores/project-db'
 
 interface ErrorBoundaryState {
@@ -68,6 +69,11 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
 }
 
 function AppWithMigration() {
+  // Subscribe to every persisted store and debounce-push the snapshot
+  // to the server. Pulls on empty IDB happen in main.tsx BEFORE
+  // Zustand hydrates — this hook only handles the push side.
+  useServerBackupSync()
+
   useEffect(() => {
     // Run once after all persisted stores have rehydrated
     migrateStores()
