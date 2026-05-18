@@ -173,28 +173,31 @@ describe('Generate Script intent', () => {
 
     await executeIntent(intent!, 'test-project', '生成角色')
 
+    // System prompt no longer injects Sony Venice / Panavision / Final
+    // Fantasy CG / Unreal Engine 5 — only composition + background. The
+    // user-chosen artStyle is now the sole rendering directive.
     expect(generateSpy).toHaveBeenCalledWith(
       'test-project',
       expect.objectContaining({
-        character_material_system_prompt: expect.stringContaining('Sony Venice camera'),
+        character_material_system_prompt: expect.stringContaining('three-view full body reference'),
       }),
     )
 
     const characters = useProjectStore.getState().characters
     expect(characters).toHaveLength(1)
     expect(characters[0].prompt).toContain('A young hero in a silver coat')
-    expect(characters[0].prompt).toContain('Sony Venice camera')
     expect(characters[0].prompt).toContain('front view')
     expect(characters[0].prompt).toContain('side view')
     expect(characters[0].prompt).toContain('back view')
+    expect(characters[0].prompt).not.toContain('Sony Venice')
 
     const characterAssets = useAssetStore.getState().getAssetsByType('character')
     expect(characterAssets).toHaveLength(1)
     expect(characterAssets[0].prompt).toContain('A young hero in a silver coat')
-    expect(characterAssets[0].prompt).toContain('Sony Venice camera')
-    expect(characterAssets[0].prompt).toContain('Panavision C-series lenses')
-    expect(characterAssets[0].prompt).toContain('Final Fantasy CG game style')
     expect(characterAssets[0].prompt).toContain('three-view full body reference')
     expect(characterAssets[0].prompt).toContain('no head visible')
+    expect(characterAssets[0].prompt).not.toContain('Sony Venice')
+    expect(characterAssets[0].prompt).not.toContain('Panavision')
+    expect(characterAssets[0].prompt).not.toContain('Final Fantasy CG')
   })
 })

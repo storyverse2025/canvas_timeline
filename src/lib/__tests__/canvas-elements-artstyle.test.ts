@@ -17,19 +17,24 @@ describe('ensureElements: artStyle always applied', () => {
     return char.image_prompt ? `${basePrompt}. ${artStyle}` : basePrompt
   }
 
-  it('appends artStyle and character material system prompt when AI-generated image_prompt omits them', () => {
+  it('appends artStyle + composition system prompt; never adds Sony Venice / Final Fantasy / engine boilerplate', () => {
     // AI generated a prompt WITHOUT the art style/system prompt (common failure mode)
     const char = { image_prompt: 'A young woman with red hair, full body' }
     const artStyle = 'anime style, cel-shaded, vibrant colors'
     const prompt = buildCharacterMaterialPrompt(char.image_prompt, artStyle)
 
+    // The user-chosen art style is the sole rendering directive.
     expect(prompt).toContain('anime style')
     expect(prompt).toContain('red hair')
-    expect(prompt).toContain('Sony Venice camera')
-    expect(prompt).toContain('Panavision C-series lenses')
-    expect(prompt).toContain('Final Fantasy CG game style')
+    // Composition + background are structural and stay.
     expect(prompt).toContain('three-view full body reference')
     expect(prompt).toContain('no head visible')
+    // Regression: photo-rig boilerplate must NOT be injected anymore,
+    // it forced photoreal output regardless of the user's chosen style.
+    expect(prompt).not.toContain('Sony Venice')
+    expect(prompt).not.toContain('Panavision')
+    expect(prompt).not.toContain('Final Fantasy CG')
+    expect(prompt).not.toContain('Unreal Engine')
   })
 
   it('keeps template fallback intact when image_prompt is missing', () => {

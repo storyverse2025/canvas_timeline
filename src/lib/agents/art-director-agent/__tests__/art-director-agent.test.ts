@@ -257,7 +257,9 @@ describe('generateAssetImages', () => {
     // image_prompt 'p' is wrapped by character-image.md template now
     // (template always runs, even when img_url isn't returned).
     expect(result.characters[0]!.generation_prompt).toContain('p')
-    expect(result.characters[0]!.generation_prompt).toContain('Sony Venice camera')
+    // Regression: template no longer hardcodes Sony Venice / Panavision —
+    // the only rendering directive is the user-chosen artStyle.
+    expect(result.characters[0]!.generation_prompt).not.toContain('Sony Venice')
   })
 
   it('falls back to template-built prompts when image_prompt is empty', async () => {
@@ -275,8 +277,10 @@ describe('generateAssetImages', () => {
     )
     const sentPrompt = mockedRunCapability.mock.calls[0]![0].inputs[0]!.text!
     expect(sentPrompt).toContain('Eve')
-    expect(sentPrompt).toContain('noir')
-    expect(sentPrompt).toContain('Final Fantasy CG game style') // from template
+    expect(sentPrompt).toContain('noir')          // user-chosen art style threaded through
+    expect(sentPrompt).toContain('three-view')    // template composition kept
+    expect(sentPrompt).not.toContain('Final Fantasy CG') // hardcoded rig removed
+    expect(sentPrompt).not.toContain('Sony Venice')      // ditto
   })
 })
 

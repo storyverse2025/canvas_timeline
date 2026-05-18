@@ -181,10 +181,15 @@ export interface EnsureElementsOptions {
   extraction?: ExtractionResult
 }
 
-export const CHARACTER_MATERIAL_SYSTEM_PROMPT = 'Sony Venice camera, Panavision C-series lenses, 24mm focal length, f/1.4 aperture, full-frame capture, clean shadows, cinematic lighting, anamorphic lens, wide angle, ultra-high detail, 8k, Final Fantasy CG game style, refined CG, Unreal Engine 5 render. pure white background. Composition requirement: top 1/3 is a front-face extreme close-up with natural expression; lower 2/3 is divided into three blocks showing the character from neck down to feet only, no head visible, three-view full body reference: front view, side view, back view, hands naturally hanging down.'
+// Composition + background only — NO camera / lens / engine / 8K / "Final
+// Fantasy CG" boilerplate. The user-chosen artStyle is the single source of
+// rendering direction; mixing in a hardcoded photoreal rig forced every
+// character image toward Sony Venice-grade realism even when the project's
+// art style said "Urban occult anime" or "watercolor".
+export const CHARACTER_MATERIAL_SYSTEM_PROMPT = 'Pure white background. Composition requirement: top 1/3 is a front-face extreme close-up with natural expression; lower 2/3 is divided into three blocks showing the character from neck down to feet only, no head visible, three-view full body reference: front view, side view, back view, hands naturally hanging down.'
 
 export function buildCharacterMaterialPrompt(basePrompt: string, artStyle: string): string {
-  return `${basePrompt}. ${artStyle}. ${CHARACTER_MATERIAL_SYSTEM_PROMPT}`
+  return `${basePrompt}. Rendering style: ${artStyle}. ${CHARACTER_MATERIAL_SYSTEM_PROMPT}`
 }
 
 export function getArtStyle(opts?: EnsureElementsOptions): string {

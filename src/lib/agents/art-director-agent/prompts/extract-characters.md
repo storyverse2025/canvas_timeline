@@ -25,7 +25,7 @@ output: ExtractedCharacter[] (JSON only)
     "expression": "默认表情/气质",
     "body_type": "体型描述",
     "distinctive_features": "标志性特征（疤痕、纹身、特殊配饰等）",
-    "image_prompt": "完整的英文人物三视图图片生成 prompt：必须包含 Sony Venice camera, Panavision C-series lenses, 24mm, f/1.4, full-frame, clean shadows, cinematic lighting, anamorphic wide angle, ultra-high detail, 8k, Final Fantasy CG game style, refined CG, Unreal Engine 5 render；构图为纯白背景，上面1/3人物正面脸部超特写且表情自然，下面2/3分三块展示颈部以下到脚部的正/侧/背三视图（不要出现头部），双手自然垂落；同时包含上述所有角色视觉信息，适合 {{artStyle}} 风格"
+    "image_prompt": "完整的英文人物三视图图片生成 prompt：**渲染指令只用全局美术风格 {{artStyle}} 这一段文字**，不要叠加 Sony Venice / Panavision / Final Fantasy CG / Unreal Engine 5 / 8K 等额外相机/镜头/引擎/分辨率术语；构图为纯白背景，上面1/3人物正面脸部超特写且表情自然，下面2/3分三块展示颈部以下到脚部的正/侧/背三视图（不要出现头部），双手自然垂落；同时包含上述所有角色视觉信息"
   }
 ]
 ```

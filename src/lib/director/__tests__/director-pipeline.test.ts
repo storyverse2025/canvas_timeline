@@ -268,21 +268,24 @@ describe('Director Pipeline — Server Skill Files', () => {
     expect(expandPrompt).toContain('只输出 JSON')
   })
 
-  it('character material prompt enforces the required three-view CG system prompt', async () => {
+  it('character image prompt keeps structural composition; drops hardcoded photo-rig boilerplate', async () => {
     // characterImageGen was migrated to art-director-agent/prompts/character-image.md.
     const promptSource = (
       await import('@/lib/agents/art-director-agent/prompts/character-image.md?raw')
     ).default
-    expect(promptSource).toContain('Sony Venice camera')
-    expect(promptSource).toContain('Panavision C-series lenses')
-    expect(promptSource).toContain('24mm focal length')
-    expect(promptSource).toContain('f/1.4 aperture')
-    expect(promptSource).toContain('Final Fantasy CG game style')
+    // Composition + the {{artStyle}} placeholder remain — these are structural.
+    expect(promptSource).toContain('{{artStyle}}')
     expect(promptSource).toContain('top 1/3')
     expect(promptSource).toContain('lower 2/3')
     expect(promptSource).toContain('three-view')
     expect(promptSource).toContain('front view, side view, back view')
     expect(promptSource).toContain('no head visible')
-    expect(promptSource).toContain('pure white background')
+    expect(promptSource.toLowerCase()).toContain('pure white background')
+    // Regression: the user-chosen art style must be the SOLE rendering
+    // directive — no hardcoded camera / lens / engine / resolution terms.
+    expect(promptSource).not.toContain('Sony Venice')
+    expect(promptSource).not.toContain('Panavision')
+    expect(promptSource).not.toContain('Final Fantasy CG')
+    expect(promptSource).not.toContain('Unreal Engine')
   })
 })
