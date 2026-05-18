@@ -6,7 +6,9 @@ import { migrateStores } from '@/lib/migrate-stores'
 import { initStoryboardTimelineLink } from '@/lib/storyboard-timeline-sync'
 import { initCanvasStoryboardSync } from '@/lib/canvas-storyboard-sync'
 import { useServerBackupSync } from '@/lib/session-backup'
+import { migrateInlineDataUrlsOnce } from '@/lib/storage/data-url-migration'
 import { useProjectDB } from '@/stores/project-db'
+import { toast } from 'sonner'
 
 interface ErrorBoundaryState {
   hasError: boolean
@@ -85,6 +87,20 @@ function AppWithMigration() {
     if (Object.keys(db.elements).length === 0 && db.artDirection.updatedAt === 0) {
       db.updateArtDirection({}) // triggers set() → persist writes to localStorage
     }
+
+    // One-shot: upload any inline `data:image/...` URLs in
+    // canvas-item-store to /uploads and replace with the path. Cuts
+    // snapshot size by ~80% on dense canvases and unblocks the
+    // server-side backup from hitting nginx's body limit. Runs once
+    // and self-heals — items that fail this round retry on next load.
+    void migrateInlineDataUrlsOnce().then((r) => {
+      if (r.migrated > 0) {
+        const freedKB = Math.round(r.bytesFreed / 1024)
+        toast.success(`迁移了 ${r.migrated} 个内联图片到 /uploads (省下 ${freedKB} KB)`, {
+          description: r.failed > 0 ? `${r.failed} 个失败 — 下次启动会重试` : undefined,
+        })
+      }
+    })
   }, [])
 
   return (

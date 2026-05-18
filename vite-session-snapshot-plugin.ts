@@ -253,6 +253,29 @@ export function sessionSnapshotPlugin(): Plugin {
               sendJson(res, 400, { error: 'body must be { snapshot: { storeName: jsonString, ... } }' })
               return
             }
+
+            // SHRINK PROTECTION: refuse to clobber an existing fat
+            // snapshot with a tiny one unless the client explicitly
+            // opts in. User reported a real-world data loss where a
+            // 53 MB snapshot got overwritten by a 1.5 KB one because
+            // some render fired a backup before Zustand had hydrated.
+            // Threshold: incoming is < 25% of existing AND existing
+            // is > 100 KB. Override with header `x-allow-shrink: 1`
+            // (used by the Session picker's explicit "Load this"
+            // action, which intends to replace).
+            const allowShrink = (req.headers['x-allow-shrink'] ?? '').toString() === '1'
+            if (!allowShrink && existsSync(file)) {
+              const prevStat = statSync(file)
+              if (prevStat.size > 100 * 1024 && rawJson.length < prevStat.size * 0.25) {
+                sendJson(res, 409, {
+                  error: `shrink-overwrite blocked: incoming ${rawJson.length}B would replace existing ${prevStat.size}B (>4× shrink). Send x-allow-shrink:1 to force.`,
+                  existingSize: prevStat.size,
+                  incomingSize: rawJson.length,
+                })
+                return
+              }
+            }
+
             const ip = clientIp(req)
             const out: SessionFileShape = {
               snapshot: json.snapshot,
