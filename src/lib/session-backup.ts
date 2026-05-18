@@ -91,10 +91,18 @@ async function idbPut(db: IDBDatabase, key: string, value: string): Promise<bool
   return new Promise((resolve) => {
     try {
       const t = db.transaction(STORE, 'readwrite')
+      let requestOk = false
       const r = t.objectStore(STORE).put(value, key)
-      r.onsuccess = () => resolve(true)
+      r.onsuccess = () => { requestOk = true }
       r.onerror = () => resolve(false)
+      // CRITICAL: resolve on TRANSACTION commit, not request success.
+      // The browser may report request success while the transaction is
+      // still flushing to disk; if the page reloads in the gap, the
+      // write is lost. User hit this clicking the Session picker's
+      // "Load" — the reload raced the writes, IDB came up empty.
+      t.oncomplete = () => resolve(requestOk)
       t.onabort = () => resolve(false)
+      t.onerror = () => resolve(false)
     } catch {
       resolve(false)
     }
@@ -125,6 +133,17 @@ export interface SessionListItem {
   savedAt: string
   sizeBytes: number
   previewTitle: string
+}
+
+/**
+ * Total bytes the LOCAL IDB currently holds across every tracked
+ * store. Used by the Session picker to compare local vs remote before
+ * a destructive Load so the user can see "you'd be replacing 50 MB of
+ * work with 1 KB of empty state".
+ */
+export async function getLocalSnapshotBytes(): Promise<number> {
+  const snapshot = await readIdbSnapshot()
+  return Object.values(snapshot).reduce((s, v) => s + v.length, 0)
 }
 
 /** Fetch every session the server has on disk, sorted newest-first. */

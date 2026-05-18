@@ -1,7 +1,12 @@
 import { useEffect, useState } from 'react'
 import { X, History, Loader2, AlertTriangle } from 'lucide-react'
 import { toast } from 'sonner'
-import { listAllSessions, loadSessionById, type SessionListItem } from '@/lib/session-backup'
+import {
+  getLocalSnapshotBytes,
+  listAllSessions,
+  loadSessionById,
+  type SessionListItem,
+} from '@/lib/session-backup'
 
 interface Props {
   onClose: () => void
@@ -33,13 +38,19 @@ function fmtRelative(iso: string): string {
  */
 export function SessionPickerDialog({ onClose }: Props) {
   const [sessions, setSessions] = useState<SessionListItem[] | null>(null)
+  const [localBytes, setLocalBytes] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loadingId, setLoadingId] = useState<string | null>(null)
 
   useEffect(() => {
     void (async () => {
       try {
-        setSessions(await listAllSessions())
+        const [list, local] = await Promise.all([
+          listAllSessions(),
+          getLocalSnapshotBytes(),
+        ])
+        setSessions(list)
+        setLocalBytes(local)
       } catch (e) {
         setError((e as Error).message)
       }
@@ -47,21 +58,50 @@ export function SessionPickerDialog({ onClose }: Props) {
   }, [])
 
   const handleLoad = async (s: SessionListItem) => {
-    const sizeLabel = fmtSize(s.sizeBytes)
-    const ok = window.confirm(
-      `Load session from ${s.ip} (saved ${fmtRelative(s.savedAt)}, ${sizeLabel})?\n\n` +
-        `This will OVERWRITE your current canvas, items, storyboard, and project — ` +
-        `the existing IDB state for those stores will be replaced and the page will reload.\n\n` +
-        `Continue?`,
-    )
-    if (!ok) return
+    // CRITICAL warning: user previously clicked Load on an empty
+    // server snapshot and lost their local 50 MB session because the
+    // confirm dialog didn't surface the size mismatch. Always show
+    // both sides; flat-out block obviously-destructive loads unless
+    // they re-confirm a typed "yes".
+    const local = localBytes ?? (await getLocalSnapshotBytes())
+    const localKB = (local / 1024).toFixed(1)
+    const remoteKB = (s.sizeBytes / 1024).toFixed(1)
+    const localGtRemote10x = local > s.sizeBytes * 10 && local > 100 * 1024
+
+    if (localGtRemote10x) {
+      const typed = window.prompt(
+        `⚠️ DANGEROUS LOAD ⚠️\n\n` +
+          `Your local IDB has ${localKB} KB of data.\n` +
+          `The session from ${s.ip} has only ${remoteKB} KB (${(local / s.sizeBytes).toFixed(1)}× smaller).\n\n` +
+          `Loading it will REPLACE your local data with that smaller snapshot.\n` +
+          `If you load by mistake, the LOCAL data will be gone.\n\n` +
+          `Type DELETE to confirm:`,
+      )
+      if (typed !== 'DELETE') {
+        toast.message('Load aborted')
+        return
+      }
+    } else {
+      const ok = window.confirm(
+        `Load session from ${s.ip} (saved ${fmtRelative(s.savedAt)})?\n\n` +
+          `Local size:  ${localKB} KB\n` +
+          `Remote size: ${remoteKB} KB\n\n` +
+          `This OVERWRITES your current canvas / items / storyboard / project ` +
+          `and reloads the page. Continue?`,
+      )
+      if (!ok) return
+    }
+
     setLoadingId(s.id)
     try {
       const r = await loadSessionById(s.id)
       toast.success(`Restored ${r.restoredKeys.length} store(s) · reloading…`, {
         description: r.restoredKeys.join(', '),
       })
-      setTimeout(() => window.location.reload(), 600)
+      // 1.5 s instead of 600 ms — the new idbPut waits for commit, but
+      // give the keepalive POST + sidecar write some headroom before we
+      // tear down the page.
+      setTimeout(() => window.location.reload(), 1500)
     } catch (e) {
       setLoadingId(null)
       toast.error('Load failed', { description: String((e as Error).message).slice(0, 200) })
@@ -84,9 +124,12 @@ export function SessionPickerDialog({ onClose }: Props) {
 
         <div className="px-4 py-2 text-[10px] text-muted-foreground border-b border-border/50 flex items-start gap-1.5">
           <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0 text-amber-500" />
-          <div>
-            每次画布 / 表格 / 项目变动会自动保存到服务器 (per-IP)。
-            选择一条记录后会覆盖本机当前状态并刷新页面，慎选。
+          <div className="flex-1">
+            <div>每次画布 / 表格 / 项目变动会自动保存到服务器 (per-IP)。</div>
+            <div className="mt-0.5">
+              <span className="font-mono text-foreground/70">本机 IDB 当前大小: {localBytes == null ? '…' : fmtSize(localBytes)}</span>
+              <span className="ml-2">— 加载远端会话会覆盖此数据，选小于本机的会话会触发二次确认。</span>
+            </div>
           </div>
         </div>
 
