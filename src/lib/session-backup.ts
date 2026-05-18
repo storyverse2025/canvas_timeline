@@ -27,7 +27,6 @@ import { useAssetStore } from '@/stores/asset-store'
 import { useStoryboardStore } from '@/stores/storyboard-store'
 import { useProjectDB } from '@/stores/project-db'
 import { useTimelineStore } from '@/stores/timeline-store'
-import { useChatStore } from '@/stores/chat-store'
 import { useMappingStore } from '@/stores/mapping-store'
 
 /**
@@ -39,6 +38,10 @@ import { useMappingStore } from '@/stores/mapping-store'
  * `timeline-store` key is intentionally omitted (pre-v2 state is
  * already migrated client-side).
  */
+// `chat-store` is intentionally OUT — chat history is regenerable, the
+// store accumulates messages forever, and it was driving snapshot size
+// past 50 MB → nginx 413. If chat ever needs cross-device sync, add it
+// back with a per-message trim.
 const TRACKED_STORE_KEYS = [
   'canvas-store',
   'canvas-item-store',
@@ -46,7 +49,6 @@ const TRACKED_STORE_KEYS = [
   'storyboard-store',
   'project-db',
   'timeline-store-v2',
-  'chat-store',
   'mapping-store',
 ] as const
 
@@ -191,20 +193,73 @@ interface PushOpts {
 let pendingTimer: ReturnType<typeof setTimeout> | null = null
 let inFlight: Promise<void> | null = null
 
+/**
+ * gzip-compress a JSON string using the Compression Streams API
+ * (Chrome 80+, Safari 16.4+, FF 113+ — universal at this point).
+ * Returns the raw gzipped Uint8Array. Throws if CompressionStream
+ * is unavailable so the caller can fall back to plain text.
+ */
+async function gzipString(s: string): Promise<Uint8Array> {
+  if (typeof CompressionStream === 'undefined') {
+    throw new Error('CompressionStream unavailable')
+  }
+  const cs = new CompressionStream('gzip')
+  const blob = new Blob([s])
+  const stream = blob.stream().pipeThrough(cs)
+  const out = await new Response(stream).arrayBuffer()
+  return new Uint8Array(out)
+}
+
+function fmtKB(bytes: number): string {
+  return bytes < 1024 ? `${bytes}B` : `${(bytes / 1024).toFixed(1)}KB`
+}
+
 async function pushNow(opts: PushOpts = {}): Promise<void> {
   if (inFlight) return inFlight
   const job = (async () => {
     try {
       const snapshot = await readIdbSnapshot()
       if (Object.keys(snapshot).length === 0) return
-      const body = JSON.stringify({ snapshot })
+      const json = JSON.stringify({ snapshot })
+
+      // Try gzip first — typical Zustand state compresses ~10×
+      // (lots of repeated JSON keys like "nodes", "edges", "position").
+      // This is what keeps the body under the nginx body limit even
+      // when the user has dozens of canvas items.
+      let body: BodyInit
+      let contentEncoding: string | null = null
+      let bodyLen: number
+      try {
+        const gz = await gzipString(json)
+        body = gz
+        contentEncoding = 'gzip'
+        bodyLen = gz.byteLength
+      } catch {
+        body = json
+        bodyLen = json.length
+      }
+
+      // Per-push size log so future bloat regressions are visible
+      // immediately (raw → compressed ratio). Quiet when sizes are
+      // sane: log only when raw > 100 KB or compressed > 50 KB.
+      if (json.length > 100 * 1024 || bodyLen > 50 * 1024) {
+        const ratio = contentEncoding ? `${(json.length / bodyLen).toFixed(1)}×` : '1× (uncompressed)'
+        // eslint-disable-next-line no-console
+        console.log(`[session-backup] push raw=${fmtKB(json.length)} sent=${fmtKB(bodyLen)} compress=${ratio}`)
+      }
+
       // Drop keepalive for any body that would exceed the spec limit —
       // a normal POST that misses the unload transition is better than
       // a guaranteed-rejected keepalive POST.
-      const useKeepalive = !!opts.urgent && body.length <= KEEPALIVE_BODY_LIMIT_BYTES
+      const useKeepalive = !!opts.urgent && bodyLen <= KEEPALIVE_BODY_LIMIT_BYTES
+
+      const headers: Record<string, string> = {
+        'Content-Type': contentEncoding ? 'application/octet-stream' : 'application/json',
+      }
+      if (contentEncoding) headers['Content-Encoding'] = contentEncoding
       await fetch(SERVER_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body,
         ...(useKeepalive ? { keepalive: true } : {}),
       })
@@ -235,9 +290,10 @@ function schedulePush(): void {
  */
 export function useServerBackupSync(): void {
   useEffect(() => {
+    // chat-store omitted on purpose — see TRACKED_STORE_KEYS for why.
     const stores = [
       useCanvasStore, useCanvasItemStore, useAssetStore, useStoryboardStore,
-      useProjectDB, useTimelineStore, useChatStore, useMappingStore,
+      useProjectDB, useTimelineStore, useMappingStore,
     ] as const
     const unsubs = stores.map((s) => s.subscribe(() => schedulePush()))
 
