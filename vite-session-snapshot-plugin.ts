@@ -106,14 +106,25 @@ export function sessionSnapshotPlugin(): Plugin {
               sendJson(res, 413, { error: `snapshot too large (${buf.length} bytes > ${MAX_SNAPSHOT_BYTES})` })
               return
             }
-            const json = JSON.parse(buf.toString('utf8')) as { snapshot?: Record<string, string> }
+            // Client may gzip-compress to fit under nginx's body limit
+            // (default 50 MB, raised to 200 MB here, but compression
+            // still buys 5-10× headroom for big canvases).
+            let rawJson: string
+            const encoding = (req.headers['content-encoding'] ?? '').toString().toLowerCase()
+            if (encoding === 'gzip') {
+              const { gunzipSync } = await import('zlib')
+              rawJson = gunzipSync(buf).toString('utf8')
+            } else {
+              rawJson = buf.toString('utf8')
+            }
+            const json = JSON.parse(rawJson) as { snapshot?: Record<string, string> }
             if (!json.snapshot || typeof json.snapshot !== 'object') {
               sendJson(res, 400, { error: 'body must be { snapshot: { storeName: jsonString, ... } }' })
               return
             }
             const savedAt = new Date().toISOString()
             writeFileSync(file, JSON.stringify({ snapshot: json.snapshot, savedAt }), 'utf8')
-            sendJson(res, 200, { savedAt })
+            sendJson(res, 200, { savedAt, bytesIn: buf.length, bytesUncompressed: rawJson.length })
           } catch (e) {
             sendJson(res, 500, { error: `session write failed: ${(e as Error).message}` })
           }
