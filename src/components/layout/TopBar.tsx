@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { Save, FolderOpen, Wand2, Eye, EyeOff, LayoutGrid, Table2, Film, Trash, Clapperboard } from 'lucide-react'
+import { Save, FolderOpen, Wand2, Eye, EyeOff, LayoutGrid, Table2, Film, Trash, Clapperboard, History } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useUiStore } from '@/stores/ui-store'
@@ -10,6 +10,7 @@ import { useMappingStore } from '@/stores/mapping-store'
 import { useAssetStore } from '@/stores/asset-store'
 import { useChatStore } from '@/stores/chat-store'
 import { ScriptInputDialog } from '@/components/director/ScriptInputDialog'
+import { SessionPickerDialog } from '@/components/layout/SessionPickerDialog'
 
 const TABS = [
   { id: 'canvas', label: '画布', Icon: LayoutGrid },
@@ -19,6 +20,7 @@ const TABS = [
 
 export function TopBar() {
   const [directorOpen, setDirectorOpen] = useState(false)
+  const [sessionPickerOpen, setSessionPickerOpen] = useState(false)
   const previewOpen = useUiStore((s) => s.previewOpen)
   const togglePreview = useUiStore((s) => s.togglePreview)
   const activeTab = useViewStore((s) => s.activeTab)
@@ -162,6 +164,17 @@ export function TopBar() {
         Load
       </Button>
 
+      <Button
+        variant="ghost"
+        size="sm"
+        className="gap-1.5"
+        onClick={() => setSessionPickerOpen(true)}
+        title="按 IP 列出所有服务器端会话快照"
+      >
+        <History className="w-4 h-4" />
+        Session
+      </Button>
+
       <Button variant="ghost" size="sm" className="gap-1.5 text-destructive hover:text-destructive" onClick={handleClear}>
         <Trash className="w-4 h-4" />
         Clear
@@ -169,6 +182,7 @@ export function TopBar() {
 
     </header>
     {directorOpen && <ScriptInputDialog onClose={() => setDirectorOpen(false)} />}
+    {sessionPickerOpen && <SessionPickerDialog onClose={() => setSessionPickerOpen(false)} />}
     </>
   )
 }

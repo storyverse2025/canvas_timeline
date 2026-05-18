@@ -117,6 +117,49 @@ interface ServerSnapshotResponse {
   savedAt: string | null
 }
 
+// ─── Session picker (multi-session list + load by id) ──────────────────
+
+export interface SessionListItem {
+  id: string
+  ip: string
+  savedAt: string
+  sizeBytes: number
+  previewTitle: string
+}
+
+/** Fetch every session the server has on disk, sorted newest-first. */
+export async function listAllSessions(): Promise<SessionListItem[]> {
+  const res = await fetch(`${SERVER_URL}/list`)
+  if (!res.ok) throw new Error(`list failed: HTTP ${res.status}`)
+  const data = (await res.json()) as { sessions?: SessionListItem[] }
+  return data.sessions ?? []
+}
+
+/**
+ * Force-load a specific session by id (the hashed-IP filename prefix).
+ * Overwrites the current IDB state for every tracked store the
+ * snapshot contains; reloads so Zustand picks up the new IDB contents.
+ *
+ * This is destructive — caller is responsible for prompting the user
+ * before invoking.
+ */
+export async function loadSessionById(id: string): Promise<{ restoredKeys: string[]; savedAt: string | null }> {
+  const res = await fetch(`${SERVER_URL}/by-id/${encodeURIComponent(id)}`)
+  if (!res.ok) throw new Error(`load failed: HTTP ${res.status}`)
+  const data = (await res.json()) as ServerSnapshotResponse
+  if (!data.snapshot) throw new Error('session has no snapshot data')
+  const db = await openIdb()
+  if (!db) throw new Error('IndexedDB unavailable')
+  const restored: string[] = []
+  for (const [key, value] of Object.entries(data.snapshot)) {
+    if (typeof value !== 'string') continue
+    if (!TRACKED_STORE_KEYS.includes(key as (typeof TRACKED_STORE_KEYS)[number])) continue
+    const ok = await idbPut(db, key, value)
+    if (ok) restored.push(key)
+  }
+  return { restoredKeys: restored, savedAt: data.savedAt }
+}
+
 /**
  * Per-store hydrate: for each tracked store whose IDB key is missing,
  * restore it from the server snapshot. Designed to run BEFORE Zustand

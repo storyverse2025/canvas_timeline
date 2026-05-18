@@ -11,25 +11,26 @@
  * to whatever the server has when IDB comes up empty.
  *
  * Endpoints
- *   GET  /local-session   → { snapshot: { [storeName]: stringifiedJson, ... } | null, savedAt: ISO | null }
- *   POST /local-session   → body { snapshot: { ... } }, returns { savedAt }
+ *   GET  /local-session              → current caller's snapshot
+ *                                       { snapshot|null, savedAt|null }
+ *   POST /local-session              → save caller's snapshot
+ *                                       (accepts gzip via Content-Encoding)
+ *                                       returns { savedAt, bytesIn, bytesUncompressed }
+ *   GET  /local-session/list         → all sessions on disk (for the picker UI)
+ *                                       [{ id, ip, savedAt, sizeBytes, previewTitle }, …]
+ *   GET  /local-session/by-id/<id>   → snapshot for a specific session id
+ *                                       (id = the hashed-IP filename prefix)
  *
  * Storage: public/sessions/<sha256(ip).slice(0,16)>.json
- *   IP-derived hash so we don't write the raw IP to disk. Hash is
- *   8 bytes / 16 hex chars — collisions are vanishingly unlikely for a
- *   handful of local devs, plenty of room for solo / small-team use.
- *
- * Caveats (called out in PR)
- *   - Multiple devices behind the same NAT (e.g. home router) share one
- *     session bucket. Last-writer-wins. For a single dev that's fine;
- *     production would want a cookie-based session token instead.
- *   - The snapshot is whatever the client POSTs. We don't try to merge
- *     across stores — too risky to interleave half-snapshots.
+ *   File content also embeds the raw IP + a derived preview title so
+ *   the picker UI can show which session is which without forcing the
+ *   user to read a 16-char hex blob. Acceptable for a local dev tool;
+ *   production deployments should swap to a cookie-based session token.
  */
 
 import type { Plugin } from 'vite'
 import type { IncomingMessage, ServerResponse } from 'http'
-import { mkdirSync, readFileSync, statSync, writeFileSync, existsSync } from 'fs'
+import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync, existsSync } from 'fs'
 import { join } from 'path'
 import { createHash } from 'crypto'
 
@@ -49,10 +50,12 @@ function clientIp(req: IncomingMessage): string {
   return req.socket.remoteAddress ?? '0.0.0.0'
 }
 
+function idForIp(ip: string): string {
+  return createHash('sha256').update(ip).digest('hex').slice(0, 16)
+}
+
 function sessionFilePath(req: IncomingMessage): string {
-  const ip = clientIp(req)
-  const id = createHash('sha256').update(ip).digest('hex').slice(0, 16)
-  return join(sessionsDir(), `${id}.json`)
+  return join(sessionsDir(), `${idForIp(clientIp(req))}.json`)
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -69,6 +72,75 @@ async function readBody(req: IncomingMessage): Promise<Buffer> {
 
 const MAX_SNAPSHOT_BYTES = 100 * 1024 * 1024 // 100 MB hard ceiling per session
 
+/** Best-effort title for the picker — peeks at project-db's script.text
+ *  or the first canvas item name. Pure string operations on the stored
+ *  snapshot, so we don't have to keep a separate index. */
+function derivePreviewTitle(snapshot: Record<string, string>): string {
+  try {
+    const proj = snapshot['project-db']
+    if (proj) {
+      const parsed = JSON.parse(proj) as { state?: { script?: { text?: string } } }
+      const text = parsed.state?.script?.text?.replace(/\s+/g, ' ').trim()
+      if (text) return text.slice(0, 60) + (text.length > 60 ? '…' : '')
+    }
+  } catch { /* fall through */ }
+  try {
+    const items = snapshot['canvas-item-store']
+    if (items) {
+      const parsed = JSON.parse(items) as { state?: { items?: Record<string, { name?: string }> } }
+      const first = Object.values(parsed.state?.items ?? {})[0]
+      if (first?.name) return first.name
+    }
+  } catch { /* fall through */ }
+  return '(Untitled session)'
+}
+
+interface SessionFileShape {
+  snapshot: Record<string, string>
+  savedAt: string
+  ip?: string
+  previewTitle?: string
+}
+
+interface SessionListItem {
+  id: string
+  ip: string
+  savedAt: string
+  sizeBytes: number
+  previewTitle: string
+}
+
+function readSessionFile(file: string): SessionFileShape | null {
+  try {
+    const raw = readFileSync(file, 'utf8')
+    return JSON.parse(raw) as SessionFileShape
+  } catch {
+    return null
+  }
+}
+
+function listAllSessions(): SessionListItem[] {
+  const dir = sessionsDir()
+  if (!existsSync(dir)) return []
+  const out: SessionListItem[] = []
+  for (const name of readdirSync(dir)) {
+    if (!name.endsWith('.json')) continue
+    const full = join(dir, name)
+    const stat = statSync(full)
+    const data = readSessionFile(full)
+    if (!data || !data.snapshot) continue
+    out.push({
+      id: name.replace(/\.json$/, ''),
+      ip: data.ip ?? '(unknown)',
+      savedAt: data.savedAt ?? stat.mtime.toISOString(),
+      sizeBytes: stat.size,
+      previewTitle: data.previewTitle ?? derivePreviewTitle(data.snapshot),
+    })
+  }
+  out.sort((a, b) => b.savedAt.localeCompare(a.savedAt))
+  return out
+}
+
 export function sessionSnapshotPlugin(): Plugin {
   return {
     name: 'session-snapshot',
@@ -78,6 +150,30 @@ export function sessionSnapshotPlugin(): Plugin {
       try { mkdirSync(sessionsDir(), { recursive: true }) } catch { /* best-effort */ }
 
       server.middlewares.use('/local-session', async (req, res) => {
+        // Sub-routes off /local-session — order matters: /list before /by-id
+        // before bare /local-session so prefixes don't shadow each other.
+        const url = req.url ?? '/'
+
+        if (req.method === 'GET' && (url === '/list' || url.startsWith('/list?'))) {
+          try {
+            sendJson(res, 200, { sessions: listAllSessions() })
+          } catch (e) {
+            sendJson(res, 500, { error: `list failed: ${(e as Error).message}` })
+          }
+          return
+        }
+
+        const byIdMatch = url.match(/^\/by-id\/([a-f0-9]{1,64})(?:\?.*)?$/i)
+        if (req.method === 'GET' && byIdMatch) {
+          const id = byIdMatch[1]
+          const file = join(sessionsDir(), `${id}.json`)
+          if (!existsSync(file)) { sendJson(res, 404, { error: 'session not found' }); return }
+          const data = readSessionFile(file)
+          if (!data) { sendJson(res, 500, { error: 'session unreadable' }); return }
+          sendJson(res, 200, { snapshot: data.snapshot, savedAt: data.savedAt })
+          return
+        }
+
         const file = sessionFilePath(req)
 
         if (req.method === 'GET') {
@@ -85,17 +181,9 @@ export function sessionSnapshotPlugin(): Plugin {
             sendJson(res, 200, { snapshot: null, savedAt: null })
             return
           }
-          try {
-            const raw = readFileSync(file, 'utf8')
-            const stat = statSync(file)
-            const parsed = JSON.parse(raw) as { snapshot: Record<string, string>; savedAt?: string }
-            sendJson(res, 200, {
-              snapshot: parsed.snapshot ?? null,
-              savedAt: parsed.savedAt ?? stat.mtime.toISOString(),
-            })
-          } catch (e) {
-            sendJson(res, 500, { error: `session read failed: ${(e as Error).message}` })
-          }
+          const data = readSessionFile(file)
+          if (!data) { sendJson(res, 500, { error: 'session unreadable' }); return }
+          sendJson(res, 200, { snapshot: data.snapshot, savedAt: data.savedAt })
           return
         }
 
@@ -122,9 +210,15 @@ export function sessionSnapshotPlugin(): Plugin {
               sendJson(res, 400, { error: 'body must be { snapshot: { storeName: jsonString, ... } }' })
               return
             }
-            const savedAt = new Date().toISOString()
-            writeFileSync(file, JSON.stringify({ snapshot: json.snapshot, savedAt }), 'utf8')
-            sendJson(res, 200, { savedAt, bytesIn: buf.length, bytesUncompressed: rawJson.length })
+            const ip = clientIp(req)
+            const out: SessionFileShape = {
+              snapshot: json.snapshot,
+              savedAt: new Date().toISOString(),
+              ip,
+              previewTitle: derivePreviewTitle(json.snapshot),
+            }
+            writeFileSync(file, JSON.stringify(out), 'utf8')
+            sendJson(res, 200, { savedAt: out.savedAt, bytesIn: buf.length, bytesUncompressed: rawJson.length })
           } catch (e) {
             sendJson(res, 500, { error: `session write failed: ${(e as Error).message}` })
           }
