@@ -5,6 +5,7 @@ import {
   getLocalSnapshotBytes,
   listAllSessions,
   loadSessionById,
+  setPushesPaused,
   type SessionListItem,
 } from '@/lib/session-backup'
 
@@ -93,6 +94,12 @@ export function SessionPickerDialog({ onClose }: Props) {
     }
 
     setLoadingId(s.id)
+    // Block auto-push during the load. Without this, the debounced
+    // push fires the OLD (smaller) local snapshot mid-load and gets
+    // 409'd by the shrink-overwrite guard — pure console noise that
+    // makes it look broken. Unpaused on success → reload, or on
+    // failure → re-enable.
+    setPushesPaused(true)
     try {
       const r = await loadSessionById(s.id)
       toast.success(`Restored ${r.restoredKeys.length} store(s) · reloading…`, {
@@ -104,6 +111,7 @@ export function SessionPickerDialog({ onClose }: Props) {
       setTimeout(() => window.location.reload(), 1500)
     } catch (e) {
       setLoadingId(null)
+      setPushesPaused(false)
       toast.error('Load failed', { description: String((e as Error).message).slice(0, 200) })
     }
   }
@@ -170,11 +178,16 @@ export function SessionPickerDialog({ onClose }: Props) {
                     <td className="px-3 py-2 text-right text-muted-foreground">{fmtSize(s.sizeBytes)}</td>
                     <td className="px-3 py-2 text-right">
                       <button
-                        className="px-2 py-1 text-[10px] rounded bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-40"
+                        className="px-2 py-1 text-[10px] rounded bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-40 inline-flex items-center gap-1 whitespace-nowrap"
                         disabled={loadingId !== null}
                         onClick={() => handleLoad(s)}
                       >
-                        {loadingId === s.id ? <Loader2 className="inline w-3 h-3 animate-spin" /> : '加载并刷新'}
+                        {loadingId === s.id ? (
+                          <>
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                            下载 {fmtSize(s.sizeBytes)}…
+                          </>
+                        ) : '加载并刷新'}
                       </button>
                     </td>
                   </tr>

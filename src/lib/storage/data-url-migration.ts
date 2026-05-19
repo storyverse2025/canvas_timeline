@@ -24,6 +24,7 @@
  */
 
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
+import { pushNow } from '@/lib/session-backup'
 
 interface UploadResponse { url?: string; error?: string }
 
@@ -87,6 +88,17 @@ export async function migrateInlineDataUrlsOnce(): Promise<{
     }
   }
   await Promise.all(Array.from({ length: PARALLEL }, () => worker()))
+
+  // If we actually migrated anything, the snapshot just shrank by
+  // potentially 10×. Force a push with `allowShrink: true` so the
+  // server's shrink-overwrite guard doesn't reject this legitimate
+  // reduction — otherwise every subsequent auto-push would 409 forever
+  // (server keeps the fat pre-migration copy; local IDB stays slim).
+  if (migrated > 0) {
+    try {
+      await pushNow({ allowShrink: true })
+    } catch { /* best-effort; next debounced push retries */ }
+  }
 
   return {
     scanned: Object.keys(items).length,
