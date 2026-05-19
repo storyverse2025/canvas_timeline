@@ -266,10 +266,27 @@ interface PushOpts {
   /** Tab is hiding / page is unloading — use keepalive: true so the
    *  browser buffers the request through the transition. */
   urgent?: boolean
+  /** Set on legitimate shrink scenarios (post-migration, post-load) so
+   *  the server's shrink-overwrite guard doesn't reject the push. */
+  allowShrink?: boolean
 }
 
 let pendingTimer: ReturnType<typeof setTimeout> | null = null
 let inFlight: Promise<void> | null = null
+
+// Pause the auto-push pipeline while a Load is in flight. The Load is
+// downloading the server snapshot AND will overwrite local IDB; any
+// auto-push during that window:
+//   - pushes the OLD local state (smaller, gets 409'd by shrink guard
+//     since the server still has the big snapshot we're about to load)
+//   - races the post-load IDB writes
+// Both outcomes are noise. The picker calls setPushesPaused(true) at
+// the start of a load and false on completion. The push code skips
+// silently while paused.
+let pushesPaused = false
+export function setPushesPaused(paused: boolean): void {
+  pushesPaused = paused
+}
 
 /**
  * gzip-compress a JSON string using the Compression Streams API
@@ -292,7 +309,8 @@ function fmtKB(bytes: number): string {
   return bytes < 1024 ? `${bytes}B` : `${(bytes / 1024).toFixed(1)}KB`
 }
 
-async function pushNow(opts: PushOpts = {}): Promise<void> {
+export async function pushNow(opts: PushOpts = {}): Promise<void> {
+  if (pushesPaused && !opts.allowShrink) return
   if (inFlight) return inFlight
   const job = (async () => {
     try {
@@ -335,6 +353,7 @@ async function pushNow(opts: PushOpts = {}): Promise<void> {
         'Content-Type': contentEncoding ? 'application/octet-stream' : 'application/json',
       }
       if (contentEncoding) headers['Content-Encoding'] = contentEncoding
+      if (opts.allowShrink) headers['x-allow-shrink'] = '1'
       await fetch(SERVER_URL, {
         method: 'POST',
         headers,
