@@ -245,33 +245,130 @@ async function tokenRouterChat(systemPrompt: string, userText: string, temperatu
 }
 
 // ─── TokenRouter image (covers gemini provider + tokenrouter provider) ─────
+//
+// Reference images for gpt-image-2 / openai/gpt-5.4-image-2 must go
+// through /v1/images/edits (multipart, `image[]` repeated) — the
+// /generations endpoint does NOT accept refs in OpenAI's API. The old
+// `body.image = refs` JSON shape returned 4xx and the refs were
+// silently dropped, which is why every canvas generate-with-reference
+// produced an output that didn't resemble the reference asset.
+/**
+ * Same-origin URL → local public/ path, else null. Browser converts
+ * `/uploads/x.png` → `http://35.168.148.47/uploads/x.png` before sending
+ * to /providers/generate; server-side fetch of its own URL hits nginx
+ * which returns 403 for server-to-server. Read from disk instead.
+ */
+function maybeLocalPathFor(url: string): string | null {
+  if (url.startsWith('/') && !url.startsWith('//')) return url
+  if (!/^https?:\/\//i.test(url)) return null
+  try {
+    const u = new URL(url)
+    if (u.pathname.startsWith('/uploads/') || u.pathname.startsWith('/voices/') || u.pathname.startsWith('/samples/')) {
+      return u.pathname
+    }
+  } catch { /* malformed url */ }
+  return null
+}
+
+async function fetchRefAsBlob(url: string, idx: number): Promise<Blob> {
+  let mime = 'image/png'
+  let buf: Buffer
+  if (url.startsWith('data:')) {
+    const m = url.match(/^data:([^;]+);base64,(.+)$/)
+    if (!m) throw new Error(`bad data url for ref ${idx + 1}`)
+    mime = m[1]!
+    buf = Buffer.from(m[2]!, 'base64')
+  } else {
+    const localPath = maybeLocalPathFor(url)
+    if (localPath) {
+      // Same-origin shortcut: read from public/ on disk, bypassing nginx.
+      const { readFileSync } = await import('fs')
+      const { join } = await import('path')
+      const decoded = decodeURIComponent(localPath.split('?')[0] ?? localPath)
+      buf = readFileSync(join(process.cwd(), 'public', decoded))
+      const lower = decoded.toLowerCase()
+      if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) mime = 'image/jpeg'
+      else if (lower.endsWith('.webp')) mime = 'image/webp'
+    } else {
+      const r = await fetch(url)
+      if (!r.ok) throw new Error(`fetch ref ${idx + 1} failed: HTTP ${r.status}`)
+      const ct = r.headers.get('content-type') || ''
+      const head = ct.split(';')[0]?.trim().toLowerCase() ?? ''
+      if (head === 'image/jpeg' || head === 'image/jpg') mime = 'image/jpeg'
+      else if (head === 'image/webp') mime = 'image/webp'
+      else if (head === 'image/png') mime = 'image/png'
+      buf = Buffer.from(await r.arrayBuffer())
+    }
+  }
+  return new Blob([buf], { type: mime })
+}
+
 async function runTokenRouterImage(req: Req, providerPrefix?: string): Promise<{ url: string; kind: 'image' }> {
   const key = process.env.TOKENROUTER_API_KEY
   if (!key) throw new Error('TOKENROUTER_API_KEY not set')
   // Accept either bare model id (e.g. "gpt-5.4-image-2") or full TokenRouter id ("openai/...", "google/...")
   const model = req.model.includes('/') ? req.model : `${providerPrefix ?? ''}${req.model}`
-  const body: Record<string, unknown> = {
-    model,
-    prompt: req.prompt,
-    n: req.numImages ?? 1,
-    size: TR_IMAGE_SIZE[req.aspect ?? '16:9'] ?? '1024x1024',
+  const size = TR_IMAGE_SIZE[req.aspect ?? '16:9'] ?? '1024x1024'
+  // Cap raised from 3 → 8 to cover char1+char2+scene+2 props+prior with
+  // headroom; tail refs beyond the cap are explicitly logged, not silent.
+  const REF_CAP = 8
+  const allRefs = (req.refImages ?? []).filter((u) => /^https?:\/\//i.test(u) || u.startsWith('data:'))
+  if (allRefs.length > REF_CAP) {
+    console.warn(`[providers] ref cap (${REF_CAP}) hit — dropping ${allRefs.length - REF_CAP} of ${allRefs.length} refs.`)
   }
-  const refs = (req.refImages ?? []).slice(0, 3).filter((u) => /^https?:\/\//i.test(u) || u.startsWith('data:'))
-  if (refs.length) body.image = refs
-  let res = await fetch(`${tokenRouterBaseUrl()}/images/generations`, {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  if (!res.ok && refs.length) {
-    delete body.image
+  const refs = allRefs.slice(0, REF_CAP)
+
+  // 0 refs → /images/generations (JSON).  N refs → /images/edits
+  // (multipart, `image` repeated). Verified A/B against TokenRouter:
+  // /generations silently ignores any JSON ref field (including
+  // `reference_images`); /edits is the only path that actually
+  // conditions output on the supplied images. Despite the endpoint
+  // name, this is MULTI-REF GENERATION (no editing happens — inputs
+  // are unchanged, output is a new image).
+  let res: Response
+  const endpointUsed = refs.length === 0 ? '/images/generations' : '/images/edits'
+  if (refs.length === 0) {
     res = await fetch(`${tokenRouterBaseUrl()}/images/generations`, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ model, prompt: req.prompt, n: req.numImages ?? 1, size }),
+    })
+  } else {
+    const form = new FormData()
+    form.append('model', model)
+    form.append('prompt', req.prompt)
+    form.append('n', String(req.numImages ?? 1))
+    form.append('size', size)
+    let attached = 0
+    const skipped: string[] = []
+    for (let i = 0; i < refs.length; i++) {
+      try {
+        const blob = await fetchRefAsBlob(refs[i]!, i)
+        const ext = blob.type.includes('jpeg') ? 'jpg' : blob.type.includes('webp') ? 'webp' : 'png'
+        form.append('image', blob, `ref-${i + 1}.${ext}`)
+        attached++
+      } catch (e) {
+        const msg = `ref ${i + 1} (${refs[i]?.slice(0, 60)}…): ${(e as Error).message}`
+        skipped.push(msg)
+        console.warn(`[providers] skipping ${msg}`)
+      }
+    }
+    if (attached === 0) {
+      throw new Error(
+        `图片生成失败：${refs.length} 张参考图全部无法读取，无法附加到 /images/edits 请求。详情：\n${skipped.join('\n')}`,
+      )
+    }
+    console.log(`[providers] TokenRouter /images/edits (multi-ref gen)  model=${model}  attached=${attached}/${refs.length}  size=${size}`)
+    res = await fetch(`${tokenRouterBaseUrl()}/images/edits`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${key}` },
+      body: form,
     })
   }
-  if (!res.ok) throw new Error(`TokenRouter image ${res.status}: ${await res.text()}`)
+  if (!res.ok) {
+    const err = (await res.text()).slice(0, 600)
+    throw new Error(`TokenRouter image ${res.status} (${endpointUsed}): ${err}`)
+  }
   const data = (await res.json()) as { data?: Array<{ url?: string; b64_json?: string }>; images?: Array<{ url?: string; b64_json?: string }> }
   const items = data.data || data.images || []
   const first = items[0]

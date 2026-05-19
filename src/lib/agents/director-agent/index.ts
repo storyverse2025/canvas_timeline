@@ -57,11 +57,15 @@ const TPL = {
 
 // ─── Keyframe model pin ────────────────────────────────────────────
 //
-// The planning conversation specified gpt-image-2 for 分镜导演图.
-// Centralised here so the keyframe verb has a single source of truth.
+// Routing pin: TokenRouter only (never direct OpenAI). TokenRouter is
+// the single image backend; its `openai/gpt-5.4-image-2` route is what
+// the planning conversation contract resolves to in production.
+// Centralised here so the keyframe verb has a single source of truth
+// and the capabilities plugin can pass `params.model` through to
+// TokenRouter unchanged.
 
-export const KEYFRAME_PROVIDER = 'openai'
-export const KEYFRAME_MODEL = 'gpt-image-2'
+export const KEYFRAME_PROVIDER = 'tokenrouter'
+export const KEYFRAME_MODEL = 'openai/gpt-5.4-image-2'
 
 // ─── JSON helpers ──────────────────────────────────────────────────
 
@@ -227,7 +231,9 @@ export async function* applyTimelineFixes(
 //   6. Quality: ULTRA-DETAILED, PROFESSIONAL FILM PRODUCTION LAYOUT, 4K
 //
 // Image references for character/scene/props are passed in stable order with
-// image1/image2/... labels so gpt-image-2 can hold character + scene consistency.
+// image1/image2/... labels. Scene is ALWAYS image1 (when present) so it
+// anchors the model's style/lighting/world look — characters and props
+// follow. See collectOrderedRefs() for the full contract.
 
 interface OrderedImageRef {
   role: string
@@ -239,8 +245,40 @@ function labelWithIndex(role: string, index: number, total: number): string {
   return total > 1 ? `${role} (${index + 1}/${total})` : role
 }
 
+/**
+ * Flatten the structured keyframe refs into a stable image-legend order.
+ *
+ * Order — Scene first, regardless of character count:
+ *
+ *     image1     = Scene        (always first when present;
+ *                                drives lighting, palette, and world look —
+ *                                most important style anchor for the model)
+ *     image2..N  = Characters   (character1, character2, … in array order)
+ *     imageN+1.. = Props        (prop1, prop2, … in array order)
+ *     last       = Prior ref    (legacy free-form, appended)
+ *
+ * This intentionally does NOT mirror the canvas vertical layout (which
+ * places characters above the scene). User requirement: the scene
+ * reference must always be image1 so the image model treats it as the
+ * primary style anchor — that single decision visibly fixes the
+ * "keyframe drifts to 2D / generic look" symptom.
+ *
+ * When `scene` is omitted, characters take image1+; numbering compresses
+ * naturally because we only iterate over what exists.
+ */
 function collectOrderedRefs(req: GenerateKeyframeRequest): OrderedImageRef[] {
   const out: OrderedImageRef[] = []
+
+  // Scene FIRST: may have multiple angles (wide + close-up).
+  const sceneUrls = (req.scene?.imageUrls ?? []).filter((u): u is string => Boolean(u))
+  const sceneRole = req.scene?.name ? `Scene — ${req.scene.name}` : 'Scene'
+  sceneUrls.forEach((url, i) => {
+    out.push({
+      role: labelWithIndex(sceneRole, i, sceneUrls.length),
+      description: req.scene?.description,
+      imageUrl: url,
+    })
+  })
 
   // Characters: each may have multiple reference images (e.g., three-view).
   for (const c of req.characters ?? []) {
@@ -253,17 +291,6 @@ function collectOrderedRefs(req: GenerateKeyframeRequest): OrderedImageRef[] {
       })
     })
   }
-
-  // Scene: may have multiple angles (wide + close-up).
-  const sceneUrls = (req.scene?.imageUrls ?? []).filter((u): u is string => Boolean(u))
-  const sceneRole = req.scene?.name ? `Scene — ${req.scene.name}` : 'Scene'
-  sceneUrls.forEach((url, i) => {
-    out.push({
-      role: labelWithIndex(sceneRole, i, sceneUrls.length),
-      description: req.scene?.description,
-      imageUrl: url,
-    })
-  })
 
   // Props: each may have multiple angles.
   for (const p of req.props ?? []) {
@@ -447,13 +474,15 @@ export async function* generateKeyframe(
     ],
     params: {
       // Pin the routing per the planning conversation contract. The
-      // capabilities plugin reads params.provider + params.model.
+      // capabilities plugin reads params.provider + params.model and
+      // forwards `model` straight to TokenRouter (the only image
+      // backend). `provider` is kept for symmetry / future routing.
       provider: KEYFRAME_PROVIDER,
       model: KEYFRAME_MODEL,
       aspect: req.aspect ?? '16:9',
-      // Request high-quality / 4K output. The capabilities plugin server-side
-      // maps these to whatever the provider's API actually supports
-      // (OpenAI gpt-image-2: quality='hd', size='1792x1024' for widescreen).
+      // Request high-quality / 4K output. TokenRouter forwards these as
+      // hints; the server-side maps `aspect` to the closest supported
+      // size (e.g. 1792x1024 for 16:9).
       quality: 'hd',
       resolution: '4k',
     },
