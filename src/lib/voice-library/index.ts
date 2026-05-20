@@ -74,9 +74,15 @@ export interface VoiceFilter {
 
 export function searchVoices(filter: VoiceFilter): VoiceEntry[] {
   const q = filter.query?.toLowerCase().trim()
+  // STRICT filter: when the caller passes a concrete gender/age, voices
+  // tagged as `unknown` are EXCLUDED — they used to slip through via an
+  // unknown-escape-hatch, polluting the LLM shortlist with off-archetype
+  // candidates (e.g. 傲娇大佬, female+unknown-age, surfacing for a
+  // middle-aged mentor). Relaxation to `unknown` candidates is the
+  // caller's job — shortlistForCard relaxes through tiers explicitly.
   return catalog.voices.filter((v) => {
-    if (filter.gender && filter.gender !== 'unknown' && v.gender !== filter.gender && v.gender !== 'unknown') return false
-    if (filter.age && filter.age !== 'unknown' && v.age !== filter.age && v.age !== 'unknown') return false
+    if (filter.gender && filter.gender !== 'unknown' && v.gender !== filter.gender) return false
+    if (filter.age && filter.age !== 'unknown' && v.age !== filter.age) return false
     if (filter.collection && !v.collection.startsWith(filter.collection)) return false
     if (q) {
       const hay = (v.displayName + ' ' + v.sampleSnippet + ' ' + v.tags.join(' ')).toLowerCase()
@@ -103,16 +109,23 @@ export function shortlistForCard(
   const gender = guessGenderFromCard(card)
   const age = guessAgeFromCard(card)
 
-  // Try strict filter first, then progressively relax.
+  // Prefer fewer-but-well-matched candidates. Previously we skipped to
+  // broader tiers whenever the strict tier had < limit (40), which
+  // erased the careful gender/age tagging entirely — a 40-year-old
+  // female mentor got every female voice in the pool, including youth
+  // archetypes like 傲娇大佬, and the LLM picked one. Now: the FIRST
+  // tier with at least MIN_TIER_RESULTS confidently-matched candidates
+  // is what we return, even if that's only a handful. Only relax
+  // further when the strict tier is too sparse to give the LLM choice.
+  const MIN_TIER_RESULTS = 4
   const tiers: VoiceFilter[] = [
-    { gender, age },
-    { gender },
-    {},
+    { gender, age },     // strict: same gender + same age bucket (no unknowns)
+    { gender },          // relax age (allows unknown-age voices back in)
+    {},                  // last resort: anything
   ]
   for (const tier of tiers) {
     const matches = searchVoices(tier)
-    if (matches.length >= limit) return matches.slice(0, limit)
-    if (matches.length > 0 && tier === tiers[tiers.length - 1]) return matches
+    if (matches.length >= MIN_TIER_RESULTS) return matches.slice(0, limit)
   }
   return catalog.voices.slice(0, limit)
 }

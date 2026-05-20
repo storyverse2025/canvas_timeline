@@ -11,7 +11,8 @@ import { useStoryboardStore } from '@/stores/storyboard-store'
 import { runCapability } from '@/lib/capabilities/client'
 import { VoiceFeedbackButton, type VoicePlan, type VoiceElementKind } from '@/components/canvas/VoiceFeedbackButton'
 import { PanoramaViewer } from '@/components/canvas/PanoramaViewer'
-import { normalizeVoiceUrl } from '@/lib/voice-library'
+import { VoicePickerDialog } from '@/components/canvas/VoicePickerDialog'
+import { findVoiceByUrl, normalizeVoiceUrl } from '@/lib/voice-library'
 
 export interface ImageNodeData {
   itemId: string;
@@ -106,6 +107,13 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
   }, [item, nodeId])
   const [promptOpen, setPromptOpen] = useState(false)
   const [regenerating, setRegenerating] = useState<{ intent: string } | null>(null)
+  const [voicePickerOpen, setVoicePickerOpen] = useState(false)
+
+  // Voice canvas items are named "{characterName} · 音色" — split off the
+  // suffix to recover the character key for voiceBindings.
+  const isVoiceItem = item?.role === 'voice'
+  const voiceCharacterName = isVoiceItem ? (item?.name ?? '').split(' · ')[0]?.trim() : ''
+  const currentVoiceId = isVoiceItem ? findVoiceByUrl(item?.content)?.id : undefined
   const fileRef = useRef<HTMLInputElement>(null)
 
   const onFile = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -271,6 +279,19 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
             <div className="flex items-center gap-1.5 text-amber-400/70 shrink-0">
               <Mic className="w-3.5 h-3.5" />
               <span className="text-[10px] uppercase tracking-wider">音色</span>
+              {isVoiceItem && voiceCharacterName && (
+                <button
+                  type="button"
+                  className="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 nodrag nopan"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setVoicePickerOpen(true)
+                  }}
+                  title="替换音色"
+                >
+                  替换音色
+                </button>
+              )}
             </div>
             <audio
               src={normalizeVoiceUrl(item.content)}
@@ -289,6 +310,14 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
               <div className="text-[10px] text-zinc-400 line-clamp-2" title={item.description}>
                 {item.description}
               </div>
+            )}
+            {voicePickerOpen && voiceCharacterName && (
+              <VoicePickerDialog
+                characterName={voiceCharacterName}
+                audioItemId={data.itemId}
+                currentVoiceId={currentVoiceId}
+                onClose={() => setVoicePickerOpen(false)}
+              />
             )}
           </div>
         ) : asset?.type === 'scene' || item.role === 'scene' ? (
