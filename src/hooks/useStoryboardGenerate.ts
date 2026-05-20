@@ -21,6 +21,7 @@ import type { BeatVideoContextRef } from '@/lib/agents/cinematographer-agent'
 import { runAgentWithChatBridge } from '@/lib/agents/chat-bridge'
 import { createMemoryContext } from '@/lib/agents/_shared/context/memory'
 import { createCapabilityLLM } from '@/lib/agents/_shared/llm/capability'
+import { getArtStyle } from '@/lib/canvas-elements'
 
 /**
  * Resolve a slot to the canvas node that should feed the keyframe.
@@ -278,11 +279,15 @@ export function useStoryboardGenerate() {
 
     // Pull project-level metadata from the project DB for the header bar.
     // The creativeBrief carries TYPE / TONE / GENRE that script-agent
-    // locked in during the dossier pass — feed them to gpt-image-2 so the
-    // keyframe is rendered with genre intent, not generic cinematic style.
+    // locked in during the dossier pass — feed them to the image model so
+    // the keyframe is rendered with genre intent, not generic cinematic
+    // style. visualStyle MUST be the resolved prose (via getArtStyle), not
+    // the stylePreset slug — feeding "3d_arcane_painterly_hybrid" verbatim
+    // to the image model is meaningless and lands every render in the
+    // model's default 2D infographic look.
     const db = useProjectDB.getState()
     const artDir = db.artDirection
-    const visualStyle = artDir.customStyle || artDir.stylePreset
+    const visualStyle = getArtStyle({ customStyle: artDir.customStyle, stylePreset: artDir.stylePreset })
     const brief = db.script.creativeBrief
 
     const req: GenerateKeyframeRequest = {
@@ -296,9 +301,15 @@ export function useStoryboardGenerate() {
       characters: characters.slice(0, 2),
       scene,
       props,
-      refs: row.reference_image && !resolved.some((r) => r.imageUrl === row.reference_image)
-        ? [{ role: '参考 / Prior reference', imageUrl: row.reference_image }]
-        : [],
+      // DO NOT pass row.reference_image as a ref. After the first batch
+      // run, reference_image holds the previously-generated keyframe
+      // (line ~363 writes it back). Feeding it back creates a feedback
+      // loop where the model copies last run's mistakes — characters
+      // drift further from their canvas-asset references each pass.
+      // The keyframe is OUTPUT, not INPUT. The asset images on the
+      // canvas (resolved above into characters/scene/props) are the
+      // only sources of identity.
+      refs: [],
       aspect: '16:9',
       stylizeFacesFor2D,
     }
@@ -412,7 +423,7 @@ export function useStoryboardGenerate() {
       pushCtx('场景', row.scene?.description)
 
       const db = useProjectDB.getState()
-      const visualStyle = db.artDirection.customStyle || db.artDirection.stylePreset
+      const visualStyle = getArtStyle({ customStyle: db.artDirection.customStyle, stylePreset: db.artDirection.stylePreset })
 
       // actor-agent post-processor: appends per-character voice file URLs
       // + dialogue lines so Seedance sees a 音色文件 reference for every

@@ -223,79 +223,199 @@ function tokenRouterImageSize(aspect: string): string {
 }
 
 /**
- * The exact field name TokenRouter accepts for input/reference images on
- * /images/generations isn't documented from where we sit, so on first
- * failure we try the next-most-likely OpenAI-compatible variants in order
- * before giving up. `image` is what we used to ship (silently failing);
- * `image_url` mirrors the FAL convention; `images` mirrors the responses
- * API pattern.
+ * Multi-reference IMAGE GENERATION (not editing) for gpt-image-2 via
+ * TokenRouter (`openai/gpt-5.4-image-2`).
+ *
+ * Routing (verified empirically against TokenRouter, 2026-05-19):
+ *   - 0 refs → POST /v1/images/generations  (JSON, text-to-image)
+ *   - N refs → POST /v1/images/edits        (multipart, `image` repeated)
+ *
+ * Why /edits for multi-ref GENERATION (not edit): OpenAI's gpt-image-2
+ * exposes its multi-reference generation through the `/images/edits`
+ * endpoint. When no mask is supplied, /edits treats the input images
+ * as references and synthesises a NEW image — it does NOT modify any
+ * of the inputs. The endpoint name is OpenAI legacy; the function for
+ * mask-less multi-image is "text-to-image conditioned on references."
+ *
+ * Other paths that DON'T work (tested):
+ *   - /generations + `reference_images: [url, …]` JSON
+ *     Returns 200 but the field is silently dropped — output is
+ *     identical to a no-refs call. Most routing providers and OpenAI
+ *     itself ignore this field, so we don't bother trying.
+ *   - /generations + image / image_url / images / input_images JSON
+ *     All 4xx; OpenAI's /generations endpoint takes no ref input.
+ *
+ * REF_CAP = 8 covers char1 + char2 + scene + 2 props + prior + headroom
+ * for three-view characters. OpenAI's per-image limit is ~4MB; the
+ * client-side already pre-uploads data URLs > 256KB so refs are usually
+ * compact hosted URLs.
  */
-const TOKENROUTER_IMAGE_REF_FIELDS = ['image', 'image_url', 'images', 'input_images'] as const
+const REF_CAP = 8
 
-async function postTokenRouterImageRequest(
-  baseUrl: string,
-  key: string,
-  body: Record<string, unknown>,
-): Promise<Response> {
-  return fetch(`${baseUrl}/images/generations`, {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
+/**
+ * Read any ref URL form (data:, /uploads/path, http(s)://) into a raw
+ * Buffer + best-guess mime. Deliberately permissive: an unrecognised
+ * content-type defaults to image/png rather than throwing — otherwise
+ * a single header mismatch (e.g. `image/png; charset=utf-8`) would
+ * drop the ref silently, the FormData would carry zero `image` parts,
+ * and TokenRouter would 500 with "image is required". That bug was
+ * exactly what produced repeated 500s after the multipart fix landed.
+ */
+/**
+ * Try to resolve any URL to a local public/ filesystem path, returning
+ * null when it doesn't look local. Used to short-circuit refs whose
+ * URLs point back at our own server — e.g. browser converts
+ * `/uploads/x.png` to `http://35.168.148.47/uploads/x.png` before
+ * sending to /capabilities/run, and our server then fails to fetch
+ * its own URL because nginx 403s server-to-server requests on
+ * /uploads/. fs read is faster anyway and bypasses every reverse-proxy
+ * auth/CORS/rate-limit pitfall.
+ */
+function maybeLocalPathFor(url: string): string | null {
+  if (url.startsWith('/') && !url.startsWith('//')) return url
+  if (!/^https?:\/\//i.test(url)) return null
+  try {
+    const u = new URL(url)
+    if (u.pathname.startsWith('/uploads/') || u.pathname.startsWith('/voices/') || u.pathname.startsWith('/samples/')) {
+      return u.pathname
+    }
+  } catch { /* malformed url */ }
+  return null
 }
 
-async function runTokenRouterImage(prompt: string, aspect: string, numImages: number, refImages: string[] = []): Promise<string[]> {
+function mimeForExt(path: string): string {
+  const lower = path.toLowerCase()
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg'
+  if (lower.endsWith('.webp')) return 'image/webp'
+  return 'image/png'
+}
+
+async function readLocalRefBuffer(localPath: string): Promise<{ buf: Buffer; mime: string }> {
+  const { readFileSync } = await import('fs')
+  const { join } = await import('path')
+  const decoded = decodeURIComponent(localPath.split('?')[0] ?? localPath)
+  const buf = readFileSync(join(process.cwd(), 'public', decoded))
+  return { buf, mime: mimeForExt(decoded) }
+}
+
+async function loadRefAsBlob(url: string): Promise<{ blob: Blob; ext: string }> {
+  let mime = 'image/png'
+  let buf: Buffer
+
+  if (url.startsWith('data:')) {
+    const m = url.match(/^data:([^;]+);base64,(.+)$/)
+    if (!m) throw new Error(`bad data: URL`)
+    mime = m[1] ?? 'image/png'
+    buf = Buffer.from(m[2] ?? '', 'base64')
+  } else {
+    // Same-origin shortcut: any URL ending up at public/uploads, public/voices
+    // or public/samples reads straight from disk — even if it carries a
+    // fully-qualified http(s):// prefix that would otherwise tempt us into
+    // a self-fetch through nginx (which 403s by design).
+    const localPath = maybeLocalPathFor(url)
+    if (localPath) {
+      const r = await readLocalRefBuffer(localPath)
+      buf = r.buf
+      mime = r.mime
+    } else {
+      const r = await fetch(url)
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      buf = Buffer.from(await r.arrayBuffer())
+      // Take ONLY the media-type token; ignore `; charset=...` parameters.
+      const ct = r.headers.get('content-type') || ''
+      const head = ct.split(';')[0]?.trim().toLowerCase() ?? ''
+      if (head === 'image/jpeg' || head === 'image/jpg') mime = 'image/jpeg'
+      else if (head === 'image/webp') mime = 'image/webp'
+      else if (head === 'image/png') mime = 'image/png'
+      // anything else → keep default png; OpenAI sniffs the bytes anyway.
+    }
+  }
+
+  const ext = mime === 'image/jpeg' ? 'jpg' : mime === 'image/webp' ? 'webp' : 'png'
+  return { blob: new Blob([buf], { type: mime }), ext }
+}
+
+async function attachMultipartImage(form: FormData, url: string, idx: number): Promise<void> {
+  const { blob, ext } = await loadRefAsBlob(url)
+  // Repeated `image` parts (not `image[]`) — TokenRouter rejects the
+  // bracketed name with "image is required".
+  form.append('image', blob, `ref-${idx + 1}.${ext}`)
+}
+
+async function runTokenRouterImage(
+  prompt: string,
+  aspect: string,
+  numImages: number,
+  refImages: string[] = [],
+  model?: string,
+): Promise<string[]> {
   const key = process.env.TOKENROUTER_API_KEY
   if (!key) throw new Error('TOKENROUTER_API_KEY 未配置 — 无法生成图片')
 
-  const baseBody: Record<string, unknown> = {
-    model: process.env.TOKENROUTER_IMAGE_MODEL || TOKENROUTER_IMAGE_MODEL,
-    prompt,
-    n: numImages,
-    size: tokenRouterImageSize(aspect),
-  }
-
-  const refs = refImages.slice(0, 3).filter((url) => /^https?:\/\//i.test(url) || url.startsWith('data:'))
+  const resolvedModel =
+    model || process.env.TOKENROUTER_IMAGE_MODEL || TOKENROUTER_IMAGE_MODEL
+  const size = tokenRouterImageSize(aspect)
   const baseUrl = (process.env.TOKENROUTER_BASE_URL || TOKENROUTER_BASE_URL).replace(/\/$/, '')
 
+  const validRefs = refImages.filter((url) => /^https?:\/\//i.test(url) || url.startsWith('data:') || url.startsWith('/'))
+  if (validRefs.length > REF_CAP) {
+    console.warn(
+      `[image] ref cap (${REF_CAP}) hit — dropping ${validRefs.length - REF_CAP} of ${validRefs.length} refs.`,
+    )
+  }
+  const refs = validRefs.slice(0, REF_CAP)
+
   let res!: Response
-  const attemptedFields: string[] = []
+  const endpointUsed = refs.length === 0 ? '/images/generations' : '/images/edits'
 
   if (refs.length === 0) {
-    res = await postTokenRouterImageRequest(baseUrl, key, baseBody)
+    // No refs → pure text-to-image via /images/generations (JSON body).
+    res = await fetch(`${baseUrl}/images/generations`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: resolvedModel, prompt, n: numImages, size }),
+    })
   } else {
-    // Cycle through the known-likely field names. Stop on the first 2xx.
-    let lastErrorBody = ''
-    let success = false
-    for (const fieldName of TOKENROUTER_IMAGE_REF_FIELDS) {
-      attemptedFields.push(fieldName)
-      const body = { ...baseBody, [fieldName]: refs }
-      res = await postTokenRouterImageRequest(baseUrl, key, body)
-      if (res.ok) { success = true; break }
-      lastErrorBody = (await res.clone().text()).slice(0, 400)
-      console.warn(
-        `[image] TokenRouter rejected refs via field "${fieldName}" (HTTP ${res.status}): ${lastErrorBody}`,
-      )
-    }
-
-    if (!success) {
-      // All ref-carrying variants failed. Before giving up, try text-only —
-      // but make it VISIBLE in the response that refs were dropped, so the
-      // user (and downstream tools) can act. The previous version did this
-      // silently, which is what masked the regression for weeks.
-      console.warn(
-        `[image] TokenRouter accepted none of [${attemptedFields.join(', ')}] as the ref-image field — ` +
-          `falling back to text-only generation. Set ENABLE_FAL_IMAGE_FALLBACK=1 to route ref-image requests ` +
-          `to FAL flux-pro (single image_url) when this happens. Last error: ${lastErrorBody}`,
-      )
-      if (process.env.ENABLE_FAL_IMAGE_FALLBACK === '1') {
-        return runFalFluxImage(prompt, aspect, numImages, refs[0])
+    // Refs → /images/edits multipart (multi-ref GENERATION, not
+    // editing — verified A/B against TokenRouter; see doc block above).
+    const form = new FormData()
+    form.append('model', resolvedModel)
+    form.append('prompt', prompt)
+    form.append('n', String(numImages))
+    form.append('size', size)
+    let attached = 0
+    const skipped: string[] = []
+    for (let i = 0; i < refs.length; i++) {
+      try {
+        await attachMultipartImage(form, refs[i]!, i)
+        attached++
+      } catch (e) {
+        const msg = `ref ${i + 1} (${refs[i]?.slice(0, 60)}…): ${(e as Error).message}`
+        skipped.push(msg)
+        console.warn(`[image] skipping ${msg}`)
       }
-      res = await postTokenRouterImageRequest(baseUrl, key, baseBody)
     }
+    if (attached === 0) {
+      // Every ref failed to attach. Without this guard we'd ship an
+      // empty multipart and TokenRouter returns the cryptic
+      // `image is required` 500. Surface the actual loadRefAsBlob
+      // errors so the caller can fix the underlying URL problem.
+      throw new Error(
+        `图片生成失败：${refs.length} 张参考图全部无法读取，无法附加到 /images/edits 请求。详情：\n${skipped.join('\n')}`,
+      )
+    }
+    console.log(`[image] TokenRouter /images/edits (multi-ref gen)  model=${resolvedModel}  attached=${attached}/${refs.length}  size=${size}`)
+    res = await fetch(`${baseUrl}/images/edits`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${key}` },
+      body: form,
+    })
   }
 
-  if (!res.ok) throw new Error(`TokenRouter image ${res.status}: ${await res.text()}`)
+  if (!res.ok) {
+    const errBody = (await res.text()).slice(0, 600)
+    throw new Error(`TokenRouter image ${res.status} (${endpointUsed}): ${errBody}`)
+  }
 
   const data = (await res.json()) as { data?: Array<{ url?: string; b64_json?: string }>; images?: Array<{ url?: string; b64_json?: string }> }
   const images = data.data || data.images || []
@@ -329,11 +449,17 @@ async function runFalFluxImage(prompt: string, aspect: string, numImages: number
   return urls
 }
 
-async function runFluxImage(prompt: string, aspect: string, numImages: number, refImages: string[] = []): Promise<string[]> {
+async function runFluxImage(
+  prompt: string,
+  aspect: string,
+  numImages: number,
+  refImages: string[] = [],
+  model?: string,
+): Promise<string[]> {
   // TokenRouter is the only image backend — FAL is no longer used here.
   // Opt back in to FAL with ENABLE_FAL_IMAGE_FALLBACK=1 (off by default).
   try {
-    const urls = await runTokenRouterImage(prompt, aspect, numImages, refImages)
+    const urls = await runTokenRouterImage(prompt, aspect, numImages, refImages, model)
     if (urls.length) return urls
     throw new Error('TokenRouter 返回空结果')
   } catch (error) {
@@ -345,11 +471,22 @@ async function runFluxImage(prompt: string, aspect: string, numImages: number, r
   }
 }
 
+/**
+ * Read an optional TokenRouter model id from caller params. Director-
+ * agent pins this (currently `openai/gpt-5.4-image-2`); other call
+ * sites can omit it and accept the env default. Any non-tokenrouter
+ * provider hint is ignored — TokenRouter is the only image backend.
+ */
+function modelFromParams(params: Record<string, unknown> | undefined): string | undefined {
+  const m = params?.model
+  return typeof m === 'string' && m.length > 0 ? m : undefined
+}
+
 async function textToImage(req: CapReq): Promise<CapRes> {
   const text = getText(req.inputs)
   const refs = getImages(req.inputs)
   const aspect = (req.params?.aspect as string) || '16:9'
-  const urls = await runFluxImage(text || 'a beautiful scene', aspect, 1, refs)
+  const urls = await runFluxImage(text || 'a beautiful scene', aspect, 1, refs, modelFromParams(req.params))
   return { outputs: urls.map((url) => ({ kind: 'image' as const, url })) }
 }
 
@@ -357,7 +494,7 @@ async function batchImage(req: CapReq): Promise<CapRes> {
   const text = getText(req.inputs)
   const refs = getImages(req.inputs)
   const aspect = (req.params?.aspect as string) || '16:9'
-  const urls = await runFluxImage(text || 'a beautiful scene', aspect, 4, refs)
+  const urls = await runFluxImage(text || 'a beautiful scene', aspect, 4, refs, modelFromParams(req.params))
   return { outputs: urls.map((url) => ({ kind: 'image' as const, url })) }
 }
 

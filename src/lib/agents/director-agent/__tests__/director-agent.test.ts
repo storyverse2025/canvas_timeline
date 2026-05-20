@@ -43,9 +43,9 @@ describe('director-agent: meta', () => {
     expect(directorAgent.meta.name).toBe('director-agent')
   })
 
-  it('pins keyframe to openai/gpt-image-2 (planning conversation contract)', () => {
-    expect(KEYFRAME_PROVIDER).toBe('openai')
-    expect(KEYFRAME_MODEL).toBe('gpt-image-2')
+  it('pins keyframe to TokenRouter (the only image backend; never direct OpenAI)', () => {
+    expect(KEYFRAME_PROVIDER).toBe('tokenrouter')
+    expect(KEYFRAME_MODEL).toBe('openai/gpt-5.4-image-2')
   })
 })
 
@@ -242,21 +242,68 @@ describe('generateKeyframe (Hollywood 6-module visual development board)', () =>
     expect(prompt).toContain('**TONE**: 悬疑救赎')
     expect(prompt).toContain('**GENRE**: 短剧单集 · 悬疑救赎')
     expect(prompt).toContain('Cold-toned filmic noir')
-    // Character column.
-    expect(prompt).toContain('Character 1: Alice — short hair, grey trench (see image1 for canonical look)')
-    expect(prompt).toContain('Character 2: Bob — rain jacket (see image2 for canonical look)')
+    // Character column. With scene-first ordering, scene is image1 so
+    // characters shift to image2/image3.
+    expect(prompt).toContain('Character 1: Alice — short hair, grey trench (see image2 for canonical look)')
+    expect(prompt).toContain('Character 2: Bob — rain jacket (see image3 for canonical look)')
     expect(prompt).toContain('100% consistent character design across views')
     // Scene block.
     expect(prompt).toContain('Rooftop — wet concrete + neon')
     // Storyboard sequence pulls in row.storyboard_prompts.
     expect(prompt).toContain('multi-panel director sheet of rooftop chase')
-    // Image legend in stable order.
-    expect(prompt).toContain('image1 = Character — Alice')
-    expect(prompt).toContain('image2 = Character — Bob')
-    expect(prompt).toContain('image3 = Scene — Rooftop')
+    // Image legend in stable order — Scene FIRST as primary style anchor.
+    expect(prompt).toContain('image1 = Scene — Rooftop')
+    expect(prompt).toContain('image2 = Character — Alice')
+    expect(prompt).toContain('image3 = Character — Bob')
     expect(prompt).toContain('image4 = Prop — Pocketwatch')
     // SEEDANCE compatibility note.
     expect(prompt).toContain('SEEDANCE 2.0 video generation pipeline')
+  })
+
+  it('legend image numbers put Scene FIRST (image1), regardless of character count', () => {
+    // User contract: scene is always image1 when present, because
+    // background/lighting/world is the strongest style anchor for the
+    // image model. Characters and props follow. See
+    // collectOrderedRefs() in director-agent/index.ts for rationale.
+    const prompt = buildKeyframePrompt({
+      row: { storyboard_prompts: 'p' },
+      shotDurationSeconds: 5,
+      characters: [
+        { name: 'C1', imageUrls: ['https://c1.png'] },
+        { name: 'C2', imageUrls: ['https://c2.png'] },
+      ],
+      scene: { name: 'SC', imageUrls: ['https://sc.png'] },
+      props: [
+        { name: 'P1', imageUrls: ['https://p1.png'] },
+        { name: 'P2', imageUrls: ['https://p2.png'] },
+      ],
+      refs: [{ role: '参考 / Prior reference', imageUrl: 'https://prior.png' }],
+    })
+
+    // Pull all legend lines in document order and assert exact sequence.
+    const legend = prompt.split('\n').filter((l) => /^- image\d+ =/.test(l))
+    expect(legend).toEqual([
+      '- image1 = Scene — SC',
+      '- image2 = Character — C1',
+      '- image3 = Character — C2',
+      '- image4 = Prop — P1',
+      '- image5 = Prop — P2',
+      '- image6 = 参考 / Prior reference',
+    ])
+  })
+
+  it('when scene is omitted, characters take image1+ (numbering compresses naturally)', () => {
+    const prompt = buildKeyframePrompt({
+      row: { storyboard_prompts: 'p' },
+      shotDurationSeconds: 5,
+      characters: [{ name: 'Solo', imageUrls: ['https://solo.png'] }],
+      props: [{ name: 'P1', imageUrls: ['https://p1.png'] }],
+    })
+    const legend = prompt.split('\n').filter((l) => /^- image\d+ =/.test(l))
+    expect(legend).toEqual([
+      '- image1 = Character — Solo',
+      '- image2 = Prop — P1',
+    ])
   })
 
   it('drops the character module entirely when no character refs are supplied (landscape / object shot)', () => {
@@ -338,7 +385,7 @@ describe('generateKeyframe (Hollywood 6-module visual development board)', () =>
     ).rejects.toThrow(/storyboard_prompts or visual_description/)
   })
 
-  it('routes the capability call to openai/gpt-image-2 with 4K + HD quality at 16:9 by default', async () => {
+  it('routes the capability call to TokenRouter (openai/gpt-5.4-image-2) with 4K + HD quality at 16:9 by default', async () => {
     mockedRunCapability.mockResolvedValue({ outputs: [{ kind: 'image', url: 'https://kf.png' }] })
     const ctx = createMemoryContext({ llm: { complete: async () => '' } })
     const result = await driveAuto(
@@ -354,13 +401,14 @@ describe('generateKeyframe (Hollywood 6-module visual development board)', () =>
     )
     expect(result.url).toBe('https://kf.png')
     expect(result.imageRefs.map((r) => r.role)).toEqual([
-      'Character — Alice',
+      // Scene FIRST as primary style anchor; characters follow.
       'Scene — Rooftop',
+      'Character — Alice',
     ])
     const call = mockedRunCapability.mock.calls[0]![0]
     expect(call.capability).toBe('text-to-image')
-    expect(call.params?.provider).toBe('openai')
-    expect(call.params?.model).toBe('gpt-image-2')
+    expect(call.params?.provider).toBe('tokenrouter')
+    expect(call.params?.model).toBe('openai/gpt-5.4-image-2')
     expect(call.params?.aspect).toBe('16:9')
     expect(call.params?.quality).toBe('hd')
     expect(call.params?.resolution).toBe('4k')
@@ -430,14 +478,15 @@ describe('generateKeyframe (Hollywood 6-module visual development board)', () =>
     expect(result.imageRefs).toHaveLength(5)
     expect(mockedRunCapability.mock.calls[0]![0].inputs.length).toBe(6)
     // Legend numbers each image individually with (n/total) suffixes.
+    // Scene FIRST, then the 3 character views.
     const prompt = mockedRunCapability.mock.calls[0]![0].inputs[0]!.text!
-    expect(prompt).toContain('image1 = Character — Alice (1/3)')
-    expect(prompt).toContain('image2 = Character — Alice (2/3)')
-    expect(prompt).toContain('image3 = Character — Alice (3/3)')
-    expect(prompt).toContain('image4 = Scene — Rooftop (1/2)')
-    expect(prompt).toContain('image5 = Scene — Rooftop (2/2)')
+    expect(prompt).toContain('image1 = Scene — Rooftop (1/2)')
+    expect(prompt).toContain('image2 = Scene — Rooftop (2/2)')
+    expect(prompt).toContain('image3 = Character — Alice (1/3)')
+    expect(prompt).toContain('image4 = Character — Alice (2/3)')
+    expect(prompt).toContain('image5 = Character — Alice (3/3)')
     // The character column hint references all 3 indices.
-    expect(prompt).toContain('see images 1, 2, 3 for canonical look — multiple views supplied')
+    expect(prompt).toContain('see images 3, 4, 5 for canonical look — multiple views supplied')
   })
 })
 
