@@ -170,20 +170,26 @@ export function spawnCharacterBioCanvasNodes(): void {
     if (existingTextNode) {
       textNodeId = existingTextNode.id
     } else {
-      // Stack the bio text nodes to the right of the character images.
+      // Place the bio text nodes to the LEFT of the character images so the
+      // text is upstream (NodeEditPanel.regenerate's gatherUpstream then
+      // pulls the bio content into the regen prompt). LR auto-layout
+      // keeps the arrow pointing right (text → image).
+      // Character images spawn at x=50 width=200; bio width 320 + 40 gap →
+      // bio.x = 50 - 320 - 40 = -310.
       textNodeId = useCanvasStore.getState().addItemNode(
         textItemId,
         'text',
-        { x: 280, y: 50 + stagger * 240 },
+        { x: -310, y: 50 + stagger * 240 },
         { width: 320, height: 220 },
       )
       stagger++
     }
 
-    // Wire character image → bio text, when both are on the canvas.
-    // Character image canvas items live in useCanvasItemStore (NOT in
-    // projectDB.elements — that's a different store the legacy asset
-    // pipeline used). Lookup by item.role === 'character' + name.
+    // Wire bio text → character image so the bio is UPSTREAM of the
+    // image. The image's NodeEditPanel.regenerate now pulls the bio's
+    // text via gatherUpstream so the latest bio content always feeds the
+    // next regeneration. Character image canvas items live in
+    // useCanvasItemStore — lookup by role + name.
     const items = useCanvasItemStore.getState().items
     const characterItem = Object.values(items).find(
       (it) =>
@@ -197,11 +203,21 @@ export function spawnCharacterBioCanvasNodes(): void {
         return data.itemId === characterItem.id
       })
       if (charNode) {
+        // Migrate any pre-existing reverse edge (image → text) — older
+        // sessions wired it the wrong way before this fix.
+        const reverseEdgeId = useCanvasStore
+          .getState()
+          .edges.find((e) => e.source === charNode.id && e.target === textNodeId)?.id
+        if (reverseEdgeId) {
+          useCanvasStore.getState().setEdges(
+            useCanvasStore.getState().edges.filter((e) => e.id !== reverseEdgeId),
+          )
+        }
         const existingEdge = useCanvasStore
           .getState()
-          .edges.find((e) => e.source === charNode.id && e.target === textNodeId)
+          .edges.find((e) => e.source === textNodeId && e.target === charNode.id)
         if (!existingEdge) {
-          useCanvasStore.getState().addEdge(charNode.id, textNodeId)
+          useCanvasStore.getState().addEdge(textNodeId, charNode.id)
         }
       }
     }

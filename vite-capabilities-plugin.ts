@@ -1076,12 +1076,27 @@ async function textToVideo(req: CapReq): Promise<CapRes> {
   const type = detectVideoType({ images, videos, audios, mode })
   const contentParts = buildContentParts(text, { images, videos, audios, mode }, type)
 
+  const model = (req.params?.model as string) || 'doubao-seedance-2-0-260128'
+  const resolution = (req.params?.resolution as string) || '480p'
+  const aspect = (req.params?.aspect as string) || '16:9'
+  const duration = Number(req.params?.duration ?? 5)
+  // eslint-disable-next-line no-console
+  console.log('[voice-debug][text-to-video] dispatch', {
+    detectedType: type,
+    counts: { images: images.length, videos: videos.length, audios: audios.length },
+    model, resolution, aspect, duration,
+    audiosBytes: audios.map((u) => audioRefSummary(u)),
+    promptHead: text.slice(0, 300),
+    promptLength: text.length,
+    promptHasVoiceBlock: /音色\d+/.test(text),
+  })
+
   const url = await submitSeedanceTask({
     contentParts,
-    model: (req.params?.model as string) || 'doubao-seedance-2-0-260128',
-    resolution: (req.params?.resolution as string) || '480p',
-    aspect: (req.params?.aspect as string) || '16:9',
-    duration: Number(req.params?.duration ?? 5),
+    model,
+    resolution,
+    aspect,
+    duration,
     generateAudio: req.params?.generate_audio !== false,
     seed: req.params?.seed != null ? Number(req.params.seed) : undefined,
     invitedImageAssetIds: Array.isArray(req.params?.invitedImageAssetIds)
@@ -1089,6 +1104,15 @@ async function textToVideo(req: CapReq): Promise<CapRes> {
       : undefined,
   })
   return { outputs: [{ kind: 'video', url }] }
+}
+
+function audioRefSummary(u: string): string {
+  if (u.startsWith('data:')) {
+    const head = u.slice(0, 30)
+    const bytes = Math.round((u.length - head.length) * 0.75)  // base64 → bytes
+    return `${head}… (${(bytes / 1024).toFixed(1)}KB inline)`
+  }
+  return u.length > 120 ? `${u.slice(0, 117)}…` : u
 }
 
 async function universalToVideo(req: CapReq): Promise<CapRes> {

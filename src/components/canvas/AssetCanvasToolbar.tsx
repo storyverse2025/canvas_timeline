@@ -102,7 +102,15 @@ export function AssetCanvasToolbar() {
   const relayout = () => {
     const setNodes = useCanvasStore.getState().setNodes
     const current = useCanvasStore.getState().nodes
-    const fixed = resolveOverlaps(current as never, { padding: 40, iterations: 120 })
+    const edges = useCanvasStore.getState().edges
+    const fixed = resolveOverlaps(current as never, {
+      padding: 40,
+      iterations: 120,
+      // LR edge constraint: every arrow points rightward — target node
+      // ends up to the right of its source node, no matter where the user
+      // dragged them.
+      edges: edges.map((e) => ({ source: e.source, target: e.target })),
+    })
     setNodes(fixed as typeof current)
   }
 

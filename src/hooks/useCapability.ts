@@ -66,6 +66,12 @@ export function useCapability() {
       const srcW = (srcNode?.style?.width as number) ?? srcNode?.width ?? 280
       const nodeGap = 20
 
+      // If we're regenerating from an existing beat-video item, inherit the
+      // role + BV-<shot> naming so the new sibling can be ⭐-promoted from
+      // the canvas (same UX as the keyframe pattern).
+      const srcItem = args.itemId ? useCanvasItemStore.getState().items[args.itemId] : undefined
+      const inheritBeatVideoRole = srcItem?.role === 'beat-video'
+
       for (let i = 0; i < result.outputs.length; i++) {
         const output = result.outputs[i]
         if (output.kind === 'text') {
@@ -81,16 +87,19 @@ export function useCapability() {
           )
           useCanvasStore.getState().addEdge(args.nodeId, newNodeId)
         } else {
+          const isVideoOutput = output.kind === 'video'
           const newItemId = useCanvasItemStore.getState().addItem({
-            kind: 'image',
-            name: result.outputs.length > 1 ? `${cap.label} ${i + 1}` : cap.label,
+            kind: isVideoOutput ? 'video' : 'image',
+            ...(isVideoOutput && inheritBeatVideoRole
+              ? { role: 'beat-video', name: srcItem!.name }   // preserve "BV-S1"
+              : { name: result.outputs.length > 1 ? `${cap.label} ${i + 1}` : cap.label }),
             content: output.url ?? '',
           })
-          const size = output.kind === 'video'
+          const size = isVideoOutput
             ? { width: 360, height: 200 }
             : { width: 280, height: 200 }
           const newNodeId = useCanvasStore.getState().addItemNode(
-            newItemId, 'image',
+            newItemId, isVideoOutput ? 'video' : 'image',
             { x: pos.x + srcW + 60 + i * (280 + nodeGap), y: pos.y },
             size,
           )

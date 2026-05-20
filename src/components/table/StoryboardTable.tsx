@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { Image as ImageIcon, Video, Wand2, Play, Volume2, FolderInput } from 'lucide-react'
+import { Image as ImageIcon, Video, Wand2, Play, FolderInput } from 'lucide-react'
 import { CanvasNodePickerDialog, type PickedNode } from './CanvasNodePickerDialog'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -22,7 +22,7 @@ interface Col {
   key: string
   label: string
   width: string
-  type?: 'text' | 'number' | 'multiline' | 'media-image' | 'media-video' | 'media-audio' | 'element' | 'select'
+  type?: 'text' | 'number' | 'multiline' | 'media-image' | 'media-video' | 'element' | 'select'
 }
 
 const COLUMNS: Col[] = [
@@ -47,12 +47,10 @@ const COLUMNS: Col[] = [
   { key: 'performance_guidance', label: '表演指导',     width: 'w-48',  type: 'multiline' },
   { key: 'lighting_atmosphere', label: '光影氛围',      width: 'w-36',  type: 'multiline' },
   { key: 'dialogue',            label: '对白文本',      width: 'w-56',  type: 'multiline' },
-  { key: 'dialogue_audio',      label: '对白音频',      width: 'w-28',  type: 'media-audio' },
   { key: 'sound_effects',       label: '音效',          width: 'w-32',  type: 'text' },
   { key: 'storyboard_prompts',  label: '分镜提示词',    width: 'w-56',  type: 'multiline' },
   { key: 'motion_prompts',      label: '视频运动提示词', width: 'w-56',  type: 'multiline' },
   { key: 'bgm',                 label: 'BGM',           width: 'w-28',  type: 'text' },
-  { key: 'bgm_audio',           label: 'BGM 音频',      width: 'w-28',  type: 'media-audio' },
   { key: 'beat_video',          label: 'Beat Video',    width: 'w-28',  type: 'media-video' },
 ]
 
@@ -127,34 +125,6 @@ function MediaCell({ url, onPick, onGenerate, busy, kind }: {
       <CanvasNodePickerDialog
         open={pickerOpen}
         kind={kind}
-        onClose={() => setPickerOpen(false)}
-        onPick={onPick}
-      />
-    </div>
-  )
-}
-
-function AudioCell({ url, onPick }: { url?: string; onPick: (node: PickedNode) => void }) {
-  const [pickerOpen, setPickerOpen] = useState(false)
-  return (
-    <div className="relative w-full h-[40px] rounded bg-zinc-800/70 border border-zinc-700 overflow-hidden flex items-center justify-center group">
-      {url ? (
-        <audio src={url} controls className="w-full h-full" style={{ maxHeight: 36 }} />
-      ) : (
-        <Volume2 className="w-4 h-4 text-zinc-600" />
-      )}
-      <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition bg-black/60 flex items-center justify-center">
-        <button
-          title="从画布选取音频节点"
-          className="p-1 rounded bg-zinc-700 hover:bg-zinc-600 text-zinc-100"
-          onClick={() => setPickerOpen(true)}
-        >
-          <FolderInput className="w-3 h-3" />
-        </button>
-      </div>
-      <CanvasNodePickerDialog
-        open={pickerOpen}
-        kind="audio"
         onClose={() => setPickerOpen(false)}
         onPick={onPick}
       />
@@ -547,10 +517,6 @@ export function StoryboardTable() {
                     <td className="px-2 py-2 border-b border-zinc-900">
                       <TextCell multiline value={r.dialogue} onChange={(v) => updateRow(r.id, { dialogue: v })} />
                     </td>
-                    {/* 对白音频 */}
-                    <td className="px-2 py-2 border-b border-zinc-900">
-                      <AudioCell url={r.dialogue_audio} onPick={(picked) => updateRow(r.id, { dialogue_audio: picked.url })} />
-                    </td>
                     {/* 音效 */}
                     <td className="px-2 py-2 border-b border-zinc-900">
                       <TextCell value={r.sound_effects} onChange={(v) => updateRow(r.id, { sound_effects: v })} />
@@ -566,10 +532,6 @@ export function StoryboardTable() {
                     {/* BGM */}
                     <td className="px-2 py-2 border-b border-zinc-900">
                       <TextCell value={r.bgm} onChange={(v) => updateRow(r.id, { bgm: v })} />
-                    </td>
-                    {/* BGM 音频 */}
-                    <td className="px-2 py-2 border-b border-zinc-900">
-                      <AudioCell url={r.bgm_audio} onPick={(picked) => updateRow(r.id, { bgm_audio: picked.url })} />
                     </td>
                     {/* Beat Video */}
                     <td className="px-2 py-2 border-b border-zinc-900">

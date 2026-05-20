@@ -53,7 +53,7 @@ describe('pure helpers', () => {
     expect(clampDuration(7.6)).toBe(8)
   })
 
-  it('buildMotionDescription stitches together row fields with the panel-progression nudge', () => {
+  it('buildMotionDescription keeps ONLY dialogue + SFX (motion_prompts, style/scene/mood are all stripped — keyframe carries the motion via its panel progression)', () => {
     const desc = buildMotionDescription({
       row: {
         motion_prompts: 'slow push-in',
@@ -61,17 +61,34 @@ describe('pure helpers', () => {
         visual_description: 'rooftop at dusk',
         character_actions: 'Alice draws the watch',
         shot_size: 'medium close-up',
+        dialogue: 'Alice: We have to go.',
+        sound_effects: 'distant thunder; footsteps on wet gravel',
       },
       visualStyle: 'Cold-toned filmic',
     })
-    expect(desc).toContain('Cold-toned filmic')
-    expect(desc).toContain('slow push-in')
-    expect(desc).toContain('3-panel grid')
-    expect(desc).toContain('temporal guidance for Seedance 2')
-    expect(desc).toContain('not a literal split-screen layout')
-    expect(desc).toContain('rooftop at dusk')
-    expect(desc).toContain('Alice draws the watch')
-    expect(desc).toContain('medium close-up shot')
+    // Kept: dialogue + SFX, labelled with their own blocks.
+    expect(desc).toContain('【对白 / DIALOGUE】')
+    expect(desc).toContain('Alice: We have to go.')
+    expect(desc).toContain('【音效 / SFX】')
+    expect(desc).toContain('distant thunder')
+    // Stripped: motion_prompts (now carried by the keyframe panels alone),
+    // style, storyboard panels, visual_description, actions, mood, shot
+    // size — they all biased the model off the keyframe.
+    expect(desc).not.toContain('slow push-in')
+    expect(desc).not.toContain('Cold-toned filmic')
+    expect(desc).not.toContain('3-panel grid')
+    expect(desc).not.toContain('rooftop at dusk')
+    expect(desc).not.toContain('Alice draws the watch')
+    expect(desc).not.toContain('medium close-up shot')
+    expect(desc).not.toContain('temporal guidance')
+  })
+
+  it('buildMotionDescription returns empty string when there is no dialogue and no SFX', () => {
+    const desc = buildMotionDescription({
+      row: { motion_prompts: 'push in', visual_description: 'rooftop' },
+      visualStyle: 'Cold-toned filmic',
+    })
+    expect(desc).toBe('')
   })
 
   it('buildImageLegend lists ONLY the keyframe (omni-reference / 全能参考 mode)', () => {
@@ -86,21 +103,14 @@ describe('pure helpers', () => {
 })
 
 describe('buildContextRefLine', () => {
-  it('bakes character/scene/prop names into a "Featuring / 出场" line for the motion text', async () => {
+  it('returns empty — context refs are no longer baked into the prompt (they biased Seedance away from the keyframe)', async () => {
     const { buildContextRefLine } = await import('@/lib/agents/cinematographer-agent')
-    const line = buildContextRefLine([
-      { role: '角色1', description: 'Alice, grey trench' },
-      { role: '场景', description: 'rainy rooftop' },
-    ])
-    expect(line).toContain('Featuring / 出场:')
-    expect(line).toContain('角色1 (Alice, grey trench)')
-    expect(line).toContain('场景 (rainy rooftop)')
-    // No image URLs leak in — context refs are text-only.
-    expect(line).not.toContain('http')
-  })
-
-  it('returns empty when no context refs supplied', async () => {
-    const { buildContextRefLine } = await import('@/lib/agents/cinematographer-agent')
+    expect(
+      buildContextRefLine([
+        { role: '角色1', description: 'Alice, grey trench' },
+        { role: '场景', description: 'rainy rooftop' },
+      ]),
+    ).toBe('')
     expect(buildContextRefLine([])).toBe('')
   })
 })
@@ -130,7 +140,11 @@ describe('shoot', () => {
     expect(result.durationSeconds).toBe(8)
     expect(result.keyframeUrl).toBe('https://k.png')
     expect(result.contextRefs).toHaveLength(2)
-    expect(result.prompt).toContain('push in')
+    // motion_prompts is no longer in the prompt — the keyframe (storyboard
+    // panels) carries motion on its own. Only the reference + casting + neg
+    // blocks land here when there's no dialogue/SFX.
+    expect(result.prompt).toContain('【全能参考 / Director Reference】')
+    expect(result.prompt).not.toContain('push in')
 
     const call = mockedRunCapability.mock.calls[0]![0]
     expect(call.capability).toBe('text-to-video')
@@ -138,6 +152,8 @@ describe('shoot', () => {
     expect(call.params?.model).toBe('doubao-seedance-2-0-260128')
     expect(call.params?.duration).toBe('8')
     expect(call.params?.aspect).toBe('16:9')
+    // No caller-supplied resolution → falls back to 480p default.
+    expect(call.params?.resolution).toBe('480p')
     expect(call.params?.reference_mode).toBe('omni')
     // Exactly 1 text + 1 image (the keyframe). Context refs do NOT land
     // as additional image inputs.
@@ -182,6 +198,15 @@ describe('shoot', () => {
     expect(mockedRunCapability.mock.calls[0]![0].params?.aspect).toBe('9:16')
   })
 
+  it('threads caller-supplied resolution through to the capability call', async () => {
+    mockedRunCapability.mockResolvedValue({ outputs: [{ kind: 'video', url: 'u' }] })
+    const ctx = createMemoryContext({ llm: { complete: async () => '' } })
+    await driveAuto(
+      shoot({ row: { motion_prompts: 'p' }, keyframeUrl: 'https://k.png', resolution: '1080p' }, ctx),
+    )
+    expect(mockedRunCapability.mock.calls[0]![0].params?.resolution).toBe('1080p')
+  })
+
   it('throws when keyframeUrl is missing (omni-reference needs the keyframe)', async () => {
     const ctx = createMemoryContext({ llm: { complete: async () => '' } })
     await expect(
@@ -197,7 +222,7 @@ describe('shoot', () => {
     ).rejects.toThrow(/no url/)
   })
 
-  it('threads context-ref names + descriptions into the motion text (not as image inputs)', () => {
+  it('does NOT bake context-ref descriptions into the motion text any more (would bias Seedance off the keyframe)', () => {
     const prompt = assembleShootPrompt({
       row: { motion_prompts: 'm' },
       keyframeUrl: 'https://k.png',
@@ -206,31 +231,27 @@ describe('shoot', () => {
         { role: '场景', description: 'Rooftop' },
       ],
     })
-    expect(prompt).toContain('Featuring / 出场: 角色1 (Alice)；场景 (Rooftop)')
+    expect(prompt).not.toContain('Featuring')
+    expect(prompt).not.toContain('Alice')
+    expect(prompt).not.toContain('Rooftop')
     // Legend should still list ONLY image1.
     expect(prompt).toContain('image1 / @图片1 = Keyframe')
     expect(prompt).not.toContain('image2')
   })
 
-  it('embeds the Seedance director-reference + casting-lock + negative blocks in every shoot prompt', () => {
+  it('keeps the trimmed director-reference + casting-lock + negative blocks in every shoot prompt', () => {
     const prompt = assembleShootPrompt({
       row: { motion_prompts: 'push in', visual_description: 'rooftop' },
       keyframeUrl: 'https://k.png',
     })
-    // Director Reference block — tells Seedance the storyboard sheet is
-    // a blocking reference, not the final shot.
     expect(prompt).toContain('【全能参考 / Director Reference】')
     expect(prompt).toContain('@图片1')
-    expect(prompt).toContain('不要拍摄或展示这张图板本身')
-    expect(prompt).toContain('最终输出必须是干净的')
-    // Casting Lock block — face/hair/clothing/posture/weapon consistency.
+    expect(prompt).toContain('起始帧')
     expect(prompt).toContain('【CASTING LOCK / 角色锁定】')
-    expect(prompt).toContain('脸型、发型、服装配色、体态、武器')
-    // Negative block — no panel frames, UI, character substitution.
     expect(prompt).toContain('【NEGATIVE】')
-    expect(prompt).toContain('不要出现图板边框、分栏、网格')
     expect(prompt).toContain('不要换角')
-    expect(prompt).toContain('不要把背景人物/路人/怪物/士兵/分身当主角')
+    // visual_description should NOT appear in the assembled prompt — stripped.
+    expect(prompt).not.toContain('rooftop')
   })
 })
 

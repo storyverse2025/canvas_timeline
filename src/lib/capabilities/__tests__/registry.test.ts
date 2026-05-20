@@ -156,11 +156,13 @@ describe('capability input/output consistency', () => {
 })
 
 describe('specific capability specs', () => {
-  it('text-to-video has duration param with 5/10 options', () => {
+  it('text-to-video exposes the full 4-15s Seedance 2.0 duration range', () => {
     const c = getCapability('text-to-video')!
     const dur = c.params?.find((p) => p.key === 'duration')
     expect(dur).toBeDefined()
-    expect(dur!.options?.map((o) => o.value)).toEqual(['5', '10'])
+    expect(dur!.options?.map((o) => o.value)).toEqual(
+      ['4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15'],
+    )
   })
 
   it('upscale-image has scale param with 2/4 options', () => {

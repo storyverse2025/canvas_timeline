@@ -84,13 +84,24 @@ function upsertDescriptionNode(opts: {
     existingTextNode?.id ??
     useCanvasStore.getState().addItemNode(textItemId, 'text', opts.position, opts.size)
 
-  // Wire image → description text, if the image node is on the canvas.
+  // Wire description text → image so the text is UPSTREAM. The image's
+  // NodeEditPanel.regenerate then pulls this text content into the
+  // regen prompt via gatherUpstream. Migrate any older session that
+  // wired it the wrong way (image → text).
   if (opts.imageNodeId) {
+    const reverseEdgeId = useCanvasStore
+      .getState()
+      .edges.find((e) => e.source === opts.imageNodeId && e.target === textNodeId)?.id
+    if (reverseEdgeId) {
+      useCanvasStore.getState().setEdges(
+        useCanvasStore.getState().edges.filter((e) => e.id !== reverseEdgeId),
+      )
+    }
     const existing = useCanvasStore
       .getState()
-      .edges.find((e) => e.source === opts.imageNodeId && e.target === textNodeId)
+      .edges.find((e) => e.source === textNodeId && e.target === opts.imageNodeId)
     if (!existing) {
-      useCanvasStore.getState().addEdge(opts.imageNodeId, textNodeId)
+      useCanvasStore.getState().addEdge(textNodeId, opts.imageNodeId)
     }
   }
 }
@@ -140,9 +151,9 @@ export function spawnSceneDescriptionCanvasNodes(scenes: ExtractedScene[]): void
       content: formatSceneDescriptionBody(scene),
       role: SCENE_DESC_ROLE,
       imageNodeId,
-      // Stack to the right of the scene panoramas (which spawn at x=50
-      // wider=360, so right edge is ~410; start descriptions at 440).
-      position: { x: 440, y: 500 + stagger * 240 },
+      // Place to the LEFT of the scene panoramas so text is upstream.
+      // Scenes spawn at x=50; description width 340 + 30 gap → x = -320.
+      position: { x: -320, y: 500 + stagger * 240 },
       size: { width: 340, height: 220 },
     })
     stagger++
@@ -162,9 +173,9 @@ export function spawnPropDescriptionCanvasNodes(props: ExtractedProp[]): void {
       content: formatPropDescriptionBody(prop),
       role: PROP_DESC_ROLE,
       imageNodeId,
-      // Stack to the right of the prop images (spawn x=50 width=200,
-      // right edge ~250; start descriptions at 280).
-      position: { x: 280, y: 950 + stagger * 240 },
+      // Place to the LEFT of the prop images so text is upstream.
+      // Props spawn at x=50; description width 320 + 30 gap → x = -300.
+      position: { x: -300, y: 950 + stagger * 240 },
       size: { width: 320, height: 200 },
     })
     stagger++

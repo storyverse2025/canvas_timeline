@@ -45,39 +45,64 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
     ),
   )
 
-  // For keyframe items: is this the one the storyboard table currently
-  // adopts? Detect by URL match — generateKeyframe creates a fresh canvas
-  // item per regenerate; the row's keyframeUrl points at the adopted one.
-  // Old keyframes stay on canvas (preserved per user request) but only the
-  // adopted one shows ⭐. Click the empty ⭐ on a sibling to promote it.
-  const adoptedRowId = useStoryboardStore((s) => {
-    if (item?.role !== 'keyframe' || !item.content) return undefined
-    return s.rows.find((r) => r.keyframeUrl === item.content)?.id
-  })
-  const isAdoptedKeyframe = Boolean(adoptedRowId)
+  // For keyframe / beat-video items: is this the one the storyboard table
+  // currently adopts? Detect by URL match — each regen creates a fresh
+  // canvas item; the row's keyframeUrl / beatVideoUrl points at the
+  // adopted one. Old siblings stay on canvas (preserved per user request)
+  // but only the adopted one shows the filled ⭐. Click the outline ⭐ on
+  // a sibling to promote it.
   const isKeyframeItem = item?.role === 'keyframe'
+  const isBeatVideoItem = item?.role === 'beat-video'
+  const adoptable = isKeyframeItem || isBeatVideoItem
+  const adoptedRowId = useStoryboardStore((s) => {
+    if (!item?.content) return undefined
+    if (isKeyframeItem) return s.rows.find((r) => r.keyframeUrl === item.content)?.id
+    if (isBeatVideoItem) return s.rows.find((r) => r.beatVideoUrl === item.content)?.id
+    return undefined
+  })
+  const isAdopted = Boolean(adoptedRowId)
 
-  const adoptThisKeyframe = useCallback(() => {
-    if (!item || item.role !== 'keyframe' || !item.content) return
-    // Match the row by shot_number embedded in the item name ("KF-S1") —
-    // it's the only stable link from the canvas item back to the row.
-    const shotMatch = /^KF-(.+)$/.exec(item.name)
-    if (!shotMatch) {
-      toast.error('无法识别此 keyframe 属于哪一行 (item name 不是 KF-* 格式)')
-      return
+  const adoptThis = useCallback(() => {
+    if (!item || !item.content) return
+    if (item.role === 'keyframe') {
+      // Match the row by shot_number embedded in the item name ("KF-S1") —
+      // it's the only stable link from the canvas item back to the row.
+      const shotMatch = /^KF-(.+)$/.exec(item.name)
+      if (!shotMatch) {
+        toast.error('无法识别此 keyframe 属于哪一行 (item name 不是 KF-* 格式)')
+        return
+      }
+      const shotNumber = shotMatch[1]!
+      const row = useStoryboardStore.getState().rows.find((r) => r.shot_number === shotNumber)
+      if (!row) {
+        toast.error(`没有找到镜号 ${shotNumber} 对应的分镜行`)
+        return
+      }
+      useStoryboardStore.getState().updateRow(row.id, {
+        keyframeUrl: item.content,
+        reference_image: item.content,
+        keyframeNodeId: nodeId,
+      })
+      toast.success(`已设为镜号 ${shotNumber} 的采用 keyframe`)
+    } else if (item.role === 'beat-video') {
+      // Same shot-number naming convention as keyframes: "BV-S1".
+      const shotMatch = /^BV-(.+)$/.exec(item.name)
+      if (!shotMatch) {
+        toast.error('无法识别此 beat video 属于哪一行 (item name 不是 BV-* 格式)')
+        return
+      }
+      const shotNumber = shotMatch[1]!
+      const row = useStoryboardStore.getState().rows.find((r) => r.shot_number === shotNumber)
+      if (!row) {
+        toast.error(`没有找到镜号 ${shotNumber} 对应的分镜行`)
+        return
+      }
+      useStoryboardStore.getState().updateRow(row.id, {
+        beatVideoUrl: item.content,
+        beatVideoNodeId: nodeId,
+      })
+      toast.success(`已设为镜号 ${shotNumber} 的采用 beat video`)
     }
-    const shotNumber = shotMatch[1]!
-    const row = useStoryboardStore.getState().rows.find((r) => r.shot_number === shotNumber)
-    if (!row) {
-      toast.error(`没有找到镜号 ${shotNumber} 对应的分镜行`)
-      return
-    }
-    useStoryboardStore.getState().updateRow(row.id, {
-      keyframeUrl: item.content,
-      reference_image: item.content,
-      keyframeNodeId: nodeId,
-    })
-    toast.success(`已设为镜号 ${shotNumber} 的采用 keyframe`)
   }, [item, nodeId])
   const [promptOpen, setPromptOpen] = useState(false)
   const [regenerating, setRegenerating] = useState<{ intent: string } | null>(null)
@@ -192,21 +217,29 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
         </div>
       )}
 
-      {/* Adopted-keyframe ⭐ badge. Filled = currently adopted by the
-          storyboard table; outline = sibling keyframe (click to promote). */}
-      {isKeyframeItem && (
+      {/* Adopted-keyframe / beat-video ⭐ badge. Filled = currently adopted
+          by the storyboard table; outline = sibling (click to promote). */}
+      {adoptable && (
         <button
           type="button"
-          onClick={adoptThisKeyframe}
-          title={isAdoptedKeyframe ? '表格当前采用的 keyframe' : '点击采用此 keyframe (替换表格中当前采用的)'}
+          onClick={adoptThis}
+          title={
+            isAdopted
+              ? isBeatVideoItem
+                ? '表格当前采用的 beat video'
+                : '表格当前采用的 keyframe'
+              : isBeatVideoItem
+                ? '点击采用此 beat video (替换表格中当前采用的)'
+                : '点击采用此 keyframe (替换表格中当前采用的)'
+          }
           className={cn(
             'absolute top-1 right-1 z-20 inline-flex items-center justify-center w-6 h-6 rounded shadow',
-            isAdoptedKeyframe
+            isAdopted
               ? 'bg-amber-400 text-amber-900 cursor-default'
               : 'bg-black/60 text-white/80 hover:bg-amber-400/80 hover:text-amber-900 cursor-pointer',
           )}
         >
-          <Star className={cn('w-3.5 h-3.5', isAdoptedKeyframe && 'fill-current')} />
+          <Star className={cn('w-3.5 h-3.5', isAdopted && 'fill-current')} />
         </button>
       )}
 
@@ -290,11 +323,11 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
 
       {item.content && selected && (
         <button
-          // When this is a keyframe item, the ⭐ adopt badge sits at top-1
-          // right-1; shift 替换 left so the two don't collide.
+          // When this item carries a ⭐ adopt badge (keyframe / beat-video)
+          // it sits at top-1 right-1; shift 替换 left so the two don't collide.
           className={cn(
             'absolute top-1 px-1.5 py-0.5 text-[10px] rounded bg-black/60 text-white hover:bg-black/80',
-            isKeyframeItem ? 'right-9' : 'right-1',
+            adoptable ? 'right-9' : 'right-1',
           )}
           onClick={() => fileRef.current?.click()}
         >替换</button>

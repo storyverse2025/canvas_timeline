@@ -2,9 +2,12 @@ import { useState } from 'react'
 import { X, Sparkles, Image as ImageIcon, Type as TypeIcon, Mic, Film } from 'lucide-react'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { useGenerateDialogStore } from '@/stores/generate-dialog-store'
+import { useCapabilityDialogStore } from '@/stores/capability-dialog-store'
 import { useProjectDB } from '@/stores/project-db'
+import { useStoryboardStore } from '@/stores/storyboard-store'
 import { gatherUpstream } from '@/lib/canvas-graph'
 import { findVoiceByUrl, getVoice, normalizeVoiceUrl } from '@/lib/voice-library'
+import { getCapability } from '@/lib/capabilities/registry'
 
 interface Props {
   nodeId: string;
@@ -16,6 +19,8 @@ export function NodeEditPanel({ nodeId, itemId, onClose }: Props) {
   const item = useCanvasItemStore((s) => s.items[itemId])
   const updateItem = useCanvasItemStore((s) => s.updateItem)
   const openDialog = useGenerateDialogStore((s) => s.open)
+  const openCapDialog = useCapabilityDialogStore((s) => s.open)
+  const storyboardRows = useStoryboardStore((s) => s.rows)
 
   const [name, setName] = useState(item?.name ?? '')
   const [prompt, setPrompt] = useState(item?.prompt ?? '')
@@ -32,17 +37,48 @@ export function NodeEditPanel({ nodeId, itemId, onClose }: Props) {
   // — 该镜头生成时还没有 voice bindings" whenever item.refAudios was
   // empty. That was historically accurate but stale — bindings written
   // AFTER this video was generated still couldn't be seen. We now read
-  // the LIVE bindings + materialize each one so the user knows exactly
-  // what a re-shoot would ship.
+  // the LIVE bindings + materialize each one — but only for the
+  // characters that actually appear in THIS shot, not the whole project.
   const liveBindings = useProjectDB((s) => s.script.voiceBindings ?? {})
+  const shotRow = isVideo
+    ? storyboardRows.find((r) => r.beatVideoNodeId === nodeId)
+    : undefined
+  // character1.description can be "林清, 灰色风衣" (name + appearance) —
+  // mirror actor-agent's nameFromSlotDescription: first comma-separated token.
+  const shotCharacterNames = shotRow
+    ? [shotRow.character1?.description, shotRow.character2?.description]
+        .map((s) => (s ?? '').split(/[,，。\n]/)[0]?.trim() ?? '')
+        .filter((s) => s.length > 0)
+    : []
+  // Canonical-name binding lookup — actor-agent stores castingCards (and
+  // therefore voiceBindings keys) in the bilingual form "莉安 (Lian)" but
+  // the storyboard table fills character1.description with the short form
+  // "莉安, 灰色风衣". Without stripping the "(English)" tail the lookup
+  // misses every Chinese-character project. Also lowercases for ASCII names.
+  const canonical = (n: string) => n.replace(/\s*[\(（][^\)）]*[\)）]/g, '').trim().toLowerCase()
+  const canonBindings: Record<string, string> = {}
+  for (const [name, voiceId] of Object.entries(liveBindings)) {
+    canonBindings[canonical(name)] = voiceId
+  }
   const liveVoicesNow = isVideo
-    ? Object.entries(liveBindings)
-        .map(([characterName, voiceId]) => ({
+    ? shotCharacterNames
+        .map((characterName) => ({
           characterName,
-          voice: getVoice(voiceId),
+          voice: getVoice(canonBindings[canonical(characterName)]),
         }))
         .filter((b): b is { characterName: string; voice: NonNullable<ReturnType<typeof getVoice>> } => Boolean(b.voice))
     : []
+  // Client-side debug trace so the user can see WHY voices appear/don't.
+  if (isVideo) {
+    // eslint-disable-next-line no-console
+    console.log('[voice-debug][NodeEditPanel]', {
+      nodeId,
+      shotRowFound: Boolean(shotRow),
+      shotCharacterNames,
+      voiceBindingKeys: Object.keys(liveBindings),
+      matched: liveVoicesNow.map((b) => ({ character: b.characterName, voice: b.voice.displayName, id: b.voice.id })),
+    })
+  }
 
   const commit = () => {
     updateItem(itemId, {
@@ -55,12 +91,43 @@ export function NodeEditPanel({ nodeId, itemId, onClose }: Props) {
 
   const regenerate = () => {
     updateItem(itemId, { name: name.trim() || item.name, prompt: prompt.trim() })
+    if (isVideo) {
+      const cap = getCapability('universal-video')
+      if (cap) {
+        const keyframeUrl = storedRefs[0] ?? shotRow?.keyframeUrl ?? ''
+        const voiceUrls = liveVoicesNow
+          .map((b) => normalizeVoiceUrl(b.voice.urlPath))
+          .filter((u): u is string => Boolean(u))
+        const refImages = [keyframeUrl, ...voiceUrls].filter((u): u is string => Boolean(u))
+        openCapDialog({
+          capability: cap,
+          nodeId,
+          itemId,
+          prompt: prompt.trim() || name || '',
+          refImages,
+        })
+        onClose()
+        return
+      }
+    }
+    // Pull in upstream text-node content (e.g., the character 人物小传 +
+    // 外貌 / scene description / prop description nodes that sit upstream
+    // of this asset image). The bio is the canonical source of truth for
+    // appearance; without folding it into the regen prompt, regenerating
+    // an asset image strips off everything that made the first pass good.
+    const userTyped = prompt.trim() || name || ''
+    const upstreamText = live.texts.join('\n\n').trim()
+    const composedPrompt = upstreamText
+      ? userTyped
+        ? `${upstreamText}\n\n${userTyped}`
+        : upstreamText
+      : userTyped
     openDialog({
       nodeId,
       itemId,
-      prompt: prompt.trim() || name || '',
+      prompt: composedPrompt,
       upstreamImages: live.images,
-      defaultKind: item.kind === 'image' ? 'image' : 'image',
+      defaultKind: 'image',
     })
     onClose()
   }
@@ -190,7 +257,9 @@ export function NodeEditPanel({ nodeId, itemId, onClose }: Props) {
             ) : (
               <div className="text-[10px] text-amber-400/80 flex items-center gap-1">
                 <Mic className="w-3 h-3" />
-                没有音色文件 — 项目还没有 voice bindings (先跑导演助手 / 演员表)
+                {shotCharacterNames.length === 0
+                  ? '本镜头没有出场角色 — 不需要音色'
+                  : '本镜头的角色还没有绑定音色 (先跑导演助手 / 演员表)'}
               </div>
             )}
           </div>

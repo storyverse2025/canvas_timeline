@@ -24,6 +24,9 @@ export interface BeatVideoRow {
    *  model knows what's being said. actor-agent.attachVoiceRefs additionally
    *  pairs each line with its 音色N audio reference. */
   dialogue?: string
+  /** SFX annotations for this beat (e.g. "footsteps on gravel; door slams").
+   *  Kept in the prompt so the model can sync motion to audio cues. */
+  sound_effects?: string
 }
 
 /**
@@ -67,6 +70,9 @@ export interface ShootRequest {
   contextRefs?: BeatVideoContextRef[]
   /** 16:9 by default; pass '9:16' for vertical shoots. */
   aspect?: '16:9' | '9:16' | '1:1' | '4:3'
+  /** Output resolution. Defaults to '720p' when omitted. Caller (UI) threads
+   *  the user's selection through generateBeatVideo → here. */
+  resolution?: '480p' | '720p' | '1080p'
   /**
    * Override the duration in seconds. Defaults to round(row.duration),
    * clamped to [5, 15] (Seedance's supported range).
@@ -129,5 +135,7 @@ export interface ReviseRequest {
   keyframeUrl: string
   contextRefs?: BeatVideoContextRef[]
   aspect?: '16:9' | '9:16' | '1:1' | '4:3'
+  /** Output resolution. Defaults to '720p' when omitted. */
+  resolution?: '480p' | '720p' | '1080p'
   durationSecondsOverride?: number
 }
