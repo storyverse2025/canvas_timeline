@@ -382,12 +382,15 @@ describe('parseDialogueByCharacter', () => {
 describe('attachVoiceRefs', () => {
   const cards = [{ name: '林清' }, { name: '阿澈' }]
 
-  it('appends a 角色对白与音色 block with per-character voice urls', async () => {
+  it('annotates the 【对白】 block inline with 音色N AND appends a 音色映射 block (slot → voice manifest)', async () => {
     const ctx = createMemoryContext({ llm: { complete: vi.fn() } })
     const result = await driveAuto(
       attachVoiceRefs(
         {
-          videoPrompt: 'BASE PROMPT',
+          // Simulates the cinematographer-built prompt: dialogue lives in a
+          // 【对白 / DIALOGUE】 block. actor-agent rewrites that block to
+          // add 音色N inline.
+          videoPrompt: 'BASE PROMPT\n\n【对白 / DIALOGUE】\n林清: 不要回头。\n阿澈: 一直走，别停。',
           row: {
             shot_number: 'S1',
             character1: { description: '林清, 短发' },
@@ -403,13 +406,16 @@ describe('attachVoiceRefs', () => {
       ),
     )
     expect(result.videoPrompt).toContain('BASE PROMPT')
-    expect(result.videoPrompt).toContain('角色对白与音色')
+    // Inline annotation in the dialogue block:
+    expect(result.videoPrompt).toContain('林清 (音色1): 不要回头。')
+    expect(result.videoPrompt).toContain('阿澈 (音色2): 一直走，别停。')
+    // Voice mapping manifest block at end:
+    expect(result.videoPrompt).toContain('【音色映射 / VOICE MAPPING】')
     expect(result.videoPrompt).toContain('音色1 = 林清')
     expect(result.videoPrompt).toContain('音色2 = 阿澈')
-    expect(result.videoPrompt).toContain('"不要回头。"')
-    expect(result.videoPrompt).toContain('"一直走，别停。"')
-    // URLs now travel as separate audio inputs (Seedance audio_url parts),
-    // not inlined into the prompt text. Verify via voiceAudioUrls instead.
+    // Old standalone block label removed (dialogue no longer duplicated).
+    expect(result.videoPrompt).not.toContain('角色对白与音色')
+    // URLs travel as separate audio inputs (Seedance audio_url parts), not in prompt text.
     expect(result.videoPrompt).not.toContain('/voices/A.mp3')
     expect(result.voiceAudioUrls).toEqual(['/voices/A.mp3', '/voices/C.mp3'])
     expect(result.attached.map((a) => a.character)).toEqual(['林清', '阿澈'])

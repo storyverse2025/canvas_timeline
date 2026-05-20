@@ -69,11 +69,9 @@ IMPORTANT: When the user mentions any of these keywords — 分镜, 表格, stor
     "lighting_atmosphere": "...",
     "sound_effects": "...",
     "dialogue": "对白文本",
-    "dialogue_audio": "",
     "storyboard_prompts": "english prompt for a 多格导演分镜图 / multi-panel director storyboard sheet/grid, not a single still; choose panel count 根据时长和节奏; for continuous action/emotion, 尽量合并 into one 10-15秒 row; each panel includes timing slice, composition, camera angle/lens/aperture/movement, blocking, eye-line/axis, depth of field, transition, and new visual/emotional information; 不要理解为最终视频的分屏",
     "motion_prompts": "english prompt for beat video motion that follows the storyboard_prompts panel progression sequentially; allow slight continuity repetition; keep strong action/story consistency; not a literal split-screen",
-    "bgm": "BGM description",
-    "bgm_audio": ""
+    "bgm": "BGM description"
   }
 ]
 \`\`\`

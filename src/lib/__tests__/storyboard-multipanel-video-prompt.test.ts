@@ -34,9 +34,12 @@ describe('multi-panel director storyboard and Seedance prompt contract', () => {
     expect(combined).toContain('强一致动作情节')
   })
 
-  it('propagates the multi-panel storyboard grid into beat-video prompts instead of only using motion text', async () => {
+  it('does NOT bake motion_prompts / storyboard_prompts / visual_description into the video prompt — the multi-panel keyframe image carries motion via panel progression on its own', async () => {
     // generateBeatVideo migrated to cinematographer-agent.shoot.
-    // The agent's buildMotionDescription is the canonical source — assert on it.
+    // Per the stripped-prompt contract, the keyframe (a multi-panel director
+    // storyboard sheet) is the SINGLE source of motion + composition info
+    // for Seedance. Putting that info as text alongside the image biased
+    // the model away from the keyframe.
     const { buildMotionDescription, clampDuration } = await import('@/lib/agents/cinematographer-agent')
 
     const desc = buildMotionDescription({
@@ -46,9 +49,9 @@ describe('multi-panel director storyboard and Seedance prompt contract', () => {
         visual_description: 'rooftop',
       },
     })
-    expect(desc).toContain('storyboard_prompts'.length > 0 ? '3-panel grid' : '')
-    expect(desc).toContain('director storyboard panel progression')
-    expect(desc).toContain('not a literal split-screen layout')
+    expect(desc).not.toContain('push in')
+    expect(desc).not.toContain('3-panel grid')
+    expect(desc).not.toContain('rooftop')
 
     // Duration is clamped to [5, 15] by clampDuration (was inline math
     // Math.min(Math.max(Math.round(row.duration), 5), 15) in the legacy hook).

@@ -61,16 +61,28 @@ describe('voice-library', () => {
     expect(broad.length).toBe(25)
   })
 
-  it('catalog detection reaches reasonable coverage on the 4-bucket scheme', () => {
-    // Regression: previous scanner left ~80% of voices unknown on both
-    // gender + age. The expanded keyword pass + "known gender → middle"
-    // fallback should classify the bulk of the catalog so prefilter is
-    // actually useful for the LLM.
+  it('catalog detection reaches reasonable gender coverage; age stays honest about unknowns', () => {
+    // Gender: keyword + sample-snippet detection should still classify
+    // most of the catalog so prefilter is useful for the LLM.
+    // Age: we DELIBERATELY no longer auto-default unknown→middle when
+    // gender is known — that mistagged youth-archetype voices like
+    // 傲娇大佬 as middle and let them slip into mentor shortlists.
+    // Unknown stays unknown; only voices with a real keyword cue land
+    // in a strict age bucket.
     const all = listVoices()
     const knownGender = all.filter((v) => v.gender !== 'unknown').length
     const knownAge = all.filter((v) => v.age !== 'unknown').length
-    expect(knownGender / all.length).toBeGreaterThanOrEqual(0.45) // was 16%
-    expect(knownAge / all.length).toBeGreaterThanOrEqual(0.45)     // was 19%
+    expect(knownGender / all.length).toBeGreaterThanOrEqual(0.45)
+    expect(knownAge / all.length).toBeGreaterThanOrEqual(0.15)
+
+    // Regression guard for the 傲娇大佬-as-middle bug: voices whose
+    // displayName carries a clear youth archetype must NOT be tagged
+    // middle/elderly. Picks a stable id we know about.
+    const aojiao = all.find((v) => v.id === '5e01c4256f87')
+    if (aojiao) {
+      expect(aojiao.age).not.toBe('middle')
+      expect(aojiao.age).not.toBe('elderly')
+    }
   })
 
   it("never emits age='adult' anymore — folded into 'middle' for the 4-bucket scheme", () => {

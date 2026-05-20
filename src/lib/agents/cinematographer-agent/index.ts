@@ -43,11 +43,9 @@ const TPL = {
 
 export const SHOOT_PROVIDER = 'doubao'
 // Default to the full Seedance 2.0 model (not the -fast variant) so 480p
-// shoots have the higher-quality model behind them. The capability plugin
-// already defaults `resolution: '480p'`, so the keyframe-shot pipeline
-// gets 480p Seedance 2.0 out of the box.
+// shoots have the higher-quality model behind them.
 export const SHOOT_MODEL = 'doubao-seedance-2-0-260128'
-export const SHOOT_RESOLUTION = '480p'
+export const SHOOT_RESOLUTION_DEFAULT: '480p' | '720p' | '1080p' = '480p'
 const MIN_DURATION = 5
 const MAX_DURATION = 15
 
@@ -56,15 +54,11 @@ function clampDuration(seconds: number): number {
 }
 
 function buildContextRefLine(contextRefs: BeatVideoContextRef[]): string {
-  if (contextRefs.length === 0) return ''
-  // Bake the names + descriptions into the motion text so the model knows
-  // what to read out of the keyframe under omni-reference mode. No image
-  // inputs — just text context.
-  const parts = contextRefs.map((c) => {
-    const desc = c.description ? ` (${c.description})` : ''
-    return `${c.role}${desc}`
-  })
-  return `Featuring / 出场: ${parts.join('；')}.`
+  // Context refs (character/scene/prop descriptions) are intentionally NOT
+  // baked into the motion text any more — they bias Seedance away from
+  // what's actually in the keyframe image. Kept exported for tests/back-compat.
+  void contextRefs
+  return ''
 }
 
 function buildMotionDescription(req: {
@@ -72,31 +66,24 @@ function buildMotionDescription(req: {
   visualStyle?: string
   contextRefs?: BeatVideoContextRef[]
 }): string {
+  // STRIPPED prompt: ONLY dialogue + SFX survive, and they live BELOW the
+  // reference blocks. motion_prompts, style, scene, mood, motivation,
+  // psychology, lighting, shot size, and context refs are all discarded —
+  // they biased Seedance away from the keyframe. The keyframe (a
+  // multi-panel director storyboard sheet) carries the motion via panel
+  // progression on its own.
+  // Voice info is appended later by actor-agent.attachVoiceRefs.
+  void req.visualStyle
+  void req.contextRefs
   const r = req.row
-  return [
-    req.visualStyle ? `Strictly maintain ${req.visualStyle} style throughout the entire clip.` : '',
-    r.motion_prompts,
-    r.storyboard_prompts
-      ? `director storyboard panel progression (read sequentially over time, not a literal split-screen): ${r.storyboard_prompts}`
-      : '',
-    'Use the storyboard grid as temporal guidance for Seedance 2: each panel is a beat in the video progression, not a literal split-screen layout.',
-    r.visual_description,
-    r.character_actions,
-    r.emotion_mood,
-    r.emotion_atmosphere,
-    r.character_motivation ? `character motivation: ${r.character_motivation}` : '',
-    r.character_psychology ? `inner psychology: ${r.character_psychology}` : '',
-    r.performance_guidance ? `performance guidance: ${r.performance_guidance}` : '',
-    r.lighting_atmosphere,
-    r.shot_size ? `${r.shot_size} shot` : '',
-    // Dialogue must travel as part of the motion description so the model
-    // knows what is being SAID in this beat — actor-agent.attachVoiceRefs
-    // additionally pairs each line with its 音色N audio reference below.
-    r.dialogue && r.dialogue.trim() ? `对白 / dialogue spoken in this beat:\n${r.dialogue.trim()}` : '',
-    buildContextRefLine(req.contextRefs ?? []),
-  ]
-    .filter((s): s is string => Boolean(s && s.trim()))
-    .join('. ')
+  const blocks: string[] = []
+  if (r.dialogue && r.dialogue.trim()) {
+    blocks.push(`【对白 / DIALOGUE】\n${r.dialogue.trim()}`)
+  }
+  if (r.sound_effects && r.sound_effects.trim()) {
+    blocks.push(`【音效 / SFX】\n${r.sound_effects.trim()}`)
+  }
+  return blocks.join('\n\n')
 }
 
 /**
@@ -118,11 +105,11 @@ function assembleShootPrompt(req: {
   contextRefs?: BeatVideoContextRef[]
   visualStyle?: string
 }): string {
-  const motion = buildMotionDescription(req) || 'cinematic motion'
+  const dialogueAndSfx = buildMotionDescription(req)
   const legend = buildImageLegend(req.keyframeUrl)
   return fillTemplate(TPL.shoot, {
-    motionDescription: motion,
     imageLegend: legend,
+    dialogueAndSfx,
   }).trim()
 }
 
@@ -132,6 +119,7 @@ async function callSeedance(opts: {
   voiceAudioUrls?: string[]
   durationSeconds: number
   aspect: '16:9' | '9:16' | '1:1' | '4:3'
+  resolution: '480p' | '720p' | '1080p'
   invitedImageAssetIds?: string[]
 }): Promise<string> {
   // ONE image input: the keyframe (omni-reference / 全能参考). We deliberately
@@ -159,10 +147,7 @@ async function callSeedance(opts: {
       model: SHOOT_MODEL,
       duration: String(opts.durationSeconds),
       aspect: opts.aspect,
-      // 480p default — explicit so it shows up in capability logs even
-      // though the plugin already defaults to '480p' for unspecified
-      // requests. Bump to '720p' / '1080p' once we wire a UI toggle.
-      resolution: SHOOT_RESOLUTION,
+      resolution: opts.resolution,
       // Hints to the capability plugin to use omni-reference mode if the
       // provider exposes it as a flag (Doubao Seedance 2.0 supports it).
       reference_mode: 'omni',
@@ -188,6 +173,7 @@ export async function* shoot(
   const shot = req.row.shot_number ?? '?'
   const durationSeconds = clampDuration(req.durationSecondsOverride ?? req.row.duration ?? MIN_DURATION)
   const aspect = req.aspect ?? '16:9'
+  const resolution = req.resolution ?? SHOOT_RESOLUTION_DEFAULT
 
   if (!req.keyframeUrl) {
     throw new Error(
@@ -197,7 +183,7 @@ export async function* shoot(
 
   yield {
     type: 'progress',
-    message: `cinematographer: composing Seedance prompt for shot ${shot} (${durationSeconds}s, ${aspect}, omni-reference)`,
+    message: `cinematographer: composing Seedance prompt for shot ${shot} (${durationSeconds}s, ${aspect}, ${resolution}, omni-reference)`,
   }
 
   const basePrompt = assembleShootPrompt({
@@ -223,7 +209,7 @@ export async function* shoot(
     }`,
   }
   const url = await callSeedance({
-    prompt, keyframeUrl: req.keyframeUrl, voiceAudioUrls, durationSeconds, aspect,
+    prompt, keyframeUrl: req.keyframeUrl, voiceAudioUrls, durationSeconds, aspect, resolution,
     invitedImageAssetIds: req.invitedImageAssetIds,
   })
 
@@ -262,6 +248,7 @@ export async function* revise(
   const shot = req.row.shot_number ?? '?'
   const durationSeconds = clampDuration(req.durationSecondsOverride ?? req.row.duration ?? MIN_DURATION)
   const aspect = req.aspect ?? '16:9'
+  const resolution = req.resolution ?? SHOOT_RESOLUTION_DEFAULT
 
   if (!req.keyframeUrl) {
     throw new Error('cinematographer: revise requires keyframeUrl (omni-reference mode)')
@@ -292,7 +279,7 @@ export async function* revise(
     type: 'progress',
     message: `cinematographer: re-rolling on Seedance with revised prompt`,
   }
-  const url = await callSeedance({ prompt: revisedPrompt, keyframeUrl: req.keyframeUrl, durationSeconds, aspect })
+  const url = await callSeedance({ prompt: revisedPrompt, keyframeUrl: req.keyframeUrl, durationSeconds, aspect, resolution })
 
   yield {
     type: 'result',

@@ -22,7 +22,7 @@ export interface BatchState {
   isRunning: boolean
 }
 
-const MAX_CONCURRENT = 2
+const MAX_CONCURRENT = 5
 
 export function useBatchGenerate() {
   const [batch, setBatch] = useState<BatchState | null>(null)

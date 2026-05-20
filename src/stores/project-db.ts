@@ -62,11 +62,9 @@ export interface StoryboardRow {
   emotionMood: string
   lightingAtmosphere: string
   dialogue: string
-  dialogueAudioElementId?: string
   storyboardPrompts: string
   motionPrompts: string
   bgm: string
-  bgmAudioElementId?: string
   soundEffects: string
   keyframeElementId?: string
   beatVideoElementId?: string
@@ -301,7 +299,6 @@ export const useProjectDB = create<ProjectDBState & ProjectDBActions>()(
             'character1ElementId', 'character2ElementId',
             'prop1ElementId', 'prop2ElementId',
             'sceneElementId', 'referenceImageElementId',
-            'dialogueAudioElementId', 'bgmAudioElementId',
           ]
           for (const row of Object.values(s.storyboardRows)) {
             for (const fk of fkFields) {

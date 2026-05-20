@@ -430,10 +430,21 @@ export function useStoryboardGenerate() {
       // character on stage. Pure no-op when there are no voice bindings.
       const castingCards = db.script.castingCards ?? []
       const voiceBindings = db.script.voiceBindings ?? {}
+      // eslint-disable-next-line no-console
+      console.log('[voice-debug][generateBeatVideo] snapshot before shoot', {
+        shot: row.shot_number,
+        castingCards: castingCards.map((c) => c.name),
+        voiceBindings,
+        rowCharacters: [row.character1?.description, row.character2?.description].filter(Boolean),
+      })
       const promptPostProcessor = async (
         basePrompt: string,
       ): Promise<{ videoPrompt: string; voiceAudioUrls: string[] }> => {
         if (Object.keys(voiceBindings).length === 0 || castingCards.length === 0) {
+          // eslint-disable-next-line no-console
+          console.log('[voice-debug][generateBeatVideo] SKIP attachVoiceRefs', {
+            reason: Object.keys(voiceBindings).length === 0 ? 'voiceBindings empty' : 'castingCards empty',
+          })
           // User-visible: explain WHY there's no 音色N block in the prompt
           // (previous behavior was a silent skip, which left the user
           // wondering why the video had no voice references).
@@ -486,7 +497,9 @@ export function useStoryboardGenerate() {
         'cinematographer-agent',
         cinematographerShoot(
           {
-            row, visualStyle, keyframeUrl, contextRefs, aspect: '16:9', promptPostProcessor,
+            row, visualStyle, keyframeUrl, contextRefs, aspect: '16:9',
+            resolution: '480p',
+            promptPostProcessor,
             invitedImageAssetIds: opts.invitedImageAssetIds,
           },
           agentCtx,
@@ -583,8 +596,8 @@ export function useStoryboardGenerate() {
         keyframeUrl = newKfUrl
         toast.info('重新拍摄 Beat Video …', { description: '使用 2D 风格化 keyframe 重试' })
         // Re-read the row in case generateKeyframe mutated other fields.
-        const retryRow = useStoryboardStore.getState().rows.find((r) => r.id === row.id) ?? row
-        Object.assign(row, retryRow)
+        // Reassign (don't Object.assign) — the store-backed row is frozen by Immer.
+        row = useStoryboardStore.getState().rows.find((r) => r.id === row.id) ?? row
         result = await attemptShoot(keyframeUrl)
         } // end if (digitalAssetSucceeded) else
       }
@@ -604,6 +617,7 @@ export function useStoryboardGenerate() {
       // video model).
       const vidItemId = useCanvasItemStore.getState().addItem({
         kind: 'video',
+        role: 'beat-video',
         name: `BV-${row.shot_number}`,
         content: url,
         prompt: finalPrompt,

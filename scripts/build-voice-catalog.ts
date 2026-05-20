@@ -66,8 +66,8 @@ const MALE_HINTS = /(男声|男音|男配|男主|男生|男性|男版|大叔|爷
 const FEMALE_HINTS = /(女声|女音|女配|女主|女生|女性|女版|大姐|奶奶|大妈|妈妈|母亲|老女|姐姐|姐|妹妹|妹|小姐|姑娘|少女|阿姨|美女|御姐|萝莉|甜美|甜妹|温柔|温婉|学姐|学妹|师妹|师姐|公主|皇后|嫔妃|娘娘|王后|女王|女友|女孩|奶气|奶系|奶音|嗲|娇|绿茶|心机|名媛|妩媚|清纯)/
 const CHILD_HINTS = /(童声|小孩|宝宝|小学|小朋友|奶气|奶系|奶音|小baby|baby|稚嫩|稚气)/i
 const ELDERLY_HINTS = /(老人|老者|老男|老女|爷爷|奶奶|大爷|大妈|年迈|苍老|沧桑|爷|奶|阿婆|阿公|长者)/
-const MIDDLE_HINTS = /(中年|大叔|大姐|阿姨|师父|师傅|队长|警察|警长|总裁|霸总|社长|教官|父亲|母亲|爸爸|妈妈|爹|娘|班主任|队员|将军|侯爷|王爷|皇上|皇帝|师姐|师兄|师妹|主任)/
-const YOUTH_HINTS = /(少女|少年|青年|小哥哥|小姐姐|学生|学姐|学妹|师妹|师弟|大学|高中|初中|公子|太子|王子|公主|姑娘|学长|学弟|青春|甜妹|奶气|奶系|帅哥|美女|萝莉|甜美|阿哲|阿澈|清纯)/
+const MIDDLE_HINTS = /(中年|大叔|大姐|阿姨|师父|师傅|队长|警察|警长|总裁|霸总|社长|教官|父亲|母亲|爸爸|妈妈|爹|娘|班主任|队员|将军|侯爷|王爷|皇上|皇帝|师姐|师兄|师妹|主任|御姐|知性|资深|教师|老师|主播|教授|博士|名媛|妩媚|沉稳|庄重|老板|总监|经理|院长|校长|主管|主席|严厉)/
+const YOUTH_HINTS = /(少女|少年|青年|小哥哥|小姐姐|学生|学姐|学妹|师妹|师弟|大学|高中|初中|公子|太子|王子|公主|姑娘|学长|学弟|青春|甜妹|奶气|奶系|帅哥|美女|萝莉|甜美|阿哲|阿澈|清纯|傲娇|撒娇|嗲|软妹|萌妹|软萌)/
 
 function detectGender(haystack: string): VoiceGender {
   if (MALE_HINTS.test(haystack) && !FEMALE_HINTS.test(haystack)) return 'male'
@@ -158,11 +158,13 @@ function buildEntry(absPath: string): VoiceEntry {
     if (gender === 'unknown') gender = detectGender(sampleSnippet)
     if (age === 'unknown') age = detectAge(sampleSnippet)
   }
-  // 4-bucket bias (幼儿/少年/中年/老年): if we know gender but still
-  // don't have an age signal, default to 'middle' — most catalog voices
-  // are working-age adult range, and unknowns are useless for prefilter.
-  // Explicit child/youth/elderly cues already short-circuited above.
-  if (age === 'unknown' && gender !== 'unknown') age = 'middle'
+  // No silent default to 'middle': previously we auto-set unknown-age to
+  // 'middle' when gender was known, which masked youth/elderly voices as
+  // mid-aged and let them slip into strict-tier shortlists for middle-
+  // aged characters (e.g. 傲娇大佬 → female + middle, then matched to a
+  // graceful 40-year-old mentor). Now unknown stays unknown; searchVoices
+  // excludes unknown-bucket voices from strict-tier requests so only
+  // confidently-tagged voices land in the LLM's candidate pool.
   // encodeURIComponent escapes `+` to %2B, but Vite's static-file middleware
   // doesn't decode %2B back to `+` when matching disk paths — the request
   // falls through to the SPA index.html (HTTP 200 text/html 635 bytes), so

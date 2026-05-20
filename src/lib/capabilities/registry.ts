@@ -224,7 +224,10 @@ export const CAPABILITIES: CapabilitySpec[] = [
     nodeTypes: ['text', 'image'],
     params: [
       { key: 'duration', label: '时长(秒)', type: 'select', default: '5', options: [
-        { value: '5', label: '5s' }, { value: '10', label: '10s' },
+        { value: '4', label: '4s' }, { value: '5', label: '5s' }, { value: '6', label: '6s' },
+        { value: '7', label: '7s' }, { value: '8', label: '8s' }, { value: '9', label: '9s' },
+        { value: '10', label: '10s' }, { value: '11', label: '11s' }, { value: '12', label: '12s' },
+        { value: '13', label: '13s' }, { value: '14', label: '14s' }, { value: '15', label: '15s' },
       ]},
       { key: 'aspect', label: '比例', type: 'select', default: '16:9', options: [
         { value: '16:9', label: '16:9' }, { value: '9:16', label: '9:16' }, { value: '1:1', label: '1:1' },
@@ -241,7 +244,10 @@ export const CAPABILITIES: CapabilitySpec[] = [
     nodeTypes: ['image'],
     params: [
       { key: 'duration', label: '时长(秒)', type: 'select', default: '5', options: [
-        { value: '5', label: '5s' }, { value: '10', label: '10s' },
+        { value: '4', label: '4s' }, { value: '5', label: '5s' }, { value: '6', label: '6s' },
+        { value: '7', label: '7s' }, { value: '8', label: '8s' }, { value: '9', label: '9s' },
+        { value: '10', label: '10s' }, { value: '11', label: '11s' }, { value: '12', label: '12s' },
+        { value: '13', label: '13s' }, { value: '14', label: '14s' }, { value: '15', label: '15s' },
       ]},
     ],
   },
@@ -255,7 +261,10 @@ export const CAPABILITIES: CapabilitySpec[] = [
     nodeTypes: ['image'],
     params: [
       { key: 'duration', label: '时长(秒)', type: 'select', default: '5', options: [
-        { value: '5', label: '5s' }, { value: '10', label: '10s' },
+        { value: '4', label: '4s' }, { value: '5', label: '5s' }, { value: '6', label: '6s' },
+        { value: '7', label: '7s' }, { value: '8', label: '8s' }, { value: '9', label: '9s' },
+        { value: '10', label: '10s' }, { value: '11', label: '11s' }, { value: '12', label: '12s' },
+        { value: '13', label: '13s' }, { value: '14', label: '14s' }, { value: '15', label: '15s' },
       ]},
     ],
   },
@@ -269,10 +278,13 @@ export const CAPABILITIES: CapabilitySpec[] = [
     nodeTypes: ['image'],
     params: [
       { key: 'duration', label: '时长(秒)', type: 'select', default: '5', options: [
-        { value: '5', label: '5s' }, { value: '8', label: '8s' }, { value: '10', label: '10s' }, { value: '15', label: '15s' },
+        { value: '4', label: '4s' }, { value: '5', label: '5s' }, { value: '6', label: '6s' },
+        { value: '7', label: '7s' }, { value: '8', label: '8s' }, { value: '9', label: '9s' },
+        { value: '10', label: '10s' }, { value: '11', label: '11s' }, { value: '12', label: '12s' },
+        { value: '13', label: '13s' }, { value: '14', label: '14s' }, { value: '15', label: '15s' },
       ]},
       { key: 'resolution', label: '分辨率', type: 'select', default: '480p', options: [
-        { value: '480p', label: '480p' }, { value: '720p', label: '720p' },
+        { value: '480p', label: '480p' }, { value: '720p', label: '720p' }, { value: '1080p', label: '1080p' },
       ]},
       { key: 'aspect', label: '比例', type: 'select', default: '16:9', options: [
         { value: '16:9', label: '16:9' }, { value: '9:16', label: '9:16' }, { value: '1:1', label: '1:1' },

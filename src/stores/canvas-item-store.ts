@@ -13,6 +13,10 @@ export type CanvasItemKind = 'image' | 'text' | 'video' | 'audio';
  *                  director-agent.generateKeyframe. Used by ImageCanvasNode
  *                  to render an adopted-keyframe ⭐ badge when this item's
  *                  content matches some storyboard row's keyframeUrl.
+ *   - 'beat-video' : a Seedance-generated beat video for a storyboard row.
+ *                  Same adoption pattern as 'keyframe': ⭐ filled when this
+ *                  item's content matches the row's beatVideoUrl; outline
+ *                  on a sibling that the user can promote.
  *   - 'voice'    : an audio file representing a character's voice token,
  *                  spawned by voice-binding when actor-agent.castVoices
  *                  picks a 音色 for a character. Routed to AudioItemContent-
@@ -28,6 +32,7 @@ export type CanvasItemRole =
   | 'style'
   | 'system'
   | 'keyframe'
+  | 'beat-video'
   | 'voice'
   | 'character'
   | 'character-bio'

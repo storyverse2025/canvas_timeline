@@ -84,7 +84,7 @@ export function GenerateDialog({ initialPrompt = '', upstreamImages = [], defaul
   const [negativePrompt, setNegativePrompt] = useState('')
   const [seed, setSeed] = useState<string>('')
   const [guidanceScale, setGuidanceScale] = useState<number>(7.5)
-  const [resolution, setResolution] = useState<string>('720p')
+  const [resolution, setResolution] = useState<string>('480p')
   const [generateAudio, setGenerateAudio] = useState(true)
   const [numImages, setNumImages] = useState<number>(1)
 
@@ -239,7 +239,7 @@ export function GenerateDialog({ initialPrompt = '', upstreamImages = [], defaul
                 value={duration}
                 onChange={(e) => setDuration(Number(e.target.value))}
               >
-                {[5, 10].map((d) => <option key={d} value={d}>{d}</option>)}
+                {[4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15].map((d) => <option key={d} value={d}>{d}</option>)}
               </select>
             </div>
           )}

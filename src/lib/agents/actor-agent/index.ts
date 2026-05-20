@@ -57,6 +57,17 @@ const TPL = {
 // ─── Helpers ──────────────────────────────────────────────────────
 
 /**
+ * Strip the bilingual parenthetical from a name so lookups can match.
+ * actor-agent stores castingCards keyed `"莉安 (Lian)"` but the storyboard
+ * table fills character1.description with the short form `"莉安, 灰色风衣"`.
+ * Without canonicalization the cross-lookup misses every time. Also
+ * lowercases so the match is case-insensitive.
+ */
+export function canonicalName(name: string): string {
+  return name.replace(/\s*[\(（][^\)）]*[\)）]/g, '').trim().toLowerCase()
+}
+
+/**
  * Extract a character name from a slot description. The storyboard fills
  * character1.description with strings like "林清, 短发，灰色风衣" — we just
  * take the first comma-separated token.
@@ -79,10 +90,10 @@ function cardsForRow(
   const wanted = new Set(
     [nameFromSlotDescription(row.character1?.description), nameFromSlotDescription(row.character2?.description)]
       .filter((s): s is string => Boolean(s))
-      .map((s) => s.toLowerCase()),
+      .map(canonicalName),
   )
   if (wanted.size === 0) return []
-  const matched = allCards.filter((c) => wanted.has(c.name.toLowerCase()))
+  const matched = allCards.filter((c) => wanted.has(canonicalName(c.name)))
   // If nothing matched (name mismatch), send the full roster so the LLM
   // can still try to find the right voice prints.
   return matched.length > 0 ? matched : allCards
@@ -346,8 +357,20 @@ export async function* attachVoiceRefs(
   ctx: ProjectContext,
 ): AgentGenerator<AttachVoiceRefsResult> {
   void ctx
+  const shot = req.row.shot_number ?? '?'
   const cards = cardsForRow(req.row, req.castingCards)
+  // eslint-disable-next-line no-console
+  console.log('[voice-debug][attachVoiceRefs] entry', {
+    shot,
+    rowCharacters: [req.row.character1?.description, req.row.character2?.description].filter(Boolean),
+    castingCardsAll: req.castingCards.map((c) => c.name),
+    cardsForRow: cards.map((c) => c.name),
+    voiceBindingKeys: Object.keys(req.voiceBindings),
+    dialoguePresent: Boolean(req.row.dialogue?.trim()),
+  })
   if (cards.length === 0) {
+    // eslint-disable-next-line no-console
+    console.log('[voice-debug][attachVoiceRefs] EXIT: no cards matched row characters → no voice block')
     yield { type: 'result', payload: { videoPrompt: req.videoPrompt, voiceAudioUrls: [], attached: [] } }
     return
   }
@@ -356,43 +379,110 @@ export async function* attachVoiceRefs(
   // enrichRow is `角色名: 台词\n角色名: 台词`. For single-character rows
   // dialogue has no prefix — we attribute it to the lone character.
   const lines = parseDialogueByCharacter(req.row.dialogue ?? '', cards)
+  // eslint-disable-next-line no-console
+  console.log('[voice-debug][attachVoiceRefs] parsed dialogue', { lines })
 
   // Build the attached list FIRST (positional 1-indexed slot per character
   // that has both a dialogue line + a voice binding). The slot index maps
   // directly to the `音色N` label in the prompt and the position in the
   // voiceAudioUrls array Seedance receives as inputs.
   const attached: AttachVoiceRefsResult['attached'] = []
+  const skipped: Array<{ character: string; reason: string }> = []
   let slot = 0
   for (const card of cards) {
     const line = lines[card.name] ?? ''
-    if (!line) continue
+    if (!line) {
+      skipped.push({ character: card.name, reason: 'no dialogue line for this character' })
+      continue
+    }
     const voiceId = req.voiceBindings[card.name]
-    if (!voiceId) continue
+    if (!voiceId) {
+      skipped.push({ character: card.name, reason: `no voiceBinding for "${card.name}" (keys present: ${Object.keys(req.voiceBindings).join(',')})` })
+      continue
+    }
     const voiceUrl = req.voiceUrlFor(voiceId)
-    if (!voiceUrl) continue
+    if (!voiceUrl) {
+      skipped.push({ character: card.name, reason: `voiceUrlFor(${voiceId}) returned null/empty` })
+      continue
+    }
     slot += 1
     attached.push({ slot, character: card.name, voiceId, voiceUrl, line })
   }
+  // eslint-disable-next-line no-console
+  console.log('[voice-debug][attachVoiceRefs] decision', {
+    attached: attached.map((a) => ({ slot: a.slot, character: a.character, voiceId: a.voiceId, voiceUrl: a.voiceUrl })),
+    skipped,
+  })
 
   if (attached.length === 0) {
     yield { type: 'result', payload: { videoPrompt: req.videoPrompt, voiceAudioUrls: [], attached: [] } }
     return
   }
 
-  // Prompt block labels each character + line with the matching `音色N` tag
-  // so Seedance can pair the audio reference (input index N) with the
-  // dialogue spoken in this beat.
+  // 1) Rewrite the cinematographer's 【对白 / DIALOGUE】 block to cite
+  //    音色N inline next to each character that has a voice binding. This
+  //    is what Seedance reads first; without the inline tag the dialogue
+  //    block and the voice manifest below are disconnected.
+  const charSlot = new Map<string, number>(attached.map((a) => [a.character, a.slot]))
+  const annotatedDialogue = annotateDialogueWithVoiceTags(req.row.dialogue ?? '', cards, charSlot)
+  const oldDialogueBlock = `【对白 / DIALOGUE】\n${(req.row.dialogue ?? '').trim()}`
+  const newDialogueBlock = `【对白 / DIALOGUE】(音色对应见下方 VOICE MAPPING)\n${annotatedDialogue}`
+  let videoPrompt = req.videoPrompt
+  if (videoPrompt.includes(oldDialogueBlock)) {
+    videoPrompt = videoPrompt.replace(oldDialogueBlock, newDialogueBlock)
+  }
+
+  // 2) Append a compact voice-mapping block at the end. Dialogue isn't
+  //    duplicated here — it's already cited inline above. This block is
+  //    just the slot→voice manifest + the model instruction.
   const characterLines = attached
-    .map(
-      (a) =>
-        `- 音色${a.slot} = ${a.character} 的配音 (voice file uploaded as audio reference ${a.slot})\n  对白 / dialogue: "${a.line}"`,
-    )
+    .map((a) => `- 音色${a.slot} = ${a.character} 的配音 (audio reference ${a.slot})`)
     .join('\n')
 
   const appended = fillTemplate(TPL.attachVoiceRefs, { characterLines })
-  const videoPrompt = `${req.videoPrompt.trim()}\n\n${appended.trim()}`
+  videoPrompt = `${videoPrompt.trim()}\n\n${appended.trim()}`
   const voiceAudioUrls = attached.map((a) => a.voiceUrl)
   yield { type: 'result', payload: { videoPrompt, voiceAudioUrls, attached } }
+}
+
+/**
+ * Rewrite a raw dialogue string so each `Character: line` has its bound
+ * voice slot inline, e.g. `Alice (音色1): line`. Characters without a
+ * voice binding keep their plain `Name: line` shape. Single-character
+ * rows with no `Name:` prefix get the character + slot prepended.
+ */
+function annotateDialogueWithVoiceTags(
+  dialogue: string,
+  cards: ActorCharacterCard[],
+  charSlot: Map<string, number>,
+): string {
+  if (!dialogue.trim()) return ''
+  const rawLines = dialogue.split(/\n+/).map((l) => l.trim()).filter(Boolean)
+  const out: string[] = []
+  for (const raw of rawLines) {
+    const m = raw.match(/^([^:：]{1,16})\s*[:：]\s*(.+)$/)
+    if (m) {
+      const name = m[1].trim()
+      const text = m[2].trim()
+      const card = cards.find((c) => canonicalName(c.name) === canonicalName(name))
+      if (card) {
+        const slot = charSlot.get(card.name)
+        const tag = slot ? ` (音色${slot})` : ''
+        out.push(`${card.name}${tag}: ${text}`)
+        continue
+      }
+    }
+    // Single-character row with no `Name:` prefix → attribute to the lone card.
+    if (cards.length === 1) {
+      const card = cards[0]
+      const slot = charSlot.get(card.name)
+      const tag = slot ? ` (音色${slot})` : ''
+      out.push(`${card.name}${tag}: ${raw}`)
+    } else {
+      out.push(raw)
+    }
+  }
+  return out.join('\n')
 }
 
 function parseDialogueByCharacter(
@@ -410,8 +500,9 @@ function parseDialogueByCharacter(
     if (m) {
       const name = m[1].trim()
       const text = m[2].trim()
-      // Match against known card names (case-insensitive); skip unknowns.
-      const card = cards.find((c) => c.name.toLowerCase() === name.toLowerCase())
+      // canonicalName strips the bilingual "(English)" tail so a dialogue
+      // prefix `"莉安"` matches a card `"莉安 (Lian)"`.
+      const card = cards.find((c) => canonicalName(c.name) === canonicalName(name))
       if (card) {
         out[card.name] = out[card.name] ? `${out[card.name]} ${text}` : text
         matched++

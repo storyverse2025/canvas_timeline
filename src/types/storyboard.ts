@@ -44,14 +44,10 @@ export const StoryboardRowSchema = z.object({
   mixing_brief: z.string().default(''),
   /** Dialogue text */
   dialogue: z.string().default(''),
-  /** Dialogue audio URL (TTS or uploaded) */
-  dialogue_audio: z.string().default(''),
   storyboard_prompts: z.string().default(''),
   motion_prompts: z.string().default(''),
   /** BGM description/tag */
   bgm: z.string().default(''),
-  /** BGM audio URL */
-  bgm_audio: z.string().default(''),
   /** Visual anchor: a reference point for visual consistency across shots */
   visual_anchor: z.string().default(''),
   // Element slots

@@ -37,7 +37,7 @@ export const PROVIDERS: ProviderSpec[] = [
       // Video models
       { id: 'doubao-seedance-2-0-fast-260128', label: 'Seedance 2.0 Fast', kind: 'video', supportsVideo: true, supportsRef: true,
         resolutions: ['480p', '720p'], durations: [4, 5, 6, 7, 8, 9, 10, 11, 12], supportsAudio: true, supportsFirstLastFrame: true },
-      { id: 'doubao-seedance-2-0-260128', label: 'Seedance 2.0 (默认 / 480p)', kind: 'video', supportsVideo: true, supportsRef: true,
+      { id: 'doubao-seedance-2-0-260128', label: 'Seedance 2.0', kind: 'video', supportsVideo: true, supportsRef: true,
         resolutions: ['480p', '720p', '1080p'], durations: [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], supportsAudio: true, supportsFirstLastFrame: true },
       { id: 'doubao-seedance-1-5-pro-251215', label: 'Seedance 1.5 Pro', kind: 'video', supportsVideo: true, supportsRef: true,
         resolutions: ['480p', '720p', '1080p'], durations: [4, 5, 6, 7, 8, 9, 10, 11, 12], supportsAudio: true, supportsFirstLastFrame: true },
