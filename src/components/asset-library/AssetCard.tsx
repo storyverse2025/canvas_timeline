@@ -1,6 +1,7 @@
 import { Image as ImageIcon, MapPin, GripVertical } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { Element } from '@/stores/project-db'
+import { thumb } from '@/lib/thumb'
 
 const ROLE_LABELS: Record<string, string> = {
   character: '角色', prop: '道具', scene: '场景',
@@ -33,7 +34,7 @@ export function AssetCard({ element, onLocate, onDragStart }: Props) {
     >
       <div className="aspect-square bg-muted flex items-center justify-center overflow-hidden">
         {isImage ? (
-          <img src={element.content} alt={element.name} className="w-full h-full object-cover" />
+          <img src={thumb(element.content, 256)} alt={element.name} loading="lazy" decoding="async" className="w-full h-full object-cover" />
         ) : (
           <ImageIcon className="w-6 h-6 text-muted-foreground" />
         )}

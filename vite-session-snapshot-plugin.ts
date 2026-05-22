@@ -221,11 +221,23 @@ export function sessionSnapshotPlugin(): Plugin {
 
         if (req.method === 'GET') {
           if (!existsSync(file)) {
+            console.log(`[session] GET miss (no file) ip=${clientIp(req)}`)
             sendJson(res, 200, { snapshot: null, savedAt: null })
             return
           }
+          const stat = statSync(file)
           const data = readSessionFile(file)
           if (!data) { sendJson(res, 500, { error: 'session unreadable' }); return }
+          // Per-store size breakdown so we can spot the bloated one in
+          // the dev console. Inline data URLs in canvas-item-store have
+          // been the single biggest source of memory pressure on the
+          // client (4K base64 images stayed in the snapshot forever).
+          const sizes: string[] = []
+          for (const [k, v] of Object.entries(data.snapshot ?? {})) {
+            const len = typeof v === 'string' ? v.length : JSON.stringify(v).length
+            sizes.push(`${k}=${(len/1024).toFixed(0)}KB`)
+          }
+          console.log(`[session] GET serving ${(stat.size/1024).toFixed(0)}KB savedAt=${data.savedAt} :: ${sizes.join(' ')}`)
           sendJson(res, 200, { snapshot: data.snapshot, savedAt: data.savedAt })
           return
         }
@@ -252,6 +264,35 @@ export function sessionSnapshotPlugin(): Plugin {
             if (!json.snapshot || typeof json.snapshot !== 'object') {
               sendJson(res, 400, { error: 'body must be { snapshot: { storeName: jsonString, ... } }' })
               return
+            }
+
+            // Per-store size breakdown + inline-data-URL guard. If any
+            // canvas-item-store payload still contains `data:image/...`
+            // base64 content, log a loud warning — those were the
+            // smoking gun for a 4GB Chrome OOM (4 items × ~2-14MB
+            // each → 19MB snapshot → ~40MB after parse + duplicate
+            // copies → blown heap). We don't reject (the client may
+            // still legitimately store small data URLs for icons /
+            // SVGs), but we make the diagnostic loud.
+            const sizes: string[] = []
+            let inlineCount = 0
+            let inlineBytes = 0
+            for (const [k, v] of Object.entries(json.snapshot)) {
+              if (typeof v !== 'string') continue
+              sizes.push(`${k}=${(v.length/1024).toFixed(0)}KB`)
+              if (k === 'canvas-item-store' || k === 'asset-store') {
+                // Count occurrences of inline `data:image/` content.
+                // Match the canvas-item-store JSON structure: `"content":"data:image/..."`
+                const matches = v.match(/"content"\s*:\s*"data:image\/[^"]{1000,}/g)
+                if (matches) {
+                  inlineCount += matches.length
+                  inlineBytes += matches.reduce((s, m) => s + m.length, 0)
+                }
+              }
+            }
+            console.log(`[session] POST ${(rawJson.length/1024).toFixed(0)}KB :: ${sizes.join(' ')}`)
+            if (inlineCount > 0) {
+              console.warn(`[session] ⚠️  ${inlineCount} inline data: URL(s) in store payload (~${(inlineBytes/1024/1024).toFixed(1)}MB) — these blow up client heap on next rehydrate. Migration to /uploads/ should run on next load.`)
             }
 
             // SHRINK PROTECTION: refuse to clobber an existing fat

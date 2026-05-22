@@ -12,6 +12,7 @@ import { useViewStore } from '@/stores/view-store'
 import { useTimelineStore } from '@/stores/timeline-store'
 import type { Asset, AssetType } from '@/types/asset'
 import { VoiceFeedbackButton } from '@/components/canvas/VoiceFeedbackButton'
+import { thumb } from '@/lib/thumb'
 
 const TYPE_META: Record<AssetType, { label: string; Icon: React.ElementType; badge: string }> = {
   character: { label: '角色',  Icon: User,    badge: 'bg-violet-500/20 text-violet-300 border-violet-500/30' },
@@ -97,7 +98,7 @@ function AssetRow({ asset }: { asset: Asset }) {
       <TableCell className="w-12 py-1.5 pl-3 pr-1">
         <div className="w-10 h-10 rounded overflow-hidden bg-white/5 flex items-center justify-center shrink-0">
           {asset.imageUrl ? (
-            <img src={asset.imageUrl} alt={asset.name} className="w-full h-full object-cover" />
+            <img src={thumb(asset.imageUrl, 256)} alt={asset.name} loading="lazy" decoding="async" className="w-full h-full object-cover" />
           ) : (
             <Icon className="w-4 h-4 text-muted-foreground/40" />
           )}

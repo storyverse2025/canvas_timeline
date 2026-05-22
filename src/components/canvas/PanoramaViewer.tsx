@@ -16,6 +16,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Compass } from 'lucide-react'
+import { thumb } from '@/lib/thumb'
 
 interface Props {
   src: string
@@ -36,8 +37,16 @@ export function PanoramaViewer({ src, alt, className }: Props) {
   const dragState = useRef<{ startX: number; startOffset: number } | null>(null)
   const [dragging, setDragging] = useState(false)
 
-  // Once we know the natural image dimensions and container height, compute
-  // the rendered width at this container's height so we can wrap correctly.
+  // Panoramas are 4K equirectangular (3840×2160) — decoded at natural
+  // size they cost ~33MB each and several on canvas at once is a major
+  // OOM contributor. Render at 1024px wide; that leaves the drag-pan
+  // sharp at typical node sizes while cutting decoded memory ~10×.
+  const displaySrc = thumb(src, 1024) ?? src
+
+  // Measure the displayed image's rendered width at this container's
+  // height so the wraparound math knows when to snap back. Uses the
+  // thumb (not the 4K source) so we don't burn memory decoding the
+  // original just to read its dimensions.
   useEffect(() => {
     let cancelled = false
     const img = new Image()
@@ -47,9 +56,9 @@ export function PanoramaViewer({ src, alt, className }: Props) {
       const aspect = img.naturalWidth / img.naturalHeight
       setImageWidth(Math.round(containerH * aspect))
     }
-    img.src = src
+    img.src = displaySrc
     return () => { cancelled = true }
-  }, [src])
+  }, [displaySrc])
 
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     e.stopPropagation()
@@ -103,16 +112,24 @@ export function PanoramaViewer({ src, alt, className }: Props) {
         }}
       >
         <img
-          src={src}
+          src={displaySrc}
           alt={alt ?? ''}
+          loading="lazy"
+          decoding="async"
           className="h-full w-auto shrink-0 pointer-events-none select-none"
           draggable={false}
         />
-        {imageWidth > 0 && (
+        {/* Wraparound tile — only mount once the user starts dragging or has
+            already panned, so idle scene nodes hold a single 4K texture
+            instead of two. Equirectangular panoramas decoded twice each
+            were a major contributor to Chrome OOM on dense boards. */}
+        {imageWidth > 0 && (dragging || offset !== 0) && (
           <img
-            src={src}
+            src={displaySrc}
             alt=""
             aria-hidden
+            loading="lazy"
+            decoding="async"
             className="h-full w-auto shrink-0 pointer-events-none select-none"
             draggable={false}
           />

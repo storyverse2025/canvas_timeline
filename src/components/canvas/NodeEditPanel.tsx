@@ -8,12 +8,15 @@ import { useStoryboardStore } from '@/stores/storyboard-store'
 import { gatherUpstream } from '@/lib/canvas-graph'
 import { findVoiceByUrl, getVoice, normalizeVoiceUrl } from '@/lib/voice-library'
 import { getCapability } from '@/lib/capabilities/registry'
+import { thumb } from '@/lib/thumb'
 
 interface Props {
   nodeId: string;
   itemId: string;
   onClose: () => void;
 }
+
+const EMPTY_BINDINGS: Record<string, string> = {}
 
 export function NodeEditPanel({ nodeId, itemId, onClose }: Props) {
   const item = useCanvasItemStore((s) => s.items[itemId])
@@ -39,7 +42,12 @@ export function NodeEditPanel({ nodeId, itemId, onClose }: Props) {
   // AFTER this video was generated still couldn't be seen. We now read
   // the LIVE bindings + materialize each one — but only for the
   // characters that actually appear in THIS shot, not the whole project.
-  const liveBindings = useProjectDB((s) => s.script.voiceBindings ?? {})
+  // Must read the stored slice directly (no `?? {}` fallback): with the
+  // fallback, every selector call returned a fresh `{}`, which zustand's
+  // useSyncExternalStore snapshot check treats as a change → re-render →
+  // selector → new `{}` → infinite loop ("Maximum update depth exceeded"
+  // every time the user clicks 编辑 on an image node).
+  const liveBindings = useProjectDB((s) => s.script.voiceBindings) ?? EMPTY_BINDINGS
   const shotRow = isVideo
     ? storyboardRows.find((r) => r.beatVideoNodeId === nodeId)
     : undefined
@@ -178,8 +186,8 @@ export function NodeEditPanel({ nodeId, itemId, onClose }: Props) {
             {content && (
               <div className="mt-2 rounded border border-border overflow-hidden max-h-[180px] flex items-center justify-center bg-black/40">
                 {/\.(mp4|webm|mov)(\?|$)/i.test(content)
-                  ? <video src={content} className="max-h-[180px]" controls />
-                  : <img src={content} alt="" className="max-h-[180px] object-contain" />}
+                  ? <video src={content} className="max-h-[180px]" controls preload="metadata" />
+                  : <img src={thumb(content, 1024)} alt="" loading="lazy" decoding="async" className="max-h-[180px] object-contain" />}
               </div>
             )}
           </div>
@@ -215,7 +223,7 @@ export function NodeEditPanel({ nodeId, itemId, onClose }: Props) {
                 </div>
                 <div className="flex gap-1.5 overflow-x-auto">
                   {storedRefs.map((u, i) => (
-                    <img key={`s${i}`} src={u} alt="" className="h-16 w-16 object-cover rounded border border-border shrink-0" title={u} />
+                    <img key={`s${i}`} src={thumb(u, 256)} alt="" loading="lazy" decoding="async" className="h-16 w-16 object-cover rounded border border-border shrink-0" title={u} />
                   ))}
                 </div>
               </div>
@@ -276,7 +284,7 @@ export function NodeEditPanel({ nodeId, itemId, onClose }: Props) {
                 <div className="text-[10px] text-muted-foreground uppercase mb-1">生成时使用的参考图 ({storedRefs.length})</div>
                 <div className="flex gap-1.5 overflow-x-auto">
                   {storedRefs.map((u, i) => (
-                    <img key={`s${i}`} src={u} alt="" className="h-16 w-16 object-cover rounded border border-border shrink-0" title={u} />
+                    <img key={`s${i}`} src={thumb(u, 256)} alt="" loading="lazy" decoding="async" className="h-16 w-16 object-cover rounded border border-border shrink-0" title={u} />
                   ))}
                 </div>
               </div>
@@ -286,7 +294,7 @@ export function NodeEditPanel({ nodeId, itemId, onClose }: Props) {
                 <div className="text-[10px] text-muted-foreground uppercase mb-1">上游当前连入 ({live.images.length})</div>
                 <div className="flex gap-1.5 overflow-x-auto">
                   {live.images.map((u, i) => (
-                    <img key={`l${i}`} src={u} alt="" className="h-16 w-16 object-cover rounded border border-primary/50 shrink-0" title={u} />
+                    <img key={`l${i}`} src={thumb(u, 256)} alt="" loading="lazy" decoding="async" className="h-16 w-16 object-cover rounded border border-primary/50 shrink-0" title={u} />
                   ))}
                 </div>
               </div>

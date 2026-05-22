@@ -1,8 +1,9 @@
 import type { Plugin } from 'vite'
 import type { IncomingMessage, ServerResponse } from 'http'
-import { writeFileSync, mkdirSync } from 'fs'
+import { writeFileSync, mkdirSync, existsSync, statSync, createReadStream } from 'fs'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
+import sharp from 'sharp'
 
 interface CapInput { kind: string; url?: string; text?: string }
 interface CapReq {
@@ -348,13 +349,20 @@ async function runTokenRouterImage(
   numImages: number,
   refImages: string[] = [],
   model?: string,
+  sizeOverride?: string,
 ): Promise<string[]> {
   const key = process.env.TOKENROUTER_API_KEY
   if (!key) throw new Error('TOKENROUTER_API_KEY 未配置 — 无法生成图片')
 
   const resolvedModel =
     model || process.env.TOKENROUTER_IMAGE_MODEL || TOKENROUTER_IMAGE_MODEL
-  const size = tokenRouterImageSize(aspect)
+  // params.size lets a caller pin an explicit pixel dimension (e.g.
+  // scene panoramas ask for '4096x2048' to get a true 4K 2:1 wrap).
+  // Default keeps the aspect→size map so existing callers behave the
+  // same. Falsy / non-string overrides fall through to the map.
+  const size = sizeOverride && /^\d+x\d+$/.test(sizeOverride)
+    ? sizeOverride
+    : tokenRouterImageSize(aspect)
   const baseUrl = (process.env.TOKENROUTER_BASE_URL || TOKENROUTER_BASE_URL).replace(/\/$/, '')
 
   const validRefs = refImages.filter((url) => /^https?:\/\//i.test(url) || url.startsWith('data:') || url.startsWith('/'))
@@ -455,11 +463,12 @@ async function runFluxImage(
   numImages: number,
   refImages: string[] = [],
   model?: string,
+  sizeOverride?: string,
 ): Promise<string[]> {
   // TokenRouter is the only image backend — FAL is no longer used here.
   // Opt back in to FAL with ENABLE_FAL_IMAGE_FALLBACK=1 (off by default).
   try {
-    const urls = await runTokenRouterImage(prompt, aspect, numImages, refImages, model)
+    const urls = await runTokenRouterImage(prompt, aspect, numImages, refImages, model, sizeOverride)
     if (urls.length) return urls
     throw new Error('TokenRouter 返回空结果')
   } catch (error) {
@@ -482,11 +491,28 @@ function modelFromParams(params: Record<string, unknown> | undefined): string | 
   return typeof m === 'string' && m.length > 0 ? m : undefined
 }
 
+// Caller-pinned pixel size, e.g. scene panoramas ask for '3840x2160'
+// (the gpt-image-2 max — long edge ≤ 3840). Anything that doesn't look
+// like `<digits>x<digits>` is ignored and the aspect→size default kicks
+// in. Keep validation here so a typo at the call site doesn't propagate
+// into a TokenRouter 400.
+function sizeFromParams(params: Record<string, unknown> | undefined): string | undefined {
+  const s = params?.size
+  return typeof s === 'string' && /^\d+x\d+$/.test(s) ? s : undefined
+}
+
 async function textToImage(req: CapReq): Promise<CapRes> {
   const text = getText(req.inputs)
   const refs = getImages(req.inputs)
   const aspect = (req.params?.aspect as string) || '16:9'
-  const urls = await runFluxImage(text || 'a beautiful scene', aspect, 1, refs, modelFromParams(req.params))
+  const urls = await runFluxImage(
+    text || 'a beautiful scene',
+    aspect,
+    1,
+    refs,
+    modelFromParams(req.params),
+    sizeFromParams(req.params),
+  )
   return { outputs: urls.map((url) => ({ kind: 'image' as const, url })) }
 }
 
@@ -1451,10 +1477,12 @@ export function capabilitiesPlugin(): Plugin {
       // File upload endpoint — saves to public/uploads/, returns URL path
       server.middlewares.use('/uploads/save', async (req, res) => {
         if (req.method !== 'POST') { sendJson(res, 405, { error: 'POST only' }); return }
+        const started = Date.now()
         try {
           const chunks: Buffer[] = []
           for await (const c of req) chunks.push(c as Buffer)
           const body = Buffer.concat(chunks)
+          console.log(`[uploads/save] received ${(body.length/1024).toFixed(0)}KB body (ct=${req.headers['content-type']})`)
 
           // Parse multipart or raw binary
           const contentType = req.headers['content-type'] ?? ''
@@ -1484,9 +1512,90 @@ export function capabilitiesPlugin(): Plugin {
           const filename = `${randomUUID()}${ext}`
           writeFileSync(join(uploadsDir, filename), fileData)
           const url = `/uploads/${filename}`
+          console.log(`[uploads/save] wrote ${url} (${(fileData.length/1024).toFixed(0)}KB) in ${Date.now()-started}ms`)
           sendJson(res, 200, { url })
         } catch (e) {
+          console.error(`[uploads/save] FAILED:`, (e as Error).message)
           sendJson(res, 500, { error: String((e as Error).message ?? e) })
+        }
+      })
+
+      // ── /thumb/<width>/<filename> ─────────────────────────────────────
+      // Resized JPEG of an /uploads/ image, cached on disk under
+      // public/uploads/.thumbs/<width>-<basename>.jpg. Why this exists:
+      // many assets are 4K PNGs (3840×2160, ~16MB on disk, ~33MB
+      // decoded in memory + GPU texture). Showing a dozen of them
+      // simultaneously on the canvas reliably crashed Chrome with OOM.
+      // Commercial canvases (Figma, liblibtv, Miro) solve this by
+      // serving downscaled previews through a thumb CDN — this
+      // middleware is the local equivalent.
+      //
+      // Cache strategy:
+      //   - First request generates the thumb with sharp + writes it
+      //     to .thumbs/.
+      //   - Subsequent requests stream the cached file directly.
+      //   - Cache is invalidated when the source file's mtime is newer
+      //     than the cache file's (regen on source change).
+      //
+      // Width is clamped to [32, 2048] so a stray ?w=99999 can't burn
+      // gigs of RAM. JPEG quality 75 is the sweet spot for
+      // photo-realistic content; ~5-8% of original PNG size.
+      const THUMB_DIR = join(process.cwd(), 'public', 'uploads', '.thumbs')
+      const UPLOADS_DIR = join(process.cwd(), 'public', 'uploads')
+      const SAFE_FILENAME = /^[\w.-]+\.(png|jpg|jpeg|webp)$/i
+      server.middlewares.use('/thumb', async (req, res) => {
+        const started = Date.now()
+        try {
+          // req.url here is the path AFTER /thumb, e.g. "/512/abc-def.png"
+          const m = /^\/(\d+)\/(.+)$/.exec(req.url ?? '')
+          if (!m) {
+            console.warn('[thumb] 400 bad path', req.url)
+            res.statusCode = 400; res.end('bad path'); return
+          }
+          const width = Math.max(32, Math.min(2048, Number(m[1])))
+          const filename = decodeURIComponent(m[2])
+          if (!SAFE_FILENAME.test(filename)) {
+            console.warn('[thumb] 400 bad filename', filename)
+            res.statusCode = 400; res.end('bad filename'); return
+          }
+
+          const srcPath = join(UPLOADS_DIR, filename)
+          if (!existsSync(srcPath)) {
+            console.warn('[thumb] 404', filename)
+            res.statusCode = 404; res.end('not found'); return
+          }
+
+          mkdirSync(THUMB_DIR, { recursive: true })
+          const baseName = filename.replace(/\.[^.]+$/, '')
+          const cachePath = join(THUMB_DIR, `${width}-${baseName}.jpg`)
+
+          let serveCache = false
+          if (existsSync(cachePath)) {
+            const cacheStat = statSync(cachePath)
+            const srcStat = statSync(srcPath)
+            if (cacheStat.mtimeMs >= srcStat.mtimeMs) serveCache = true
+          }
+
+          if (!serveCache) {
+            const srcStat = statSync(srcPath)
+            await sharp(srcPath)
+              .resize({ width, withoutEnlargement: true })
+              .jpeg({ quality: 75, mozjpeg: true })
+              .toFile(cachePath)
+            const cacheStat = statSync(cachePath)
+            console.log(`[thumb] GEN ${filename} → w=${width} ${(srcStat.size/1024).toFixed(0)}KB → ${(cacheStat.size/1024).toFixed(1)}KB in ${Date.now()-started}ms`)
+          } else {
+            const cacheStat = statSync(cachePath)
+            console.log(`[thumb] HIT ${filename} w=${width} ${(cacheStat.size/1024).toFixed(1)}KB ${Date.now()-started}ms`)
+          }
+
+          res.setHeader('Content-Type', 'image/jpeg')
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+          createReadStream(cachePath).pipe(res)
+        } catch (e) {
+          console.error(`[thumb] ERROR ${req.url}:`, (e as Error).message)
+          res.statusCode = 500
+          res.end(`thumb failed: ${(e as Error).message}`)
         }
       })
 

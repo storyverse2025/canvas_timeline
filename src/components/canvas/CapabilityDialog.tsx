@@ -7,6 +7,7 @@ import { optimizePrompt } from '@/lib/providers/client'
 import { AssetPickerDialog, type AssetPickKind, type PickedAsset } from './AssetPickerDialog'
 import type { CapabilityParam } from '@/lib/capabilities/types'
 import { cn } from '@/lib/utils'
+import { thumb } from '@/lib/thumb'
 
 /** Pull the input kind out of a ref URL extension. Keeps the picker honest
  *  when the caller seeded refImages with raw URLs but didn't ship kind info. */
@@ -212,7 +213,7 @@ function CapabilityDialog({ state, onClose }: {
               return (
                 <div key={`${r.url}-${i}`} className="relative shrink-0 group">
                   {r.kind === 'image' ? (
-                    <img src={r.url} alt="" className="h-14 w-14 object-cover rounded border border-border" />
+                    <img src={thumb(r.url, 256)} alt="" loading="lazy" decoding="async" className="h-14 w-14 object-cover rounded border border-border" />
                   ) : (
                     <div className="h-14 w-14 rounded border border-border bg-muted/40 flex items-center justify-center">
                       {r.kind === 'audio'

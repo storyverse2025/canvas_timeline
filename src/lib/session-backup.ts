@@ -180,13 +180,20 @@ export async function loadSessionById(id: string): Promise<{ restoredKeys: strin
   // x-allow-shrink:1 so the next auto-push won't get rejected by the
   // shrink-overwrite guard (the user intentionally chose a different —
   // possibly smaller — session).
-  try {
-    await fetch(SERVER_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-allow-shrink': '1' },
-      body: JSON.stringify({ snapshot: data.snapshot }),
-    })
-  } catch { /* best-effort; next auto-push retries */ }
+  //
+  // Critically: NOT awaited. For a 63 MB session this POST was the
+  // dominant tail of the user-perceived "loading…" time on residential
+  // uplinks — the GET pulled the snapshot in 5-10s, then this POST
+  // duplicated all those bytes BACK and held the spinner another
+  // minute-plus. The localStorage flag below covers the case where
+  // the reload kills this request mid-flight: the next push picks up
+  // the unlock regardless.
+  markNextPushAllowShrink()
+  void fetch(SERVER_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-allow-shrink': '1' },
+    body: JSON.stringify({ snapshot: data.snapshot }),
+  }).catch(() => { /* best-effort; the flag above is the actual contract */ })
   return { restoredKeys: restored, savedAt: data.savedAt }
 }
 
@@ -214,7 +221,17 @@ export async function tryHydrateFromServerIfIdbEmpty(): Promise<{
   if (!hasIDB()) return { hydrated: false, restoredKeys: [], savedAt: null }
 
   const local = await readIdbSnapshot()
-  const missing = TRACKED_STORE_KEYS.filter((k) => !(k in local))
+  // "Missing" means absent OR tiny-empty. The persisted shape from
+  // Zustand is at minimum `{"state":{},"version":0}` (~25 bytes); any
+  // store carrying real data is well over 100 bytes. We were burned
+  // by a skipHydration regression that wiped canvas-store + project-db
+  // to "" (empty string). Treating those as missing lets the server
+  // snapshot restore them automatically on next load.
+  const MIN_REAL_BYTES = 100
+  const missing = TRACKED_STORE_KEYS.filter((k) => {
+    const v = local[k]
+    return v == null || v.length < MIN_REAL_BYTES
+  })
   if (missing.length === 0) {
     return { hydrated: false, restoredKeys: [], savedAt: null }
   }
@@ -238,6 +255,12 @@ export async function tryHydrateFromServerIfIdbEmpty(): Promise<{
   for (const key of missing) {
     const value = payload.snapshot[key]
     if (typeof value !== 'string') continue
+    // Skip if the server-side value is ALSO empty — otherwise we'd
+    // write "" to IDB, then on next load tryHydrate sees it < 100
+    // bytes again, re-fetches the empty server snapshot, infinite
+    // reload loop. The store will fall back to its initial-state
+    // default and Zustand persist will write that out on first set().
+    if (value.length < MIN_REAL_BYTES) continue
     const ok = await idbPut(db, key, value)
     if (ok) restored.push(key)
   }
@@ -288,6 +311,28 @@ export function setPushesPaused(paused: boolean): void {
   pushesPaused = paused
 }
 
+// Cross-reload contract for the shrink-guard unlock. loadSessionById
+// used to AWAIT a 63 MB mirror upload back to the server with
+// x-allow-shrink:1 just so the next auto-push wouldn't get 409'd.
+// On a residential uplink that await held the "下载…" spinner for an
+// extra minute (the GET + the POST were essentially duplicated). Now
+// the mirror upload is fire-and-forget; this localStorage flag is
+// what actually guarantees the next push carries the shrink header,
+// even if the mirror request gets killed by the post-load reload.
+const NEXT_PUSH_ALLOW_SHRINK_KEY = 'session-backup:next-push-allow-shrink'
+export function markNextPushAllowShrink(): void {
+  try { localStorage.setItem(NEXT_PUSH_ALLOW_SHRINK_KEY, '1') } catch { /* localStorage may be disabled */ }
+}
+function consumeAllowShrinkFlag(): boolean {
+  try {
+    if (localStorage.getItem(NEXT_PUSH_ALLOW_SHRINK_KEY) === '1') {
+      localStorage.removeItem(NEXT_PUSH_ALLOW_SHRINK_KEY)
+      return true
+    }
+  } catch { /* localStorage may be disabled */ }
+  return false
+}
+
 /**
  * gzip-compress a JSON string using the Compression Streams API
  * (Chrome 80+, Safari 16.4+, FF 113+ — universal at this point).
@@ -310,7 +355,10 @@ function fmtKB(bytes: number): string {
 }
 
 export async function pushNow(opts: PushOpts = {}): Promise<void> {
-  if (pushesPaused && !opts.allowShrink) return
+  // Pick up a deferred shrink-unlock left by loadSessionById on the
+  // previous session — see comment on markNextPushAllowShrink above.
+  const allowShrink = opts.allowShrink || consumeAllowShrinkFlag()
+  if (pushesPaused && !allowShrink) return
   if (inFlight) return inFlight
   const job = (async () => {
     try {
@@ -353,7 +401,7 @@ export async function pushNow(opts: PushOpts = {}): Promise<void> {
         'Content-Type': contentEncoding ? 'application/octet-stream' : 'application/json',
       }
       if (contentEncoding) headers['Content-Encoding'] = contentEncoding
-      if (opts.allowShrink) headers['x-allow-shrink'] = '1'
+      if (allowShrink) headers['x-allow-shrink'] = '1'
       await fetch(SERVER_URL, {
         method: 'POST',
         headers,

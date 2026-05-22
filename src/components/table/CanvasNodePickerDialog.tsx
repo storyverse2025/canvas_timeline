@@ -23,6 +23,7 @@ import { Input } from '@/components/ui/input'
 import { useCanvasStore } from '@/stores/canvas-store'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { useAssetStore } from '@/stores/asset-store'
+import { thumb } from '@/lib/thumb'
 
 export type CanvasNodePickerKind = 'image' | 'video' | 'audio'
 
@@ -151,10 +152,10 @@ export function CanvasNodePickerDialog({ open, kind, title, onClose, onPick }: P
               >
                 <div className="relative h-24 w-full rounded bg-zinc-800/70 overflow-hidden flex items-center justify-center">
                   {kind === 'image' && (
-                    <img src={m.url} alt={m.name} className="h-full w-full object-cover" />
+                    <img src={thumb(m.url, 256)} alt={m.name} loading="lazy" decoding="async" className="h-full w-full object-cover" />
                   )}
                   {kind === 'video' && (
-                    <video src={m.url} className="h-full w-full object-cover" muted />
+                    <video src={m.url} className="h-full w-full object-cover" muted preload="metadata" />
                   )}
                   {kind === 'audio' && <Volume2 className="w-6 h-6 text-zinc-500" />}
                   <span className="absolute bottom-1 right-1 text-[9px] px-1 py-0.5 rounded bg-black/60 text-white">

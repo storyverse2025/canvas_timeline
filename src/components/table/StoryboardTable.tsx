@@ -17,6 +17,7 @@ import { useAssetStore } from '@/stores/asset-store'
 import { useCanvasStore } from '@/stores/canvas-store'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import type { StoryboardRow, ElementSlot } from '@/types/storyboard'
+import { thumb } from '@/lib/thumb'
 
 interface Col {
   key: string
@@ -103,8 +104,8 @@ function MediaCell({ url, onPick, onGenerate, busy, kind }: {
       )}
       {url ? (
         kind === 'image'
-          ? <img src={url} alt="" className="w-full h-full object-cover" />
-          : <video src={url} className="w-full h-full object-cover" muted />
+          ? <img src={thumb(url, 256)} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" />
+          : <video src={url} className="w-full h-full object-cover" muted preload="metadata" />
       ) : (
         <Placeholder className="w-4 h-4 text-zinc-600" />
       )}
@@ -147,7 +148,7 @@ function ElementCell({ slot: rawSlot, onChange }: {
     <div className="flex flex-col gap-1">
       <div className="relative w-full h-[40px] rounded bg-zinc-800/70 border border-zinc-700 overflow-hidden flex items-center justify-center group">
         {slot.image ? (
-          <img src={slot.image} alt="" className="w-full h-full object-cover" />
+          <img src={thumb(slot.image, 256)} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" />
         ) : (
           <ImageIcon className="w-3.5 h-3.5 text-zinc-600" />
         )}
@@ -201,12 +202,24 @@ export function StoryboardTable() {
   }
 
   /**
-   * One-shot repair: fill in missing/broken slot images on every storyboard
-   * row by matching slot.description / slot.nodeId against canvas asset names
-   * + descriptions. Needed because earlier prompts truncated URLs to 100
-   * chars when handing them to the LLM, leaving rows with garbage in
-   * `slot.image`. Future generations use [node:xxxxxx] short ids and resolve
-   * cleanly via the parser, so this button is only a back-fill.
+   * Sync slot images on every storyboard row against the canvas.
+   *
+   * Two passes:
+   *
+   *  1. AUTHORITATIVE refresh — when a slot carries `nodeId`, mirror the
+   *     current canvas item's content URL. This is unconditional: even
+   *     when the slot already has a valid URL, we overwrite it if the
+   *     canvas node's content has moved on (the user regenerated the
+   *     asset image on the canvas and expects the table to follow).
+   *
+   *  2. BACK-FILL by name/description — only for slots with NO usable
+   *     canvas link. Covers legacy rows whose `slot.image` was parsed
+   *     before short-id resolution existed, plus rows where the LLM
+   *     dropped the [node:xxxxxx] tag and left description-only.
+   *
+   * The first pass is what makes "regenerate on canvas → click sync →
+   * table reflects new image" work; the second is the original back-fill
+   * for broken/empty slots.
    */
   const repairSlotImages = useCallback(() => {
     const looksLikeUrl = (s: string) =>
@@ -215,6 +228,22 @@ export function StoryboardTable() {
     const assets = useAssetStore.getState().assets
     const items = useCanvasItemStore.getState().items
     const nodes = useCanvasStore.getState().nodes
+
+    // slot.nodeId → current canvas item content URL. Walks node →
+    // itemId → item.content. Returns undefined when any link is missing
+    // or the content is not a real URL (so the back-fill pass can take
+    // over).
+    const resolveCanvasUrl = (nodeId: string | undefined): string | undefined => {
+      if (!nodeId) return undefined
+      const node = nodes.find((n) => n.id === nodeId)
+      if (!node) return undefined
+      const itemId = (node.data as { itemId?: string }).itemId
+      if (!itemId) return undefined
+      const it = items[itemId]
+      if (!it || it.kind !== 'image') return undefined
+      return it.content && looksLikeUrl(it.content) ? it.content : undefined
+    }
+
     type Cand = { kind: 'character' | 'scene' | 'prop' | 'keyframe'; name: string; description: string; imageUrl: string; nodeId?: string }
     const candidates: Cand[] = [
       ...assets
@@ -261,7 +290,8 @@ export function StoryboardTable() {
       return undefined
     }
     const allRows = useStoryboardStore.getState().rows
-    let fixed = 0
+    let refreshed = 0
+    let backfilled = 0
     for (const row of allRows) {
       const patch: Partial<StoryboardRow> = {}
       const slotsConfig = [
@@ -274,21 +304,31 @@ export function StoryboardTable() {
       for (const { key, prefer } of slotsConfig) {
         const slot = row[key]
         if (!slot) continue
+        // Pass 1: authoritative refresh via nodeId → live canvas item.
+        const fresh = resolveCanvasUrl(slot.nodeId)
+        if (fresh) {
+          if (String(slot.image ?? '') !== fresh) {
+            patch[key] = { ...slot, image: fresh }
+            refreshed++
+          }
+          continue
+        }
+        // Pass 2: back-fill broken/empty slots by name/description.
         const cur = String(slot.image ?? '')
-        if (cur && looksLikeUrl(cur)) continue // already a real URL — leave alone
+        if (cur && looksLikeUrl(cur)) continue
         const match = findMatch(slot, prefer)
         if (!match) continue
         patch[key] = { ...slot, image: match.imageUrl, nodeId: match.nodeId ?? slot.nodeId ?? '' }
-        fixed++
-      }
-      // Reference image too — same problem can hit r.reference_image.
-      const ref = String(row.reference_image ?? '')
-      if (!looksLikeUrl(ref) && row.character1?.image && looksLikeUrl(String(row.character1.image))) {
-        // Leave reference_image alone unless explicitly broken; only fix obvious cases.
+        backfilled++
       }
       if (Object.keys(patch).length > 0) updateRow(row.id, patch)
     }
-    toast.success(`图片已修复 · 共 ${fixed} 个槽位`)
+    const total = refreshed + backfilled
+    if (total === 0) {
+      toast.success('已是最新 — 没有需要同步的槽位')
+    } else {
+      toast.success(`已同步 ${total} 个槽位（画布刷新 ${refreshed} · 名称回填 ${backfilled}）`)
+    }
   }, [updateRow])
 
   // Voice-driven keyframe regen for a single shot row. Reads the row freshly
@@ -363,7 +403,7 @@ export function StoryboardTable() {
           className="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-800 text-zinc-300 shrink-0"
           onClick={repairSlotImages}
           disabled={rows.length === 0}
-          title="把每一行的角色/道具/场景图片，按名称/描述匹配回当前画布资产"
+          title="同步：把每一行的角色/道具/场景图片刷新成画布上对应资产的最新图（在画布重新生成后，点这里让分镜表跟上）；没有 nodeId 的槽位则按名称/描述回填"
         >同步画布图片</button>
         <button
           className="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-800 text-zinc-300 shrink-0"
