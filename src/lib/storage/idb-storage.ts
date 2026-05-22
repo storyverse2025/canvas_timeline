@@ -144,6 +144,50 @@ export function createIdbStorage(name: string): StateStorage {
       }
     },
     setItem: async (key, value) => {
+      // DIAGNOSTIC: any non-trivial inline data URL is a bug. Stores
+      // should hold /uploads/ paths, never the bytes themselves. Log
+      // the field name + first 80 chars of surrounding JSON context so
+      // we can find the producer (image generation? file upload?
+      // agent action?). 1000 char threshold filters tiny SVG icons.
+      if (typeof value === 'string' && value.includes('"data:')) {
+        const idx = value.indexOf('"data:')
+        // Walk back to the property name preceding this string.
+        const ctxStart = Math.max(0, idx - 100)
+        const ctxEnd = Math.min(value.length, idx + 60)
+        const context = value.slice(ctxStart, ctxEnd)
+        // Only log when the data URL is large enough to matter.
+        const closingQuote = value.indexOf('"', idx + 1)
+        const urlLen = closingQuote === -1 ? 0 : (closingQuote - idx - 1)
+        if (urlLen > 1000) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[idb-storage] ${key} write contains inline data URL (${(urlLen/1024).toFixed(0)}KB) — fix the producer.\n  Context: ...${context}...`,
+          )
+        }
+      }
+      // GUARD: refuse oversized writes. We've seen timeline-store-v2 /
+      // storyboard-store balloon back to 40MB+ after a confirmed
+      // pre-hydrate cleanup. Whatever's responsible (Zustand's hydrate
+      // write-back, a sync function copying old base64 from somewhere)
+      // gets blocked here so the IDB stays small. The console.error is
+      // intentional — these writes should never legitimately exceed
+      // a few MB and seeing them means something is mis-handling state.
+      if (typeof value === 'string' && value.length > 5 * 1024 * 1024) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[idb-storage] REFUSING ${key} write of ${(value.length / 1024 / 1024).toFixed(1)}MB (cap=5MB). ` +
+          `This typically means a state field still holds inline base64 — check the store's reducer ` +
+          `or whichever sync function just ran. The bloat WAS NOT persisted.`,
+        )
+        // Sample the first ~500 chars + first data: URL occurrence so
+        // we can identify the culprit field without dumping MB.
+        const dataIdx = value.indexOf('"data:')
+        if (dataIdx !== -1) {
+          // eslint-disable-next-line no-console
+          console.error(`[idb-storage]   first data: at offset ${dataIdx}, context: ...${value.slice(Math.max(0, dataIdx - 80), dataIdx + 80)}...`)
+        }
+        return
+      }
       try {
         await tx('readwrite', (s) => s.put(value, key))
       } catch (e1) {

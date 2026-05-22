@@ -4,6 +4,7 @@ import { useCanvasStore } from '@/stores/canvas-store'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { useAssetStore } from '@/stores/asset-store'
 import { cn } from '@/lib/utils'
+import { thumb } from '@/lib/thumb'
 
 export type AssetPickKind = 'image' | 'audio' | 'video'
 
@@ -130,7 +131,7 @@ export function AssetPickerDialog({ onSelect, onClose, multi = true, allowedKind
                     onClick={() => toggle(a.url, a.kind)}
                   >
                     {a.kind === 'image' ? (
-                      <img src={a.url} alt={a.name} className="w-full aspect-square object-cover" />
+                      <img src={thumb(a.url, 256)} alt={a.name} loading="lazy" decoding="async" className="w-full aspect-square object-cover" />
                     ) : (
                       <div className="w-full aspect-square bg-muted/40 flex items-center justify-center">
                         <KindIcon className="w-8 h-8 text-muted-foreground" />

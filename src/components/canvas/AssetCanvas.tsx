@@ -177,6 +177,12 @@ export function AssetCanvas() {
         onSelectionChange={handleSelectionChange}
         connectionMode={ConnectionMode.Loose}
         connectionRadius={36}
+        // Skip rendering nodes outside the current viewport. ReactFlow
+        // otherwise mounts every node (including the heavy <video>/<img>/
+        // <PanoramaViewer>) regardless of pan/zoom — which on dense
+        // production boards burns >1GB of decoded media + GPU textures
+        // and is the primary trigger for Chrome OOM crashes.
+        onlyRenderVisibleElements
         // ReactFlow defaults are [0.5, 2]; user asked for 10x larger range
         // on each end (without changing the per-click step) so the
         // Controls +/- can zoom much further in to inspect detail and

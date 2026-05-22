@@ -221,6 +221,32 @@ export function spawnCharacterBioCanvasNodes(): void {
         }
       }
     }
+
+    // Wire bio text → voice audio node so the bio (which carries the
+    // voice_print line and biographical tone cues) is visibly upstream
+    // of the cast voice. voice-binding.spawnVoiceCanvasNodes runs BEFORE
+    // bio spawn in director-assistant, so the audio item already exists
+    // by the time we get here. Idempotent: skip when the edge is in place.
+    const voiceItem = Object.values(items).find(
+      (it) =>
+        it.kind === 'audio' &&
+        it.role === 'voice' &&
+        it.name === `${card.name} · 音色`,
+    )
+    if (voiceItem) {
+      const voiceNode = useCanvasStore.getState().nodes.find((n) => {
+        const data = n.data as { itemId?: string }
+        return data.itemId === voiceItem.id
+      })
+      if (voiceNode) {
+        const existingEdge = useCanvasStore
+          .getState()
+          .edges.find((e) => e.source === textNodeId && e.target === voiceNode.id)
+        if (!existingEdge) {
+          useCanvasStore.getState().addEdge(textNodeId, voiceNode.id)
+        }
+      }
+    }
   }
 }
 

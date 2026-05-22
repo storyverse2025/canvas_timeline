@@ -164,7 +164,13 @@ export function sceneImageContext(artStyle: string): AssetImageContext {
       return `${s.name}, ${s.location}, ${s.lighting}, ${s.mood}`
     },
     aspect: '16:9',
-    extraParams: { quality: 'hd', resolution: '4k' },
+    // gpt-image-2 caps long edge at 3840 — verified empirically against
+    // TokenRouter (4096 returns 400 "longest edge must be <= 3840").
+    // 3840x2160 is the 16:9 4K UHD ceiling the model permits; the
+    // capabilities plugin honors `size` and forwards it as-is. Keeping
+    // `resolution: '4k'` as a hint for any downstream that does read it,
+    // even though the active TokenRouter path ignores it.
+    extraParams: { quality: 'hd', resolution: '4k', size: '3840x2160' },
   }
 }
 export function propImageContext(artStyle: string): AssetImageContext {

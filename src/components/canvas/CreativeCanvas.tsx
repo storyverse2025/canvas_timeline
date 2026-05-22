@@ -55,6 +55,7 @@ export function CreativeCanvas() {
         onSelectionChange={onSelectionChange}
         nodeTypes={nodeTypes}
         fitView
+        onlyRenderVisibleElements
         snapToGrid
         snapGrid={[20, 20]}
         minZoom={0.1}

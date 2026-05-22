@@ -13,6 +13,7 @@ import { useViewStore } from '@/stores/view-store'
 import { useTimelineStore } from '@/stores/timeline-store'
 import { useMappingStore } from '@/stores/mapping-store'
 import { generateImage } from '@/lib/fal-client'
+import { thumb } from '@/lib/thumb'
 import { findVoiceByUrl, normalizeVoiceUrl } from '@/lib/voice-library'
 import type { Asset } from '@/types/asset'
 import type { Tag as TagType } from '@/types/canvas'
@@ -146,7 +147,7 @@ export function NodeInspector() {
         {selectedAsset.imageUrl && (
           <div>
             <label className="text-xs text-muted-foreground">图片预览</label>
-            <img src={selectedAsset.imageUrl} alt={selectedAsset.name} className="mt-1 rounded border border-border w-full" />
+            <img src={thumb(selectedAsset.imageUrl, 1024)} alt={selectedAsset.name} loading="lazy" decoding="async" className="mt-1 rounded border border-border w-full" />
           </div>
         )}
 
@@ -344,7 +345,7 @@ function ItemContentPanel({ item }: { item: CanvasItem }) {
     return (
       <div>
         <label className="text-xs text-muted-foreground">视频预览</label>
-        <video src={item.content} controls className="mt-1 rounded border border-border w-full bg-black" />
+        <video src={item.content} controls preload="metadata" className="mt-1 rounded border border-border w-full bg-black" />
       </div>
     )
   }
@@ -352,7 +353,7 @@ function ItemContentPanel({ item }: { item: CanvasItem }) {
     return (
       <div>
         <label className="text-xs text-muted-foreground">图片预览</label>
-        <img src={item.content} alt={item.name} className="mt-1 rounded border border-border w-full" />
+        <img src={thumb(item.content, 1024)} alt={item.name} loading="lazy" decoding="async" className="mt-1 rounded border border-border w-full" />
       </div>
     )
   }
@@ -475,7 +476,7 @@ function VersionHistory({
                 }`}
                 onClick={() => updateAsset(asset.id, { imageUrl: v.url })}
               >
-                <img src={v.url} alt={`v${i + 1}`} className="w-full h-full object-cover" />
+                <img src={thumb(v.url, 256)} alt={`v${i + 1}`} loading="lazy" decoding="async" className="w-full h-full object-cover" />
                 <span className="absolute bottom-0 left-0 right-0 text-[8px] bg-black/60 text-white text-center py-0.5">
                   v{i + 1}
                 </span>

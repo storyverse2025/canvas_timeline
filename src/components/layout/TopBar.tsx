@@ -9,6 +9,7 @@ import { useTimelineStore } from '@/stores/timeline-store'
 import { useMappingStore } from '@/stores/mapping-store'
 import { useAssetStore } from '@/stores/asset-store'
 import { useChatStore } from '@/stores/chat-store'
+import { useProjectDB } from '@/stores/project-db'
 import { ScriptInputDialog } from '@/components/director/ScriptInputDialog'
 import { SessionPickerDialog } from '@/components/layout/SessionPickerDialog'
 
@@ -97,10 +98,23 @@ export function TopBar() {
   }, [])
 
   const handleClear = useCallback(() => {
-    if (!window.confirm('清空所有内容？画布节点、资产、时间轴、分镜表都会被清空，此操作不可撤销。')) return
+    if (!window.confirm(
+      '清空所有内容？画布节点、资产、时间轴、分镜表、聊天历史、生成历史、画布-时间轴关联都会被清空，此操作不可撤销。'
+    )) return
     useCanvasStore.getState().clearAll()
     useAssetStore.getState().setAssets([])
     useTimelineStore.getState().setTracks([])
+    useMappingStore.getState().clearLinks()
+    // projectDB carries a parallel mirror of elements / canvasNodes / edges /
+    // storyboardRows / generationHistory / script. Skipping it was the main
+    // reason "清空" felt incomplete: the visible canvas emptied but tens to
+    // hundreds of MB of generation history + element records lived on and
+    // accreted across sessions.
+    useProjectDB.getState().clearAll()
+    // chatStore must clear BEFORE addMessage below — clearHistory itself
+    // resets messages to a single welcome line, then addMessage tacks on
+    // the system confirmation. Order reversed would drop the confirmation.
+    useChatStore.getState().clearHistory()
     // Dynamically import stores that may not be in the original imports
     import('@/stores/canvas-item-store').then((m) => m.useCanvasItemStore.setState({ items: {} }))
     import('@/stores/storyboard-store').then((m) => m.useStoryboardStore.getState().clear())

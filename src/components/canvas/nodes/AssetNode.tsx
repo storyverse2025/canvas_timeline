@@ -7,6 +7,7 @@ import type { Asset, AssetType } from '@/types/asset'
 import { useAssetStore } from '@/stores/asset-store'
 import { runCapability } from '@/lib/capabilities/client'
 import { VoiceFeedbackButton, type VoicePlan } from '@/components/canvas/VoiceFeedbackButton'
+import { thumb } from '@/lib/thumb'
 
 export interface AssetNodeData extends Asset {
   assetId: string;
@@ -109,7 +110,7 @@ export const AssetNode = memo(function AssetNode({ data, selected }: Props) {
       {/* Thumbnail */}
       <div className="w-full h-[80px] rounded-t-md overflow-hidden bg-black/20 flex items-center justify-center">
         {data.imageUrl ? (
-          <img src={data.imageUrl} alt={data.name} className="w-full h-full object-cover" />
+          <img src={thumb(data.imageUrl, 512)} alt={data.name} loading="lazy" decoding="async" className="w-full h-full object-cover" />
         ) : (
           <Icon className="w-8 h-8 text-muted-foreground/50" />
         )}

@@ -13,6 +13,7 @@ import { VoiceFeedbackButton, type VoicePlan, type VoiceElementKind } from '@/co
 import { PanoramaViewer } from '@/components/canvas/PanoramaViewer'
 import { VoicePickerDialog } from '@/components/canvas/VoicePickerDialog'
 import { findVoiceByUrl, normalizeVoiceUrl } from '@/lib/voice-library'
+import { thumb } from '@/lib/thumb'
 
 export interface ImageNodeData {
   itemId: string;
@@ -257,11 +258,18 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
         // fall back to URL pattern matching for legacy items that stored a
         // video as kind='image'.
         item.kind === 'video' || /\.(mp4|webm|mov)(\?|$)/i.test(item.content) ? (
+          // preload="metadata" — fetch only the moov atom (dimensions,
+          // duration, first poster frame) instead of buffering+decoding
+          // the whole file on mount. With onlyRenderVisibleElements on
+          // the parent ReactFlow, off-screen nodes don't mount at all;
+          // for the ones that do, this keeps each idle video at <1MB
+          // instead of multi-MB decoded YUV buffers.
           <video
             src={item.content}
             className="w-full h-full object-contain bg-black"
             controls
             playsInline
+            preload="metadata"
           />
         ) : item.kind === 'audio' ? (
           // Layout note: native <audio controls> needs ~320×54 to render
@@ -328,7 +336,7 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
           // the canvas node. Non-scene image assets stay as plain <img>.
           <PanoramaViewer src={item.content} alt={item.name} />
         ) : (
-          <img src={item.content} alt={item.name} className="w-full h-full object-contain bg-black/40" />
+          <img src={thumb(item.content, 512)} alt={item.name} loading="lazy" decoding="async" className="w-full h-full object-contain bg-black/40" />
         )
       ) : (
         <div className="w-full h-full flex flex-col items-center justify-center gap-2 bg-muted/20 text-muted-foreground">

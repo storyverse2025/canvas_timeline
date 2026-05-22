@@ -3,6 +3,7 @@ import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { ImageIcon, User, MapPin, Box, GripVertical, Upload, Film, Loader2 } from 'lucide-react'
 import { useCanvasStore } from '@/stores/canvas-store'
 import type { VisualAssetNodeData } from '@/types/canvas'
+import { thumb } from '@/lib/thumb'
 
 const assetIcons: Record<string, typeof ImageIcon> = {
   character: User,
@@ -89,6 +90,7 @@ export const VisualAssetNode = memo(({ id, data, selected }: NodeProps) => {
             muted
             loop
             playsInline
+            preload="metadata"
             className="w-full h-full object-cover"
           />
           {d.status === 'generating' && (
@@ -110,7 +112,7 @@ export const VisualAssetNode = memo(({ id, data, selected }: NodeProps) => {
         </div>
       ) : d.imageUrl ? (
         <div className="w-full h-[120px] bg-secondary relative group">
-          <img src={d.imageUrl} alt={d.label} className="w-full h-full object-cover" />
+          <img src={thumb(d.imageUrl, 512)} alt={d.label} loading="lazy" decoding="async" className="w-full h-full object-cover" />
           <button
             className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 text-white text-[10px]"
             onClick={handleUploadClick}

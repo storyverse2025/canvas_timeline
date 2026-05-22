@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { useProjectDB } from '@/stores/project-db'
 import { Image as ImageIcon, Video, FileText, Music } from 'lucide-react'
+import { thumb } from '@/lib/thumb'
 
 const KIND_ICONS: Record<string, React.ElementType> = {
   image: ImageIcon, video: Video, text: FileText, audio: Music,
@@ -32,7 +33,7 @@ export function GenerationHistoryTab() {
             <div key={h.id} className="flex gap-2 p-1.5 rounded border border-border bg-card hover:bg-accent/30 transition-colors">
               <div className="w-12 h-12 rounded bg-muted flex items-center justify-center overflow-hidden shrink-0">
                 {isMedia && h.resultUrl ? (
-                  <img src={h.resultUrl} alt="" className="w-full h-full object-cover" />
+                  <img src={thumb(h.resultUrl, 256)} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" />
                 ) : (
                   <Icon className="w-4 h-4 text-muted-foreground" />
                 )}
