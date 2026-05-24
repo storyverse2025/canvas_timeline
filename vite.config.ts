@@ -62,8 +62,9 @@ export default defineConfig({
         },
       },
       // BytePlus Ark digital-asset / 开白 registration endpoint used by the
-      // privacy-block fallback chain in useStoryboardGenerate. ARK_API_KEY
-      // (Bearer) is injected server-side so the browser never sees the key.
+      // privacy-block fallback chain in useStoryboardGenerate. The bearer
+      // token (BYTEPLUS_ARK_API_KEY, ARK_API_KEY as legacy fallback) is
+      // injected server-side so the browser never sees the key.
       // Note: BytePlus may require AK/SK signing for the asset CRUD endpoints
       // even though chat/contents use Bearer; if Bearer 401s, the fallback
       // chain catches and degrades to 2D stylization. See PR for unknowns.
@@ -72,7 +73,7 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/byteplus-asset/, '/api/v3'),
         headers: {
-          'Authorization': `Bearer ${process.env.ARK_API_KEY || ''}`,
+          'Authorization': `Bearer ${process.env.BYTEPLUS_ARK_API_KEY || process.env.ARK_API_KEY || ''}`,
         },
       },
     },
