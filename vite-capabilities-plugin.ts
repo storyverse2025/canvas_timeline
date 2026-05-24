@@ -53,22 +53,61 @@ async function poll<T>(
   throw new Error('timeout')
 }
 
-// ─── TokenRouter (OpenAI-compatible) ─────────────────────────────────
-const TOKENROUTER_BASE_URL = 'https://www.tokenrouter.com/backend-api/v1'
-const TOKENROUTER_TEXT_MODEL = 'google/gemini-3-flash-preview'
-const TOKENROUTER_IMAGE_MODEL = 'openai/gpt-5.4-image-2'
+// ─── Apimart (OpenAI-compatible) ─────────────────────────────────
+//
+// 2026-05-23: Apimart rolled a breaking change. The marketing host
+// `apimart.ai/v1` now returns a Next.js 404 page for every API path
+// (the front-end was migrated to api.apimart.ai, the v1 routes on the
+// old host were dropped). At the same time their image flow switched
+// from synchronous /images/generations + /images/edits to a task-based
+// async API: submit returns {data:[{task_id}]} and you poll
+// /v1/tasks/{id} until status==='completed'. Ref images are now passed
+// as `image: [url|dataUrl, …]` in the JSON body — the dedicated
+// /images/edits endpoint was removed ("generic adaptor models should
+// be routed through task submission flow"). The OpenAI provider-prefix
+// ("openai/gpt-5.4-image-2") is no longer a valid model id; the closest
+// analog on the new host is `gpt-image-2`. See normalizeApimartImageModel
+// for the alias table that keeps existing callers working without a
+// frontend touch.
+const APIMART_BASE_URL = 'https://api.apimart.ai/v1'
+const APIMART_TEXT_MODEL = 'gemini-3-flash-preview'
+const APIMART_IMAGE_MODEL = 'gpt-image-2'
 
-async function tokenRouterChat(systemPrompt: string, userText: string, imageUrl?: string, temperature?: number): Promise<string> {
-  const key = process.env.TOKENROUTER_API_KEY
-  if (!key) throw new Error('TOKENROUTER_API_KEY not set')
-  const baseUrl = (process.env.TOKENROUTER_BASE_URL || TOKENROUTER_BASE_URL).replace(/\/$/, '')
+/**
+ * Map legacy provider-prefixed model ids (openai/gpt-5.4-image-2,
+ * google/gemini-3-flash-preview-image, …) to the bare ids the new
+ * api.apimart.ai accepts. Returns the input unchanged for ids that
+ * are already valid (or unknown — we let the server error rather than
+ * silently rewriting strings we don't recognize).
+ */
+function normalizeApimartImageModel(model: string): string {
+  const aliases: Record<string, string> = {
+    'openai/gpt-5.4-image-2': 'gpt-image-2',
+    'openai/gpt-5.4-image': 'gpt-image-2',
+    'openai/gpt-image-2': 'gpt-image-2',
+    'google/gemini-3-flash-preview-image': 'gemini-3-flash-preview-image-preview-official',
+    'google/gemini-3.1-flash-image-preview': 'gemini-3.1-flash-image-preview-official',
+    'google/gemini-3-pro-image-preview': 'gemini-3-pro-image-preview',
+  }
+  if (aliases[model]) return aliases[model]!
+  // Strip a leading provider/ prefix as a generic fallback — the new
+  // api.apimart.ai is one big flat namespace.
+  const slash = model.indexOf('/')
+  if (slash > 0) return model.slice(slash + 1)
+  return model
+}
+
+async function apimartChat(systemPrompt: string, userText: string, imageUrl?: string, temperature?: number): Promise<string> {
+  const key = process.env.APIMART_API_KEY
+  if (!key) throw new Error('APIMART_API_KEY not set')
+  const baseUrl = (process.env.APIMART_BASE_URL || APIMART_BASE_URL).replace(/\/$/, '')
   const userContent: Array<Record<string, unknown>> = [{ type: 'text', text: userText }]
   if (imageUrl) userContent.push({ type: 'image_url', image_url: { url: imageUrl } })
   const res = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: process.env.TOKENROUTER_TEXT_MODEL || TOKENROUTER_TEXT_MODEL,
+      model: process.env.APIMART_TEXT_MODEL || APIMART_TEXT_MODEL,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userContent },
@@ -76,19 +115,19 @@ async function tokenRouterChat(systemPrompt: string, userText: string, imageUrl?
       ...(temperature != null ? { temperature } : {}),
     }),
   })
-  if (!res.ok) throw new Error(`TokenRouter chat ${res.status}: ${await res.text()}`)
+  if (!res.ok) throw new Error(`Apimart chat ${res.status}: ${await res.text()}`)
   const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
   const text = data.choices?.[0]?.message?.content?.trim()
-  if (!text) throw new Error('TokenRouter: empty response')
+  if (!text) throw new Error('Apimart: empty response')
   return text
 }
 
 async function geminiText(systemPrompt: string, userText: string): Promise<string> {
-  return tokenRouterChat(systemPrompt, userText, undefined, 0.7)
+  return apimartChat(systemPrompt, userText, undefined, 0.7)
 }
 
 async function geminiVision(systemPrompt: string, userText: string, imageUrl: string): Promise<string> {
-  return tokenRouterChat(systemPrompt, userText, imageUrl, 0.5)
+  return apimartChat(systemPrompt, userText, imageUrl, 0.5)
 }
 
 // ─── Agent capabilities ──────────────────────────────────────────────
@@ -213,21 +252,15 @@ async function storyboardQC(req: CapReq): Promise<CapRes> {
 }
 
 // ─── Image capabilities ─────────────────────────────────────────────
-function tokenRouterImageSize(aspect: string): string {
-  const sizeMap: Record<string, string> = {
-    '1:1': '1024x1024',
-    '9:16': '1024x1792',
-    '16:9': '1792x1024',
-    '4:3': '1536x1152',
-  }
-  return process.env.TOKENROUTER_IMAGE_SIZE || sizeMap[aspect] || '1024x1024'
-}
+// (apimartImageSize removed 2026-05-23: the new api.apimart.ai image
+// endpoint takes `aspect_ratio` strings directly; per-aspect pixel-size
+// maps are no longer needed.)
 
 /**
  * Multi-reference IMAGE GENERATION (not editing) for gpt-image-2 via
- * TokenRouter (`openai/gpt-5.4-image-2`).
+ * Apimart (`openai/gpt-5.4-image-2`).
  *
- * Routing (verified empirically against TokenRouter, 2026-05-19):
+ * Routing (verified empirically against Apimart, 2026-05-19):
  *   - 0 refs → POST /v1/images/generations  (JSON, text-to-image)
  *   - N refs → POST /v1/images/edits        (multipart, `image` repeated)
  *
@@ -254,12 +287,23 @@ function tokenRouterImageSize(aspect: string): string {
 const REF_CAP = 8
 
 /**
+ * Safety cap for the total multipart body shipped to Apimart /images/edits.
+ * Apimart's nginx returns 413 above its `client_max_body_size` (commonly
+ * 20MB). 18MB leaves headroom for the prompt field + multipart boundaries +
+ * occasional ref that compresses worse than expected. We compress refs to
+ * 1280px JPEG q85 first (see compressRefForUpload), so this budget should
+ * only ever clip in pathological cases (10MB photo that JPEG'd to 5MB plus
+ * three siblings).
+ */
+const APIMART_MULTIPART_BUDGET_BYTES = 18 * 1024 * 1024
+
+/**
  * Read any ref URL form (data:, /uploads/path, http(s)://) into a raw
  * Buffer + best-guess mime. Deliberately permissive: an unrecognised
  * content-type defaults to image/png rather than throwing — otherwise
  * a single header mismatch (e.g. `image/png; charset=utf-8`) would
  * drop the ref silently, the FormData would carry zero `image` parts,
- * and TokenRouter would 500 with "image is required". That bug was
+ * and Apimart would 500 with "image is required". That bug was
  * exactly what produced repeated 500s after the multipart fix landed.
  */
 /**
@@ -299,71 +343,137 @@ async function readLocalRefBuffer(localPath: string): Promise<{ buf: Buffer; mim
   return { buf, mime: mimeForExt(decoded) }
 }
 
-async function loadRefAsBlob(url: string): Promise<{ blob: Blob; ext: string }> {
-  let mime = 'image/png'
-  let buf: Buffer
+// loadRefAsBlob removed 2026-05-23: the new api.apimart.ai image
+// endpoint takes data: URLs in a JSON body, not multipart Blobs. Refs
+// now flow through refToApimartImageRef (in runApimartImage below),
+// which still uses compressRefForUpload + readLocalRefBuffer.
 
-  if (url.startsWith('data:')) {
-    const m = url.match(/^data:([^;]+);base64,(.+)$/)
-    if (!m) throw new Error(`bad data: URL`)
-    mime = m[1] ?? 'image/png'
-    buf = Buffer.from(m[2] ?? '', 'base64')
-  } else {
-    // Same-origin shortcut: any URL ending up at public/uploads, public/voices
-    // or public/samples reads straight from disk — even if it carries a
-    // fully-qualified http(s):// prefix that would otherwise tempt us into
-    // a self-fetch through nginx (which 403s by design).
-    const localPath = maybeLocalPathFor(url)
-    if (localPath) {
-      const r = await readLocalRefBuffer(localPath)
-      buf = r.buf
-      mime = r.mime
-    } else {
-      const r = await fetch(url)
-      if (!r.ok) throw new Error(`HTTP ${r.status}`)
-      buf = Buffer.from(await r.arrayBuffer())
-      // Take ONLY the media-type token; ignore `; charset=...` parameters.
-      const ct = r.headers.get('content-type') || ''
-      const head = ct.split(';')[0]?.trim().toLowerCase() ?? ''
-      if (head === 'image/jpeg' || head === 'image/jpg') mime = 'image/jpeg'
-      else if (head === 'image/webp') mime = 'image/webp'
-      else if (head === 'image/png') mime = 'image/png'
-      // anything else → keep default png; OpenAI sniffs the bytes anyway.
-    }
+const REF_MAX_EDGE = 1280
+const REF_JPEG_QUALITY = 85
+
+async function compressRefForUpload(
+  buf: Buffer,
+): Promise<{ buf: Buffer; mime: string; ext: string }> {
+  try {
+    const sharpMod = await import('sharp')
+    const sharp = sharpMod.default
+    const out = await sharp(buf, { failOn: 'none' })
+      .rotate() // honor EXIF orientation before resize
+      .resize({
+        width: REF_MAX_EDGE,
+        height: REF_MAX_EDGE,
+        fit: 'inside',
+        withoutEnlargement: true,
+      })
+      .jpeg({ quality: REF_JPEG_QUALITY, mozjpeg: true })
+      .toBuffer()
+    return { buf: out, mime: 'image/jpeg', ext: 'jpg' }
+  } catch (e) {
+    // sharp refused (truly broken bytes / unsupported format) — ship
+    // raw so we still attempt the call rather than dropping the ref.
+    // The byte-budget guard below provides a final safety net.
+    console.warn(`[image] sharp compress failed (${(e as Error).message}); using raw buffer`)
+    return { buf, mime: 'image/png', ext: 'png' }
   }
-
-  const ext = mime === 'image/jpeg' ? 'jpg' : mime === 'image/webp' ? 'webp' : 'png'
-  return { blob: new Blob([buf], { type: mime }), ext }
 }
 
-async function attachMultipartImage(form: FormData, url: string, idx: number): Promise<void> {
-  const { blob, ext } = await loadRefAsBlob(url)
-  // Repeated `image` parts (not `image[]`) — TokenRouter rejects the
-  // bracketed name with "image is required".
-  form.append('image', blob, `ref-${idx + 1}.${ext}`)
+/**
+ * Resolve a ref URL (data:, /uploads/, http(s)://) into a value the
+ * api.apimart.ai `image: [...]` body field will accept. Logic:
+ *   - data: URL → passthrough (already inline).
+ *   - same-origin /uploads/ etc. → read from disk, compress with sharp,
+ *     return as data URL. nginx blocks server-to-server fetches of
+ *     /uploads/ from the public IP, so we cannot pass the URL through.
+ *   - public http(s):// → passthrough (Apimart fetches it).
+ * Per-ref compression keeps the request body small even with several
+ * 4K canvas keyframes feeding into one generation.
+ */
+async function refToApimartImageRef(url: string): Promise<string> {
+  if (url.startsWith('data:')) return url
+  if (/^https?:\/\//i.test(url)) {
+    const local = maybeLocalPathFor(url)
+    if (!local) return url // truly external — let Apimart fetch it
+    const { buf } = await readLocalRefBuffer(local)
+    const compressed = await compressRefForUpload(buf)
+    return `data:${compressed.mime};base64,${compressed.buf.toString('base64')}`
+  }
+  // Root-relative local path (most common: /uploads/<uuid>.png)
+  const { buf } = await readLocalRefBuffer(url)
+  const compressed = await compressRefForUpload(buf)
+  return `data:${compressed.mime};base64,${compressed.buf.toString('base64')}`
 }
 
-async function runTokenRouterImage(
+interface ApimartTaskResult {
+  status: 'pending' | 'in_progress' | 'completed' | 'failed' | string
+  progress?: number
+  result?: { images?: Array<{ url?: string | string[]; expires_at?: number }> }
+  error?: { code?: string; message?: string }
+}
+
+/**
+ * Poll a submitted Apimart image task to completion and return the
+ * resulting URLs. The image gen flow is now async on api.apimart.ai —
+ * submit returns {task_id} immediately, results land in
+ * `result.images[i].url` (often an array of one URL per output image).
+ */
+async function pollApimartTask(taskId: string, opts: { timeoutMs?: number } = {}): Promise<string[]> {
+  const key = process.env.APIMART_API_KEY
+  if (!key) throw new Error('APIMART_API_KEY missing')
+  const baseUrl = (process.env.APIMART_BASE_URL || APIMART_BASE_URL).replace(/\/$/, '')
+  const timeoutMs = opts.timeoutMs ?? 180_000
+  const deadline = Date.now() + timeoutMs
+  // Apimart image tasks typically resolve in 5–40s; poll every 2s with
+  // a small jitter so a single batch doesn't all wake up together.
+  let interval = 2000
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, interval))
+    const r = await fetch(`${baseUrl}/tasks/${encodeURIComponent(taskId)}`, {
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${key}` },
+    })
+    if (!r.ok) {
+      const errText = (await r.text()).slice(0, 400)
+      throw new Error(`Apimart task poll ${r.status}: ${errText}`)
+    }
+    const wrapper = (await r.json()) as { code?: number; data?: ApimartTaskResult; error?: { message?: string } }
+    const task = wrapper.data
+    if (!task) throw new Error(`Apimart task poll: no data in response (${JSON.stringify(wrapper).slice(0, 200)})`)
+    if (task.status === 'completed') {
+      const images = task.result?.images ?? []
+      const urls = images.flatMap((img) => (Array.isArray(img.url) ? img.url : (img.url ? [img.url] : [])))
+        .filter((u): u is string => Boolean(u))
+      if (urls.length === 0) throw new Error(`Apimart task ${taskId} completed but returned no image URLs`)
+      return urls
+    }
+    if (task.status === 'failed') {
+      throw new Error(`Apimart task ${taskId} failed: ${task.error?.message ?? 'unknown error'}`)
+    }
+    // Back off slightly on later polls so a stuck task doesn't hammer
+    // the endpoint, but cap at 5s so we don't add unnecessary latency
+    // for tasks that finish in the 8-12s window typical of Gemini.
+    interval = Math.min(5000, interval + 500)
+  }
+  throw new Error(`Apimart task ${taskId} timed out after ${Math.round(timeoutMs / 1000)}s`)
+}
+
+async function runApimartImage(
   prompt: string,
   aspect: string,
   numImages: number,
   refImages: string[] = [],
   model?: string,
-  sizeOverride?: string,
+  // sizeOverride is retained for callsite compatibility but ignored —
+  // api.apimart.ai expects aspect_ratio strings (e.g. "16:9"), not
+  // arbitrary pixel sizes. Panorama callers can request "2:1".
+  _sizeOverride?: string,
 ): Promise<string[]> {
-  const key = process.env.TOKENROUTER_API_KEY
-  if (!key) throw new Error('TOKENROUTER_API_KEY 未配置 — 无法生成图片')
+  const key = process.env.APIMART_API_KEY
+  if (!key) throw new Error('APIMART_API_KEY 未配置 — 无法生成图片')
 
-  const resolvedModel =
-    model || process.env.TOKENROUTER_IMAGE_MODEL || TOKENROUTER_IMAGE_MODEL
-  // params.size lets a caller pin an explicit pixel dimension (e.g.
-  // scene panoramas ask for '4096x2048' to get a true 4K 2:1 wrap).
-  // Default keeps the aspect→size map so existing callers behave the
-  // same. Falsy / non-string overrides fall through to the map.
-  const size = sizeOverride && /^\d+x\d+$/.test(sizeOverride)
-    ? sizeOverride
-    : tokenRouterImageSize(aspect)
-  const baseUrl = (process.env.TOKENROUTER_BASE_URL || TOKENROUTER_BASE_URL).replace(/\/$/, '')
+  const rawModel =
+    model || process.env.APIMART_IMAGE_MODEL || APIMART_IMAGE_MODEL
+  const resolvedModel = normalizeApimartImageModel(rawModel)
+  const baseUrl = (process.env.APIMART_BASE_URL || APIMART_BASE_URL).replace(/\/$/, '')
 
   const validRefs = refImages.filter((url) => /^https?:\/\//i.test(url) || url.startsWith('data:') || url.startsWith('/'))
   if (validRefs.length > REF_CAP) {
@@ -373,64 +483,102 @@ async function runTokenRouterImage(
   }
   const refs = validRefs.slice(0, REF_CAP)
 
-  let res!: Response
-  const endpointUsed = refs.length === 0 ? '/images/generations' : '/images/edits'
-
-  if (refs.length === 0) {
-    // No refs → pure text-to-image via /images/generations (JSON body).
-    res = await fetch(`${baseUrl}/images/generations`, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: resolvedModel, prompt, n: numImages, size }),
-    })
-  } else {
-    // Refs → /images/edits multipart (multi-ref GENERATION, not
-    // editing — verified A/B against TokenRouter; see doc block above).
-    const form = new FormData()
-    form.append('model', resolvedModel)
-    form.append('prompt', prompt)
-    form.append('n', String(numImages))
-    form.append('size', size)
-    let attached = 0
-    const skipped: string[] = []
-    for (let i = 0; i < refs.length; i++) {
-      try {
-        await attachMultipartImage(form, refs[i]!, i)
-        attached++
-      } catch (e) {
-        const msg = `ref ${i + 1} (${refs[i]?.slice(0, 60)}…): ${(e as Error).message}`
-        skipped.push(msg)
-        console.warn(`[image] skipping ${msg}`)
+  // Resolve refs to body-ready strings (data: URLs for local files,
+  // passthrough for public http(s)). One failed ref is tolerated; if
+  // all fail and we had refs to begin with, surface the underlying
+  // errors so the caller can fix bad URLs.
+  const imageRefs: string[] = []
+  const skipped: string[] = []
+  let totalBodyBytes = 0
+  for (let i = 0; i < refs.length; i++) {
+    try {
+      const v = await refToApimartImageRef(refs[i]!)
+      // Approximate the JSON body size (data URL strings dominate).
+      const addBytes = v.length + 4
+      if (imageRefs.length > 0 && totalBodyBytes + addBytes > APIMART_MULTIPART_BUDGET_BYTES) {
+        console.warn(
+          `[image] body budget hit at ref ${i + 1}/${refs.length}: cumulative=${totalBodyBytes}B, would add=${addBytes}B, cap=${APIMART_MULTIPART_BUDGET_BYTES}B — dropping remaining ${refs.length - i} refs.`,
+        )
+        break
       }
+      imageRefs.push(v)
+      totalBodyBytes += addBytes
+    } catch (e) {
+      skipped.push(`ref ${i + 1} (${refs[i]?.slice(0, 60)}…): ${(e as Error).message}`)
+      console.warn(`[image] skipping ref ${i + 1}: ${(e as Error).message}`)
     }
-    if (attached === 0) {
-      // Every ref failed to attach. Without this guard we'd ship an
-      // empty multipart and TokenRouter returns the cryptic
-      // `image is required` 500. Surface the actual loadRefAsBlob
-      // errors so the caller can fix the underlying URL problem.
-      throw new Error(
-        `图片生成失败：${refs.length} 张参考图全部无法读取，无法附加到 /images/edits 请求。详情：\n${skipped.join('\n')}`,
-      )
-    }
-    console.log(`[image] TokenRouter /images/edits (multi-ref gen)  model=${resolvedModel}  attached=${attached}/${refs.length}  size=${size}`)
-    res = await fetch(`${baseUrl}/images/edits`, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${key}` },
-      body: form,
-    })
+  }
+  if (refs.length > 0 && imageRefs.length === 0) {
+    throw new Error(
+      `图片生成失败：${refs.length} 张参考图全部无法解析。详情：\n${skipped.join('\n')}`,
+    )
   }
 
-  if (!res.ok) {
-    const errBody = (await res.text()).slice(0, 600)
-    throw new Error(`TokenRouter image ${res.status} (${endpointUsed}): ${errBody}`)
+  const body: Record<string, unknown> = {
+    model: resolvedModel,
+    prompt,
+    n: numImages,
+    aspect_ratio: aspect || '16:9',
+  }
+  if (imageRefs.length > 0) body.image = imageRefs
+
+  console.log(`[image] Apimart submit  model=${resolvedModel}  refs=${imageRefs.length}/${refs.length}  aspect=${aspect}  bodyKB=${(totalBodyBytes / 1024).toFixed(0)}`)
+  const submitRes = await fetch(`${baseUrl}/images/generations`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!submitRes.ok) {
+    const errBody = (await submitRes.text()).slice(0, 600)
+    throw new Error(`Apimart image submit ${submitRes.status}: ${errBody}`)
+  }
+  const submitJson = (await submitRes.json()) as {
+    code?: number
+    data?: Array<{ task_id?: string; status?: string }>
+    // Defensive: some legacy models may still respond synchronously
+    // with the old {data:[{url|b64_json}]} shape. We handle both.
+    images?: Array<{ url?: string; b64_json?: string }>
+    error?: { message?: string }
   }
 
-  const data = (await res.json()) as { data?: Array<{ url?: string; b64_json?: string }>; images?: Array<{ url?: string; b64_json?: string }> }
-  const images = data.data || data.images || []
-  const urls = images
-    .map((img) => img.url || (img.b64_json ? `data:image/png;base64,${img.b64_json}` : undefined))
-    .filter((url): url is string => Boolean(url))
-  return urls
+  // Sync-shaped legacy response (rare on api.apimart.ai but cheap to handle).
+  const legacyArr: Array<{ url?: string; b64_json?: string }> = []
+  for (const item of submitJson.data ?? []) {
+    if ((item as { url?: string }).url) legacyArr.push({ url: (item as { url?: string }).url })
+    if ((item as { b64_json?: string }).b64_json) legacyArr.push({ b64_json: (item as { b64_json?: string }).b64_json })
+  }
+  for (const item of submitJson.images ?? []) legacyArr.push(item)
+  const legacyUrls = legacyArr
+    .map((img) => img.url || (img.b64_json ? saveBase64ImageToUploads(img.b64_json) : undefined))
+    .filter((u): u is string => Boolean(u))
+  if (legacyUrls.length > 0) return legacyUrls
+
+  const taskId = submitJson.data?.[0]?.task_id
+  if (!taskId) {
+    throw new Error(
+      `Apimart image: no task_id in submit response (${JSON.stringify(submitJson).slice(0, 400)})`,
+    )
+  }
+  return await pollApimartTask(taskId)
+}
+
+/**
+ * Persist a base64 image returned by a provider (b64_json path) to
+ * public/uploads/ and return its `/uploads/<uuid>.<ext>` URL. The
+ * client must never see raw `data:image/png;base64,…` URLs — they
+ * land directly in Zustand stores, balloon the IDB snapshot past the
+ * 5 MB cap in idb-storage.ts, the write is silently refused, and on
+ * refresh the user's newly-generated keyframes/videos vanish.
+ */
+function saveBase64ImageToUploads(b64: string, mime = 'image/png'): string {
+  const ext = mime.includes('jpeg') || mime.includes('jpg') ? '.jpg'
+    : mime.includes('webp') ? '.webp'
+    : '.png'
+  const uploadsDir = join(process.cwd(), 'public', 'uploads')
+  mkdirSync(uploadsDir, { recursive: true })
+  const filename = `${randomUUID()}${ext}`
+  writeFileSync(join(uploadsDir, filename), Buffer.from(b64, 'base64'))
+  return `/uploads/${filename}`
 }
 
 async function runFalFluxImage(prompt: string, aspect: string, numImages: number, refImage?: string): Promise<string[]> {
@@ -465,26 +613,26 @@ async function runFluxImage(
   model?: string,
   sizeOverride?: string,
 ): Promise<string[]> {
-  // TokenRouter is the only image backend — FAL is no longer used here.
+  // Apimart is the only image backend — FAL is no longer used here.
   // Opt back in to FAL with ENABLE_FAL_IMAGE_FALLBACK=1 (off by default).
   try {
-    const urls = await runTokenRouterImage(prompt, aspect, numImages, refImages, model, sizeOverride)
+    const urls = await runApimartImage(prompt, aspect, numImages, refImages, model, sizeOverride)
     if (urls.length) return urls
-    throw new Error('TokenRouter 返回空结果')
+    throw new Error('Apimart 返回空结果')
   } catch (error) {
     if (process.env.ENABLE_FAL_IMAGE_FALLBACK === '1') {
-      console.warn(`[image] TokenRouter failed; FAL fallback enabled: ${(error as Error).message}`)
+      console.warn(`[image] Apimart failed; FAL fallback enabled: ${(error as Error).message}`)
       return runFalFluxImage(prompt, aspect, numImages, refImages[0])
     }
-    throw new Error(`图片生成失败 (TokenRouter): ${(error as Error).message}`)
+    throw new Error(`图片生成失败 (Apimart): ${(error as Error).message}`)
   }
 }
 
 /**
- * Read an optional TokenRouter model id from caller params. Director-
+ * Read an optional Apimart model id from caller params. Director-
  * agent pins this (currently `openai/gpt-5.4-image-2`); other call
  * sites can omit it and accept the env default. Any non-tokenrouter
- * provider hint is ignored — TokenRouter is the only image backend.
+ * provider hint is ignored — Apimart is the only image backend.
  */
 function modelFromParams(params: Record<string, unknown> | undefined): string | undefined {
   const m = params?.model
@@ -495,7 +643,7 @@ function modelFromParams(params: Record<string, unknown> | undefined): string | 
 // (the gpt-image-2 max — long edge ≤ 3840). Anything that doesn't look
 // like `<digits>x<digits>` is ignored and the aspect→size default kicks
 // in. Keep validation here so a typo at the call site doesn't propagate
-// into a TokenRouter 400.
+// into an Apimart 400.
 function sizeFromParams(params: Record<string, unknown> | undefined): string | undefined {
   const s = params?.size
   return typeof s === 'string' && /^\d+x\d+$/.test(s) ? s : undefined
@@ -995,6 +1143,27 @@ function hasSeedanceImageParts(contentParts: Array<Record<string, unknown>>): bo
   return contentParts.some((part) => part.type === 'image_url' && typeof (part.image_url as { url?: unknown } | undefined)?.url === 'string')
 }
 
+/**
+ * BytePlus海外 (Dreamina — Seedance / Seedream) base URL.
+ * Honors ARK_BASE_URL / ARK_API_BASE_URL so an operator can flip the host
+ * via env without a code change. Defaults to ap-southeast.bytepluses.com —
+ * the legacy cn-beijing.volces.com (火山方舟国内) endpoint was removed.
+ */
+function arkBaseUrl(): string {
+  const raw = process.env.ARK_BASE_URL || process.env.ARK_API_BASE_URL || 'https://ark.ap-southeast.bytepluses.com/api/v3'
+  return raw.replace(/\/+$/, '')
+}
+
+/**
+ * Default Seedance model id. Prefers SEEDANCE_MODEL / SEEDANCE_ENDPOINT
+ * because BytePlus海外 expects an account-specific endpoint id (e.g.
+ * `ep-20260423151341-p2zm9`) rather than the universal model name; the
+ * universal `dreamina-seedance-2-0-fast-260128` is kept as a sane fallback.
+ */
+function defaultSeedanceModel(): string {
+  return process.env.SEEDANCE_MODEL || process.env.SEEDANCE_ENDPOINT || process.env.ARK_SEEDANCE_ENDPOINT || 'dreamina-seedance-2-0-fast-260128'
+}
+
 /** Shared Seedance task submission — handles content parts + polling. */
 async function submitSeedanceTaskOnce(opts: {
   contentParts: Array<Record<string, unknown>>
@@ -1006,9 +1175,13 @@ async function submitSeedanceTaskOnce(opts: {
   seed?: number
   invitedImageAssetIds?: string[]
 }): Promise<string> {
-  const key = process.env.ARK_API_KEY
-  if (!key) throw new Error('ARK_API_KEY not set')
+  // Prefer BYTEPLUS_ARK_API_KEY (海外侧 ark-* Bearer token); fall back to
+  // the legacy ARK_API_KEY for envs that haven't been migrated yet. The
+  // legacy key was a Volcengine cn-beijing token and is no longer accepted.
+  const key = process.env.BYTEPLUS_ARK_API_KEY || process.env.ARK_API_KEY
+  if (!key) throw new Error('BYTEPLUS_ARK_API_KEY (or legacy ARK_API_KEY) not set')
   const headers = { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' }
+  const base = arkBaseUrl()
 
   // Inline any root-relative refs (/uploads/, /voices/) as data URLs so
   // BytePlus can actually fetch them — it sits in ap-southeast and can't
@@ -1016,7 +1189,7 @@ async function submitSeedanceTaskOnce(opts: {
   const content = await inlineLocalRefsInContentParts(opts.contentParts)
 
   const body: Record<string, unknown> = {
-    model: opts.model ?? 'doubao-seedance-2-0-260128',
+    model: opts.model ?? defaultSeedanceModel(),
     content,
     resolution: opts.resolution ?? '480p',
     ratio: opts.aspect ?? '16:9',
@@ -1031,16 +1204,16 @@ async function submitSeedanceTaskOnce(opts: {
     body.invited_images = opts.invitedImageAssetIds.map((id) => ({ asset_id: id }))
   }
 
-  const createRes = await fetch('https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks', {
+  const createRes = await fetch(`${base}/contents/generations/tasks`, {
     method: 'POST', headers,
     body: JSON.stringify(body),
   })
-  if (!createRes.ok) throw new Error(`Doubao create ${createRes.status}: ${await createRes.text()}`)
+  if (!createRes.ok) throw new Error(`BytePlus create ${createRes.status}: ${await createRes.text()}`)
   const taskId = ((await createRes.json()) as { id?: string }).id
-  if (!taskId) throw new Error('Doubao: no task id')
+  if (!taskId) throw new Error('BytePlus: no task id')
 
   return poll<string>(async () => {
-    const r = await fetch(`https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/${taskId}`, { headers })
+    const r = await fetch(`${base}/contents/generations/tasks/${taskId}`, { headers })
     if (!r.ok) return { done: false, error: `status ${r.status}` }
     const d = (await r.json()) as Record<string, unknown>
     const status = d.status as string | undefined
@@ -1102,7 +1275,7 @@ async function textToVideo(req: CapReq): Promise<CapRes> {
   const type = detectVideoType({ images, videos, audios, mode })
   const contentParts = buildContentParts(text, { images, videos, audios, mode }, type)
 
-  const model = (req.params?.model as string) || 'doubao-seedance-2-0-260128'
+  const model = (req.params?.model as string) || 'dreamina-seedance-2-0-fast-260128'
   const resolution = (req.params?.resolution as string) || '480p'
   const aspect = (req.params?.aspect as string) || '16:9'
   const duration = Number(req.params?.duration ?? 5)
@@ -1155,7 +1328,7 @@ async function universalToVideo(req: CapReq): Promise<CapRes> {
 
   const url = await submitSeedanceTask({
     contentParts,
-    model: (req.params?.model as string) || 'doubao-seedance-2-0-260128',
+    model: (req.params?.model as string) || 'dreamina-seedance-2-0-fast-260128',
     resolution: (req.params?.resolution as string) || '480p',
     aspect: (req.params?.aspect as string) || '16:9',
     duration: Number(req.params?.duration ?? 5),
@@ -1455,15 +1628,15 @@ export function capabilitiesPlugin(): Plugin {
             { id: 'fal-ai/flux-pro/v1.1', label: 'FLUX Pro v1.1', provider: 'fal', costPer: 0.05, supportsRef: false },
             { id: 'fal-ai/flux-pro/v1.1-ultra', label: 'FLUX Pro Ultra', provider: 'fal', costPer: 0.08, supportsRef: false },
             { id: 'fal-ai/flux/dev', label: 'FLUX Dev', provider: 'fal', costPer: 0.025, supportsRef: false },
-            { id: 'doubao-seedream-5-0-260128', label: 'Seedream 5.0', provider: 'doubao', costPer: 0.04, supportsRef: true },
-            { id: 'doubao-seedream-4-5-251128', label: 'Seedream 4.5', provider: 'doubao', costPer: 0.02, supportsRef: true },
+            { id: 'dreamina-seedream-5-0-260128', label: 'Seedream 5.0', provider: 'doubao', costPer: 0.04, supportsRef: true },
+            { id: 'dreamina-seedream-4-5-251128', label: 'Seedream 4.5', provider: 'doubao', costPer: 0.02, supportsRef: true },
             { id: 'dall-e-3', label: 'DALL·E 3', provider: 'openai', costPer: 0.04, supportsRef: false },
             { id: 'gpt-image-1', label: 'GPT Image 1', provider: 'openai', costPer: 0.04, supportsRef: false },
           ],
           video: [
-            { id: 'doubao-seedance-2-0-260128', label: 'Seedance 2.0 Fast', provider: 'doubao', costPer: 0.35, supportsAudio: true, supportsRef: true, durations: [5, 10] },
-            { id: 'doubao-seedance-2-0-260128', label: 'Seedance 2.0', provider: 'doubao', costPer: 0.70, supportsAudio: true, supportsRef: true, durations: [5, 10] },
-            { id: 'doubao-seedance-1-5-pro-251215', label: 'Seedance 1.5 Pro', provider: 'doubao', costPer: 0.50, supportsAudio: true, supportsRef: true, durations: [5, 10] },
+            { id: 'dreamina-seedance-2-0-fast-260128', label: 'Seedance 2.0 Fast', provider: 'doubao', costPer: 0.35, supportsAudio: true, supportsRef: true, durations: [5, 10] },
+            { id: 'dreamina-seedance-2-0-260128', label: 'Seedance 2.0', provider: 'doubao', costPer: 0.70, supportsAudio: true, supportsRef: true, durations: [5, 10] },
+            { id: 'dreamina-seedance-1-5-pro-251215', label: 'Seedance 1.5 Pro', provider: 'doubao', costPer: 0.50, supportsAudio: true, supportsRef: true, durations: [5, 10] },
             { id: 'fal-ai/kling-video/v1.5/pro/text-to-video', label: 'Kling v1.5 Pro', provider: 'fal', costPer: 0.45, supportsAudio: false, supportsRef: false, durations: [5, 10] },
             { id: 'fal-ai/kling-video/v1/standard/text-to-video', label: 'Kling v1 Standard', provider: 'fal', costPer: 0.20, supportsAudio: false, supportsRef: false, durations: [5, 10] },
             { id: 'fal-ai/minimax/video-01/text-to-video', label: 'MiniMax Hailuo', provider: 'fal', costPer: 0.30, supportsAudio: false, supportsRef: false, durations: [6] },

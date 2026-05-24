@@ -41,10 +41,13 @@ const TPL = {
 // Seedance 2.0 is the contracted camera. Pin both ids here so successive
 // shoots stay deterministic and a future model bump is a one-line change.
 
+// Provider id is the BytePlus海外 (Dreamina) route. The string 'doubao' is
+// retained as a stable internal identifier so persisted IndexedDB state from
+// older builds still resolves; all calls hit ark.ap-southeast.bytepluses.com.
 export const SHOOT_PROVIDER = 'doubao'
-// Default to the full Seedance 2.0 model (not the -fast variant) so 480p
-// shoots have the higher-quality model behind them.
-export const SHOOT_MODEL = 'doubao-seedance-2-0-260128'
+// Default to the Dreamina Seedance 2.0 Fast endpoint — what BytePlus海外
+// actually resolves the doubao-seedance-2-0-* aliases to.
+export const SHOOT_MODEL = 'dreamina-seedance-2-0-fast-260128'
 export const SHOOT_RESOLUTION_DEFAULT: '480p' | '720p' | '1080p' = '480p'
 const MIN_DURATION = 5
 const MAX_DURATION = 15

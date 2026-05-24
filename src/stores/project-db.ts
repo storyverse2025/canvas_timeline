@@ -247,7 +247,7 @@ const DEFAULT_ART_DIRECTION: ArtDirection = {
   stylePreset: 'anime_psych_thriller_motion_comic',
   customStyle: '',
   defaultImageModel: 'openai/gpt-5.4-image-2',
-  defaultVideoModel: 'doubao-seedance-2-0-260128',
+  defaultVideoModel: 'dreamina-seedance-2-0-fast-260128',
   defaultAspectRatio: '16:9',
   updatedAt: 0,
 }
@@ -504,13 +504,28 @@ export const useProjectDB = create<ProjectDBState & ProjectDBActions>()(
     })),
     {
       name: 'project-db',
-      version: 2,
+      version: 3,
       storage: createJSONStorage(() => createIdbStorage('project-db')),
       migrate: (state, fromVersion) => {
         if (fromVersion < 2 && state && typeof state === 'object') {
           const s = state as { artDirection?: ArtDirection }
           if (s.artDirection?.defaultImageModel === 'fal-ai/flux-pro/v1.1') {
             s.artDirection.defaultImageModel = 'openai/gpt-5.4-image-2'
+          }
+        }
+        // v3: Doubao (cn-beijing 火山方舟) → BytePlus海外 (Dreamina). Model id
+        // prefix changed from `doubao-` to `dreamina-`. Rewrite any stored
+        // defaultVideoModel / defaultImageModel that still uses the old
+        // prefix so existing projects don't ship a 404 model string.
+        if (fromVersion < 3 && state && typeof state === 'object') {
+          const s = state as { artDirection?: ArtDirection }
+          const rename = (m: string | undefined): string | undefined =>
+            m && /^doubao-(seedance|seedream)-/.test(m) ? m.replace(/^doubao-/, 'dreamina-') : m
+          if (s.artDirection) {
+            const v = rename(s.artDirection.defaultVideoModel)
+            if (v) s.artDirection.defaultVideoModel = v
+            const i = rename(s.artDirection.defaultImageModel)
+            if (i) s.artDirection.defaultImageModel = i
           }
         }
         return state as ProjectDBState & ProjectDBActions
