@@ -1,5 +1,27 @@
 import type { Plugin } from 'vite'
 import type { IncomingMessage, ServerResponse } from 'http'
+import { writeFileSync, mkdirSync } from 'fs'
+import { join } from 'path'
+import { randomUUID } from 'crypto'
+
+/**
+ * Persist a base64 image returned by a provider (b64_json path) to
+ * public/uploads/ and return its `/uploads/<uuid>.<ext>` URL. The
+ * client must never see raw `data:image/png;base64,…` URLs — they end
+ * up in Zustand stores, balloon the IDB snapshot past the 5 MB cap in
+ * idb-storage.ts, and the silent write-refusal makes new items vanish
+ * on refresh.
+ */
+function saveBase64ImageToUploads(b64: string, mime = 'image/png'): string {
+  const ext = mime.includes('jpeg') || mime.includes('jpg') ? '.jpg'
+    : mime.includes('webp') ? '.webp'
+    : '.png'
+  const uploadsDir = join(process.cwd(), 'public', 'uploads')
+  mkdirSync(uploadsDir, { recursive: true })
+  const filename = `${randomUUID()}${ext}`
+  writeFileSync(join(uploadsDir, filename), Buffer.from(b64, 'base64'))
+  return `/uploads/${filename}`
+}
 
 interface Req {
   provider: string;
@@ -82,10 +104,26 @@ async function runFal(req: Req): Promise<{ url: string; kind: 'image' | 'video';
   return { url: urls[0], kind: 'image', urls: urls.length > 1 ? urls : undefined }
 }
 
-// ─── Doubao (火山方舟) ─────────────────────────────────────────────────
-async function runDoubaoImage(req: Req): Promise<{ url: string; kind: 'image' }> {
-  const key = process.env.ARK_API_KEY
-  if (!key) throw new Error('ARK_API_KEY not set')
+// ─── BytePlus Ark (Dreamina — Seedance / Seedream) ────────────────────
+// Routed through ark.ap-southeast.bytepluses.com (BytePlus海外侧).
+// The legacy cn-beijing.volces.com (火山方舟国内) endpoints were removed —
+// they bill against a different account that ran out of balance.
+//
+// Bearer token: BYTEPLUS_ARK_API_KEY (海外侧 ark-*); ARK_API_KEY is
+// honored as a legacy fallback for envs that haven't been migrated.
+// Base URL: ARK_BASE_URL / ARK_API_BASE_URL; defaults to海外侧.
+function bytePlusApiKey(): string {
+  const k = process.env.BYTEPLUS_ARK_API_KEY || process.env.ARK_API_KEY
+  if (!k) throw new Error('BYTEPLUS_ARK_API_KEY (or legacy ARK_API_KEY) not set')
+  return k
+}
+function bytePlusBaseUrl(): string {
+  const raw = process.env.ARK_BASE_URL || process.env.ARK_API_BASE_URL || 'https://ark.ap-southeast.bytepluses.com/api/v3'
+  return raw.replace(/\/+$/, '')
+}
+
+async function runBytePlusImage(req: Req): Promise<{ url: string; kind: 'image' }> {
+  const key = bytePlusApiKey()
   // Seedream 5.0+ requires ≥ 3,686,400 pixels (2K). Older models accept 1K.
   const needs2K = /seedream-[5-9]|seedream-\d{2,}/i.test(req.model)
   const size2K: Record<string, string> = {
@@ -112,22 +150,22 @@ async function runDoubaoImage(req: Req): Promise<{ url: string; kind: 'image' }>
   if (validRefs.length > 0) {
     body.image = validRefs.length === 1 ? validRefs[0] : validRefs.slice(0, 10)
   }
-  const res = await fetch('https://ark.cn-beijing.volces.com/api/v3/images/generations', {
+  const res = await fetch(`${bytePlusBaseUrl()}/images/generations`, {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  if (!res.ok) throw new Error(`Doubao ${res.status}: ${await res.text()}`)
+  if (!res.ok) throw new Error(`BytePlus ${res.status}: ${await res.text()}`)
   const data = (await res.json()) as { data?: { url: string }[] }
   const url = data.data?.[0]?.url
-  if (!url) throw new Error('Doubao: no image in response')
+  if (!url) throw new Error('BytePlus: no image in response')
   return { url, kind: 'image' }
 }
 
-async function runDoubaoVideo(req: Req): Promise<{ url: string; kind: 'video' }> {
-  const key = process.env.ARK_API_KEY
-  if (!key) throw new Error('ARK_API_KEY not set')
+async function runBytePlusVideo(req: Req): Promise<{ url: string; kind: 'video' }> {
+  const key = bytePlusApiKey()
   const headers = { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' }
+  const base = bytePlusBaseUrl()
 
   // Create async task using Seedance 2.0 API format
   const contentParts: Array<Record<string, unknown>> = [
@@ -151,15 +189,15 @@ async function runDoubaoVideo(req: Req): Promise<{ url: string; kind: 'video' }>
     generate_audio: req.generateAudio ?? true,
   }
   if (req.seed != null && req.seed >= 0) body.seed = req.seed
-  const createRes = await fetch('https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks', {
+  const createRes = await fetch(`${base}/contents/generations/tasks`, {
     method: 'POST',
     headers,
     body: JSON.stringify(body),
   })
-  if (!createRes.ok) throw new Error(`Doubao video create ${createRes.status}: ${await createRes.text()}`)
+  if (!createRes.ok) throw new Error(`BytePlus video create ${createRes.status}: ${await createRes.text()}`)
   const createData = (await createRes.json()) as { id?: string }
   const taskId = createData.id
-  if (!taskId) throw new Error('Doubao: no task id')
+  if (!taskId) throw new Error('BytePlus: no task id')
 
   const extractVideoUrl = (d: Record<string, unknown>): string | null => {
     const candidates = [
@@ -172,7 +210,7 @@ async function runDoubaoVideo(req: Req): Promise<{ url: string; kind: 'video' }>
 
   const url = await poll<string>(
     async () => {
-      const r = await fetch(`https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/${taskId}`, { headers })
+      const r = await fetch(`${base}/contents/generations/tasks/${taskId}`, { headers })
       if (!r.ok) return { done: false, error: `status ${r.status}: ${await r.text()}` }
       const d = (await r.json()) as Record<string, unknown>
       const status = d.status as string | undefined
@@ -205,31 +243,48 @@ async function runOpenAI(req: Req): Promise<{ url: string; kind: 'image' }> {
   if (!res.ok) throw new Error(`OpenAI ${res.status}: ${await res.text()}`)
   const data = (await res.json()) as { data?: { url?: string; b64_json?: string }[] }
   const item = data.data?.[0]
-  const url = item?.url ?? (item?.b64_json ? `data:image/png;base64,${item.b64_json}` : undefined)
+  const url = item?.url ?? (item?.b64_json ? saveBase64ImageToUploads(item.b64_json) : undefined)
   if (!url) throw new Error('OpenAI: no image')
   return { url, kind: 'image' }
 }
 
-// ─── TokenRouter (OpenAI-compatible) ─────────────────────────────────
-const TOKENROUTER_BASE_URL = 'https://www.tokenrouter.com/backend-api/v1'
-const TOKENROUTER_TEXT_MODEL = 'google/gemini-3-flash-preview'
+// ─── Apimart (OpenAI-compatible) ─────────────────────────────────
+//
+// 2026-05-23: Apimart migrated to api.apimart.ai + a task-based image
+// API. See the matching comment in vite-capabilities-plugin.ts for the
+// full rationale; this plugin handles the /providers/generate path
+// (GenerateDialog and direct provider calls) — same shape, separate
+// codebase by design.
+const APIMART_BASE_URL = 'https://api.apimart.ai/v1'
+const APIMART_TEXT_MODEL = 'gemini-3-flash-preview'
 
-const TR_IMAGE_SIZE: Record<string, string> = {
-  '1:1': '1024x1024', '9:16': '1024x1792', '16:9': '1792x1024', '4:3': '1536x1152', '3:4': '1152x1536',
+function normalizeApimartImageModel(model: string): string {
+  const aliases: Record<string, string> = {
+    'openai/gpt-5.4-image-2': 'gpt-image-2',
+    'openai/gpt-5.4-image': 'gpt-image-2',
+    'openai/gpt-image-2': 'gpt-image-2',
+    'google/gemini-3-flash-preview-image': 'gemini-3-flash-preview-image-preview-official',
+    'google/gemini-3.1-flash-image-preview': 'gemini-3.1-flash-image-preview-official',
+    'google/gemini-3-pro-image-preview': 'gemini-3-pro-image-preview',
+  }
+  if (aliases[model]) return aliases[model]!
+  const slash = model.indexOf('/')
+  if (slash > 0) return model.slice(slash + 1)
+  return model
 }
 
-function tokenRouterBaseUrl(): string {
-  return (process.env.TOKENROUTER_BASE_URL || TOKENROUTER_BASE_URL).replace(/\/$/, '')
+function apimartBaseUrl(): string {
+  return (process.env.APIMART_BASE_URL || APIMART_BASE_URL).replace(/\/$/, '')
 }
 
-async function tokenRouterChat(systemPrompt: string, userText: string, temperature?: number): Promise<string> {
-  const key = process.env.TOKENROUTER_API_KEY
-  if (!key) throw new Error('TOKENROUTER_API_KEY not set')
-  const res = await fetch(`${tokenRouterBaseUrl()}/chat/completions`, {
+async function apimartChat(systemPrompt: string, userText: string, temperature?: number): Promise<string> {
+  const key = process.env.APIMART_API_KEY
+  if (!key) throw new Error('APIMART_API_KEY not set')
+  const res = await fetch(`${apimartBaseUrl()}/chat/completions`, {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: process.env.TOKENROUTER_TEXT_MODEL || TOKENROUTER_TEXT_MODEL,
+      model: process.env.APIMART_TEXT_MODEL || APIMART_TEXT_MODEL,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userText },
@@ -237,14 +292,14 @@ async function tokenRouterChat(systemPrompt: string, userText: string, temperatu
       ...(temperature != null ? { temperature } : {}),
     }),
   })
-  if (!res.ok) throw new Error(`TokenRouter chat ${res.status}: ${await res.text()}`)
+  if (!res.ok) throw new Error(`Apimart chat ${res.status}: ${await res.text()}`)
   const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
   const text = data.choices?.[0]?.message?.content?.trim()
-  if (!text) throw new Error('TokenRouter: empty response')
+  if (!text) throw new Error('Apimart: empty response')
   return text
 }
 
-// ─── TokenRouter image (covers gemini provider + tokenrouter provider) ─────
+// ─── Apimart image (covers gemini provider + tokenrouter provider) ─────
 //
 // Reference images for gpt-image-2 / openai/gpt-5.4-image-2 must go
 // through /v1/images/edits (multipart, `image[]` repeated) — the
@@ -270,111 +325,192 @@ function maybeLocalPathFor(url: string): string | null {
   return null
 }
 
-async function fetchRefAsBlob(url: string, idx: number): Promise<Blob> {
-  let mime = 'image/png'
-  let buf: Buffer
-  if (url.startsWith('data:')) {
-    const m = url.match(/^data:([^;]+);base64,(.+)$/)
-    if (!m) throw new Error(`bad data url for ref ${idx + 1}`)
-    mime = m[1]!
-    buf = Buffer.from(m[2]!, 'base64')
-  } else {
-    const localPath = maybeLocalPathFor(url)
-    if (localPath) {
-      // Same-origin shortcut: read from public/ on disk, bypassing nginx.
-      const { readFileSync } = await import('fs')
-      const { join } = await import('path')
-      const decoded = decodeURIComponent(localPath.split('?')[0] ?? localPath)
-      buf = readFileSync(join(process.cwd(), 'public', decoded))
-      const lower = decoded.toLowerCase()
-      if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) mime = 'image/jpeg'
-      else if (lower.endsWith('.webp')) mime = 'image/webp'
-    } else {
-      const r = await fetch(url)
-      if (!r.ok) throw new Error(`fetch ref ${idx + 1} failed: HTTP ${r.status}`)
-      const ct = r.headers.get('content-type') || ''
-      const head = ct.split(';')[0]?.trim().toLowerCase() ?? ''
-      if (head === 'image/jpeg' || head === 'image/jpg') mime = 'image/jpeg'
-      else if (head === 'image/webp') mime = 'image/webp'
-      else if (head === 'image/png') mime = 'image/png'
-      buf = Buffer.from(await r.arrayBuffer())
-    }
+const REF_MAX_EDGE = 1280
+const REF_JPEG_QUALITY = 85
+
+/**
+ * Safety cap for the total multipart body shipped to Apimart /images/edits.
+ * See vite-capabilities-plugin.ts for the full rationale — keep the two
+ * values in sync (intentionally duplicated; the plugins target different
+ * code paths and don't share helpers).
+ */
+const APIMART_MULTIPART_BUDGET_BYTES = 18 * 1024 * 1024
+
+async function compressRefForUpload(
+  buf: Buffer,
+): Promise<{ buf: Buffer; mime: string; ext: string }> {
+  try {
+    const sharpMod = await import('sharp')
+    const sharp = sharpMod.default
+    const out = await sharp(buf, { failOn: 'none' })
+      .rotate() // honor EXIF orientation before resize
+      .resize({
+        width: REF_MAX_EDGE,
+        height: REF_MAX_EDGE,
+        fit: 'inside',
+        withoutEnlargement: true,
+      })
+      .jpeg({ quality: REF_JPEG_QUALITY, mozjpeg: true })
+      .toBuffer()
+    return { buf: out, mime: 'image/jpeg', ext: 'jpg' }
+  } catch (e) {
+    console.warn(`[providers] sharp compress failed (${(e as Error).message}); using raw buffer`)
+    return { buf, mime: 'image/png', ext: 'png' }
   }
-  return new Blob([buf], { type: mime })
 }
 
-async function runTokenRouterImage(req: Req, providerPrefix?: string): Promise<{ url: string; kind: 'image' }> {
-  const key = process.env.TOKENROUTER_API_KEY
-  if (!key) throw new Error('TOKENROUTER_API_KEY not set')
-  // Accept either bare model id (e.g. "gpt-5.4-image-2") or full TokenRouter id ("openai/...", "google/...")
-  const model = req.model.includes('/') ? req.model : `${providerPrefix ?? ''}${req.model}`
-  const size = TR_IMAGE_SIZE[req.aspect ?? '16:9'] ?? '1024x1024'
-  // Cap raised from 3 → 8 to cover char1+char2+scene+2 props+prior with
-  // headroom; tail refs beyond the cap are explicitly logged, not silent.
+/**
+ * Resolve a ref URL for the api.apimart.ai `image: [...]` body field.
+ * - data: URLs → passthrough.
+ * - same-origin /uploads/ → read from disk, compress, return as data URL
+ *   (nginx 403s server-to-server fetches of /uploads/ on the public IP).
+ * - public http(s):// → passthrough.
+ */
+async function refToApimartImageRef(url: string): Promise<string> {
+  if (url.startsWith('data:')) return url
+  let buf: Buffer | null = null
+  if (/^https?:\/\//i.test(url)) {
+    const local = maybeLocalPathFor(url)
+    if (!local) return url
+    const { readFileSync } = await import('fs')
+    const { join } = await import('path')
+    const decoded = decodeURIComponent(local.split('?')[0] ?? local)
+    buf = readFileSync(join(process.cwd(), 'public', decoded))
+  } else {
+    const { readFileSync } = await import('fs')
+    const { join } = await import('path')
+    const decoded = decodeURIComponent(url.split('?')[0] ?? url)
+    buf = readFileSync(join(process.cwd(), 'public', decoded))
+  }
+  const compressed = await compressRefForUpload(buf!)
+  return `data:${compressed.mime};base64,${compressed.buf.toString('base64')}`
+}
+
+interface ApimartTaskResult {
+  status: 'pending' | 'in_progress' | 'completed' | 'failed' | string
+  progress?: number
+  result?: { images?: Array<{ url?: string | string[]; expires_at?: number }> }
+  error?: { code?: string; message?: string }
+}
+
+async function pollApimartTask(taskId: string, opts: { timeoutMs?: number } = {}): Promise<string[]> {
+  const key = process.env.APIMART_API_KEY
+  if (!key) throw new Error('APIMART_API_KEY missing')
+  const timeoutMs = opts.timeoutMs ?? 180_000
+  const deadline = Date.now() + timeoutMs
+  let interval = 2000
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, interval))
+    const r = await fetch(`${apimartBaseUrl()}/tasks/${encodeURIComponent(taskId)}`, {
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${key}` },
+    })
+    if (!r.ok) {
+      const errText = (await r.text()).slice(0, 400)
+      throw new Error(`Apimart task poll ${r.status}: ${errText}`)
+    }
+    const wrapper = (await r.json()) as { code?: number; data?: ApimartTaskResult; error?: { message?: string } }
+    const task = wrapper.data
+    if (!task) throw new Error(`Apimart task poll: no data in response (${JSON.stringify(wrapper).slice(0, 200)})`)
+    if (task.status === 'completed') {
+      const images = task.result?.images ?? []
+      const urls = images.flatMap((img) => (Array.isArray(img.url) ? img.url : (img.url ? [img.url] : [])))
+        .filter((u): u is string => Boolean(u))
+      if (urls.length === 0) throw new Error(`Apimart task ${taskId} completed but returned no image URLs`)
+      return urls
+    }
+    if (task.status === 'failed') {
+      throw new Error(`Apimart task ${taskId} failed: ${task.error?.message ?? 'unknown error'}`)
+    }
+    interval = Math.min(5000, interval + 500)
+  }
+  throw new Error(`Apimart task ${taskId} timed out after ${Math.round(timeoutMs / 1000)}s`)
+}
+
+async function runApimartImage(req: Req, providerPrefix?: string): Promise<{ url: string; kind: 'image' }> {
+  const key = process.env.APIMART_API_KEY
+  if (!key) throw new Error('APIMART_API_KEY not set')
+  const rawModel = req.model.includes('/') ? req.model : `${providerPrefix ?? ''}${req.model}`
+  const model = normalizeApimartImageModel(rawModel)
   const REF_CAP = 8
-  const allRefs = (req.refImages ?? []).filter((u) => /^https?:\/\//i.test(u) || u.startsWith('data:'))
+  const allRefs = (req.refImages ?? []).filter((u) => /^https?:\/\//i.test(u) || u.startsWith('data:') || u.startsWith('/'))
   if (allRefs.length > REF_CAP) {
     console.warn(`[providers] ref cap (${REF_CAP}) hit — dropping ${allRefs.length - REF_CAP} of ${allRefs.length} refs.`)
   }
   const refs = allRefs.slice(0, REF_CAP)
 
-  // 0 refs → /images/generations (JSON).  N refs → /images/edits
-  // (multipart, `image` repeated). Verified A/B against TokenRouter:
-  // /generations silently ignores any JSON ref field (including
-  // `reference_images`); /edits is the only path that actually
-  // conditions output on the supplied images. Despite the endpoint
-  // name, this is MULTI-REF GENERATION (no editing happens — inputs
-  // are unchanged, output is a new image).
-  let res: Response
-  const endpointUsed = refs.length === 0 ? '/images/generations' : '/images/edits'
-  if (refs.length === 0) {
-    res = await fetch(`${tokenRouterBaseUrl()}/images/generations`, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, prompt: req.prompt, n: req.numImages ?? 1, size }),
-    })
-  } else {
-    const form = new FormData()
-    form.append('model', model)
-    form.append('prompt', req.prompt)
-    form.append('n', String(req.numImages ?? 1))
-    form.append('size', size)
-    let attached = 0
-    const skipped: string[] = []
-    for (let i = 0; i < refs.length; i++) {
-      try {
-        const blob = await fetchRefAsBlob(refs[i]!, i)
-        const ext = blob.type.includes('jpeg') ? 'jpg' : blob.type.includes('webp') ? 'webp' : 'png'
-        form.append('image', blob, `ref-${i + 1}.${ext}`)
-        attached++
-      } catch (e) {
-        const msg = `ref ${i + 1} (${refs[i]?.slice(0, 60)}…): ${(e as Error).message}`
-        skipped.push(msg)
-        console.warn(`[providers] skipping ${msg}`)
+  const imageRefs: string[] = []
+  const skipped: string[] = []
+  let totalBodyBytes = 0
+  for (let i = 0; i < refs.length; i++) {
+    try {
+      const v = await refToApimartImageRef(refs[i]!)
+      const addBytes = v.length + 4
+      if (imageRefs.length > 0 && totalBodyBytes + addBytes > APIMART_MULTIPART_BUDGET_BYTES) {
+        console.warn(
+          `[providers] body budget hit at ref ${i + 1}/${refs.length}: cumulative=${totalBodyBytes}B, would add=${addBytes}B, cap=${APIMART_MULTIPART_BUDGET_BYTES}B — dropping remaining ${refs.length - i} refs.`,
+        )
+        break
       }
+      imageRefs.push(v)
+      totalBodyBytes += addBytes
+    } catch (e) {
+      const msg = `ref ${i + 1} (${refs[i]?.slice(0, 60)}…): ${(e as Error).message}`
+      skipped.push(msg)
+      console.warn(`[providers] skipping ${msg}`)
     }
-    if (attached === 0) {
-      throw new Error(
-        `图片生成失败：${refs.length} 张参考图全部无法读取，无法附加到 /images/edits 请求。详情：\n${skipped.join('\n')}`,
-      )
-    }
-    console.log(`[providers] TokenRouter /images/edits (multi-ref gen)  model=${model}  attached=${attached}/${refs.length}  size=${size}`)
-    res = await fetch(`${tokenRouterBaseUrl()}/images/edits`, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${key}` },
-      body: form,
-    })
   }
-  if (!res.ok) {
-    const err = (await res.text()).slice(0, 600)
-    throw new Error(`TokenRouter image ${res.status} (${endpointUsed}): ${err}`)
+  if (refs.length > 0 && imageRefs.length === 0) {
+    throw new Error(`图片生成失败：${refs.length} 张参考图全部无法读取。详情：\n${skipped.join('\n')}`)
   }
-  const data = (await res.json()) as { data?: Array<{ url?: string; b64_json?: string }>; images?: Array<{ url?: string; b64_json?: string }> }
-  const items = data.data || data.images || []
-  const first = items[0]
-  const url = first?.url || (first?.b64_json ? `data:image/png;base64,${first.b64_json}` : undefined)
-  if (!url) throw new Error('TokenRouter: no image in response')
-  return { url, kind: 'image' }
+
+  const body: Record<string, unknown> = {
+    model,
+    prompt: req.prompt,
+    n: req.numImages ?? 1,
+    aspect_ratio: req.aspect ?? '16:9',
+  }
+  if (imageRefs.length > 0) body.image = imageRefs
+
+  console.log(`[providers] Apimart submit  model=${model}  refs=${imageRefs.length}/${refs.length}  aspect=${req.aspect ?? '16:9'}  bodyKB=${(totalBodyBytes / 1024).toFixed(0)}`)
+  const submitRes = await fetch(`${apimartBaseUrl()}/images/generations`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!submitRes.ok) {
+    const err = (await submitRes.text()).slice(0, 600)
+    throw new Error(`Apimart image submit ${submitRes.status}: ${err}`)
+  }
+  const submitJson = (await submitRes.json()) as {
+    code?: number
+    data?: Array<{ task_id?: string; url?: string; b64_json?: string }>
+    images?: Array<{ url?: string; b64_json?: string }>
+    error?: { message?: string }
+  }
+
+  // Tolerate a sync legacy response (some models or fallback paths
+  // may still return {data:[{url|b64_json}]} immediately).
+  const legacyArr: Array<{ url?: string; b64_json?: string }> = []
+  for (const item of submitJson.data ?? []) {
+    if ((item as { url?: string }).url) legacyArr.push({ url: (item as { url?: string }).url })
+    if ((item as { b64_json?: string }).b64_json) legacyArr.push({ b64_json: (item as { b64_json?: string }).b64_json })
+  }
+  for (const item of submitJson.images ?? []) legacyArr.push(item)
+  const legacyUrl =
+    legacyArr.find((i) => i.url)?.url
+    ?? (legacyArr.find((i) => i.b64_json)?.b64_json
+      ? saveBase64ImageToUploads(legacyArr.find((i) => i.b64_json)!.b64_json!)
+      : undefined)
+  if (legacyUrl) return { url: legacyUrl, kind: 'image' }
+
+  const taskId = submitJson.data?.[0]?.task_id
+  if (!taskId) {
+    throw new Error(`Apimart image: no task_id in submit response (${JSON.stringify(submitJson).slice(0, 400)})`)
+  }
+  const urls = await pollApimartTask(taskId)
+  if (urls.length === 0) throw new Error('Apimart: no image URLs after task completion')
+  return { url: urls[0]!, kind: 'image' }
 }
 
 // ─── Prompt optimizer (Gemini text) ───────────────────────────────────
@@ -434,7 +570,7 @@ Return ONE cohesive prompt paragraph in English, no markdown, under 120 words.`
     durLine,
   ].filter(Boolean).join('\n')
 
-  const text = await tokenRouterChat(sys, userMsg, 0.8)
+  const text = await apimartChat(sys, userMsg, 0.8)
   return { prompt: text }
 }
 
@@ -481,7 +617,7 @@ async function readMultipart(req: IncomingMessage): Promise<{ audio: Buffer; aud
 }
 
 function audioFormatFromMime(mime: string): string {
-  // TokenRouter / OpenAI input_audio supports: wav, mp3. Gemini-3 also accepts webm/ogg in practice.
+  // Apimart / OpenAI input_audio supports: wav, mp3. Gemini-3 also accepts webm/ogg in practice.
   if (mime.includes('mp3') || mime.includes('mpeg')) return 'mp3'
   if (mime.includes('wav')) return 'wav'
   if (mime.includes('ogg')) return 'ogg'
@@ -489,8 +625,8 @@ function audioFormatFromMime(mime: string): string {
 }
 
 async function voiceRevise(req: IncomingMessage): Promise<VoiceRevisePlan> {
-  const key = process.env.TOKENROUTER_API_KEY
-  if (!key) throw new Error('TOKENROUTER_API_KEY not set')
+  const key = process.env.APIMART_API_KEY
+  if (!key) throw new Error('APIMART_API_KEY not set')
   const { audio, audioMime, fields } = await readMultipart(req)
   const elementKind = fields.element_kind || 'image'
   const elementContext = fields.element_context ? JSON.parse(fields.element_context) : {}
@@ -512,11 +648,11 @@ Return JSON ONLY, no markdown, with this shape:
   "severity": "minor | moderate | major"
 }`
 
-  const res = await fetch(`${tokenRouterBaseUrl()}/chat/completions`, {
+  const res = await fetch(`${apimartBaseUrl()}/chat/completions`, {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: process.env.TOKENROUTER_TEXT_MODEL || TOKENROUTER_TEXT_MODEL,
+      model: process.env.APIMART_TEXT_MODEL || APIMART_TEXT_MODEL,
       messages: [
         { role: 'system', content: sys },
         { role: 'user', content: [
@@ -526,7 +662,7 @@ Return JSON ONLY, no markdown, with this shape:
       ],
     }),
   })
-  if (!res.ok) throw new Error(`TokenRouter voice-revise ${res.status}: ${await res.text()}`)
+  if (!res.ok) throw new Error(`Apimart voice-revise ${res.status}: ${await res.text()}`)
   const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
   const text = data.choices?.[0]?.message?.content?.trim() ?? ''
   const jsonM = text.match(/\{[\s\S]*\}/)
@@ -549,10 +685,12 @@ async function dispatch(req: Req): Promise<{ url: string; kind: 'image' | 'video
   switch (req.provider) {
     case 'fal':    return runFal(req)
     case 'doubao':
-      return /seedance/i.test(req.model) ? runDoubaoVideo(req) : runDoubaoImage(req)
+      // Provider id retained for IndexedDB compat with existing canvas elements;
+      // all calls now route to BytePlus海外 (see runBytePlus* above).
+      return /seedance/i.test(req.model) ? runBytePlusVideo(req) : runBytePlusImage(req)
     case 'openai': return runOpenAI(req)
-    case 'gemini': return runTokenRouterImage(req, 'google/')
-    case 'tokenrouter': return runTokenRouterImage(req)
+    case 'gemini': return runApimartImage(req, 'google/')
+    case 'tokenrouter': return runApimartImage(req)
     default: throw new Error(`unsupported provider: ${req.provider}`)
   }
 }
@@ -594,10 +732,10 @@ export function providersPlugin(): Plugin {
         sendJson(res, 200, {
           libtv:  !!process.env.LIBTV_ACCESS_KEY,
           fal:    !!process.env.FAL_KEY,
-          doubao: !!process.env.ARK_API_KEY,
+          doubao: !!(process.env.BYTEPLUS_ARK_API_KEY || process.env.ARK_API_KEY),
           openai: !!process.env.OPENAI_API_KEY,
-          gemini: !!process.env.TOKENROUTER_API_KEY,
-          tokenrouter: !!process.env.TOKENROUTER_API_KEY,
+          gemini: !!process.env.APIMART_API_KEY,
+          tokenrouter: !!process.env.APIMART_API_KEY,
         })
       })
     },

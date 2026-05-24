@@ -22,14 +22,14 @@ describe('Provider Registry', () => {
     expect(videoModels.length).toBeGreaterThanOrEqual(8)
   })
 
-  it('doubao has Seedream 5.0', () => {
-    const m = getModel('doubao', 'doubao-seedream-5-0-260128')
+  it('doubao (BytePlus海外) has Seedream 5.0', () => {
+    const m = getModel('doubao', 'dreamina-seedream-5-0-260128')
     expect(m).toBeDefined()
     expect(m!.kind).toBe('image')
   })
 
-  it('doubao has Seedance 1.5 Pro with audio support', () => {
-    const m = getModel('doubao', 'doubao-seedance-1-5-pro-251215')
+  it('doubao (BytePlus海外) has Seedance 1.5 Pro with audio support', () => {
+    const m = getModel('doubao', 'dreamina-seedance-1-5-pro-251215')
     expect(m).toBeDefined()
     expect(m!.kind).toBe('video')
     expect(m!.supportsAudio).toBe(true)
@@ -61,14 +61,14 @@ describe('Provider Registry', () => {
   })
 
   it('video models have resolution info', () => {
-    const seedance = getModel('doubao', 'doubao-seedance-2-0-260128')
+    const seedance = getModel('doubao', 'dreamina-seedance-2-0-260128')
     expect(seedance?.resolutions).toBeDefined()
     expect(seedance!.resolutions).toContain('720p')
     expect(seedance!.resolutions).toContain('1080p')
   })
 
   it('video models have duration info', () => {
-    const seedance = getModel('doubao', 'doubao-seedance-2-0-fast-260128')
+    const seedance = getModel('doubao', 'dreamina-seedance-2-0-fast-260128')
     expect(seedance?.durations).toBeDefined()
     expect(seedance!.durations).toContain(5)
     expect(seedance!.durations).toContain(10)

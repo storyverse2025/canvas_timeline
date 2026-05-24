@@ -110,7 +110,8 @@ export function GenerateDialog({ initialPrompt = '', upstreamImages = [], defaul
     const enabledProviders = PROVIDERS.filter((p) => avail[p.id] && p.models.some((m) => m.kind === kind))
     if (enabledProviders.length === 0) return
 
-    // Preferred defaults: video → doubao, image → tokenrouter (gpt-image2)
+    // Preferred defaults: video → BytePlus (provider id still 'doubao' for
+    // back-compat with persisted state), image → apimart (gpt-image2).
     let preferred: ProviderId | undefined
     if (kind === 'video') preferred = 'doubao'
     else if (kind === 'image') preferred = 'tokenrouter'
@@ -126,8 +127,8 @@ export function GenerateDialog({ initialPrompt = '', upstreamImages = [], defaul
     if (providerModels.some((m) => m.id === model)) return
     // Otherwise pick a preferred default
     const preferredIds = [
-      'openai/gpt-5.4-image-2',          // image default (gpt-image2 via TokenRouter)
-      'doubao-seedance-2-0-260128',      // video default (Seedance 2.0, not -fast; 480p)
+      'openai/gpt-5.4-image-2',          // image default (gpt-image2 via Apimart)
+      'dreamina-seedance-2-0-fast-260128', // video default (BytePlus Dreamina Seedance 2.0 Fast; 480p)
     ]
     const preferred = providerModels.find((m) => preferredIds.includes(m.id))
       ?? providerModels.find((m) => /默认|default/i.test(m.label))
