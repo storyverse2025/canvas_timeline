@@ -165,6 +165,50 @@ async function hostOutput(remoteUrl: string): Promise<string> {
   return saveBytesToUploads(buf, mime)
 }
 
+// ─── Bragi relay (for ref images that need a public URL) ─────────────
+//
+// Providers like Luma and fal require a fetchable HTTP URL for reference
+// images — passing a data: URL inline either explodes the request body or
+// is rejected outright. The plugin in bragi-canvas already uploads such
+// refs through https://temp.bragi.now (Cloudflare Worker, public token).
+// We mirror that here so the router does the same plumbing internally —
+// callers just hand us a data URL and we swap in a fetchable URL.
+//
+// Token is the same public one bundled in bragi-canvas/src/providers/bragi-relay.ts;
+// it's rate-limited per-IP by the Worker and not a secret.
+
+const BRAGI_RELAY_ENDPOINT = process.env.BRAGI_RELAY_ENDPOINT || 'https://temp.bragi.now'
+const BRAGI_RELAY_TOKEN = process.env.BRAGI_RELAY_TOKEN || 'eca59a4c6895d6c31a63db967e2c704264517f69f1ab35043976fe72fcf618d4'
+
+async function uploadToBragiRelay(bytes: Buffer, mime: string): Promise<string> {
+  const ext = extFromMime(mime)
+  const r = await fetch(`${BRAGI_RELAY_ENDPOINT}/upload?ext=${encodeURIComponent(ext)}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': mime,
+      'Authorization': `Bearer ${BRAGI_RELAY_TOKEN}`,
+    },
+    body: bytes,
+  })
+  const data = (await r.json()) as { url?: string; error?: string }
+  if (!data.url) throw new Error(`Bragi relay: ${data.error ?? `no url (HTTP ${r.status})`}`)
+  return data.url
+}
+
+/**
+ * Normalize any reference URL (http(s), data:, or asset://) to a fetchable
+ * https URL by uploading data: refs to the Bragi relay. Caller decides
+ * whether a given provider needs this (Seedance accepts inline data URLs;
+ * Luma and fal do not).
+ */
+async function refToPublicUrl(ref: string): Promise<string> {
+  if (/^https?:/i.test(ref)) return ref
+  if (ref.startsWith('asset://')) return ref
+  const m = ref.match(/^data:([^;]+);base64,(.+)$/)
+  if (!m) throw new Error(`unsupported ref format: ${ref.slice(0, 40)}…`)
+  return uploadToBragiRelay(Buffer.from(m[2], 'base64'), m[1])
+}
+
 // ─── Provider: Seedream (sync image via BytePlus海外) ────────────────
 
 const SEEDREAM_SIZE_MAP: Record<string, Record<string, string>> = {
@@ -236,6 +280,292 @@ async function runSeedream(opts: {
     throw new Error('Seedream: no b64_json or url in response')
   }
   return [{ kind: 'image', url: hostedUrl }]
+}
+
+// ─── Provider: OpenAI (sync image, gpt-image-2) ──────────────────────
+
+const OPENAI_SIZE_MAP: Record<string, Record<string, string>> = {
+  '1:1': { '1K': '1024x1024', '2K': '2048x2048', '4K': '2880x2880' },
+  '3:2': { '1K': '1536x1024', '2K': '2048x1360', '4K': '3520x2336' },
+  '2:3': { '1K': '1024x1536', '2K': '1360x2048', '4K': '2336x3520' },
+  '4:3': { '1K': '1024x768', '2K': '2048x1536', '4K': '3312x2480' },
+  '3:4': { '1K': '768x1024', '2K': '1536x2048', '4K': '2480x3312' },
+  '5:4': { '1K': '1280x1024', '2K': '2560x2048', '4K': '3216x2576' },
+  '4:5': { '1K': '1024x1280', '2K': '2048x2560', '4K': '2576x3216' },
+  '16:9': { '1K': '1536x864', '2K': '2048x1152', '4K': '3840x2160' },
+  '9:16': { '1K': '864x1536', '2K': '1152x2048', '4K': '2160x3840' },
+  '2:1': { '1K': '2048x1024', '2K': '2688x1344', '4K': '3840x1920' },
+  '1:2': { '1K': '1024x2048', '2K': '1344x2688', '4K': '1920x3840' },
+  '3:1': { '1K': '1536x512', '2K': '3072x1024', '4K': '3840x1280' },
+  '1:3': { '1K': '512x1536', '2K': '1024x3072', '4K': '1280x3840' },
+  '21:9': { '1K': '2016x864', '2K': '2688x1152', '4K': '3840x1648' },
+  '9:21': { '1K': '864x2016', '2K': '1152x2688', '4K': '1648x3840' },
+}
+
+function resolveOpenAISize(params: Record<string, unknown>): string {
+  const explicit = typeof params.size === 'string' ? params.size : undefined
+  if (explicit) return explicit
+  const aspectRatio = (params.aspectRatio as string) || '1:1'
+  if (aspectRatio.toLowerCase() === 'auto') return 'auto'
+  const imageSize = ((params.imageSize as string) || '2K').toUpperCase()
+  if (imageSize.toLowerCase() === 'auto') return 'auto'
+  return OPENAI_SIZE_MAP[aspectRatio]?.[imageSize] ?? OPENAI_SIZE_MAP['1:1']['2K']
+}
+
+async function runOpenAIImage(opts: {
+  model: string
+  prompt: string
+  refs: string[]
+  size: string
+  quality: string
+  keyOverride: string | null
+}): Promise<RouterOutput[]> {
+  const key = opts.keyOverride || process.env.OPENAI_API_KEY
+  if (!key) throw new Error('OPENAI_API_KEY not set')
+  const base = (process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, '')
+
+  let b64: string
+  if (opts.refs.length > 0) {
+    // /images/edits — multipart with image[] fields
+    const form = new FormData()
+    form.append('model', opts.model)
+    form.append('prompt', opts.prompt)
+    form.append('size', opts.size)
+    form.append('quality', opts.quality)
+    form.append('n', '1')
+    for (let i = 0; i < opts.refs.length; i++) {
+      const ref = opts.refs[i]
+      let mime = 'image/png'
+      let buf: Buffer
+      const m = ref.match(/^data:([^;]+);base64,(.+)$/)
+      if (m) {
+        mime = m[1]
+        buf = Buffer.from(m[2], 'base64')
+      } else {
+        const r = await fetchRemoteToBuffer(ref)
+        mime = r.mime
+        buf = r.buf
+      }
+      const ext = extFromMime(mime)
+      form.append('image[]', new Blob([buf], { type: mime }), `ref${i}.${ext}`)
+    }
+    const r = await fetch(`${base}/images/edits`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${key}` },
+      body: form,
+    })
+    const text = await r.text()
+    let data: { data?: Array<{ b64_json?: string; url?: string }>; error?: { message?: string } }
+    try { data = JSON.parse(text) } catch {
+      throw new Error(`OpenAI edits non-JSON (${r.status}): ${text.slice(0, 200)}`)
+    }
+    if (data.error) throw new Error(`OpenAI: ${data.error.message ?? 'unknown'}`)
+    if (!r.ok) throw new Error(`OpenAI HTTP ${r.status}: ${text.slice(0, 200)}`)
+    const got = data.data?.[0]?.b64_json
+    if (!got) {
+      if (data.data?.[0]?.url) return [{ kind: 'image', url: await hostOutput(data.data[0].url!) }]
+      throw new Error(`OpenAI: no b64_json in edit response`)
+    }
+    b64 = got
+  } else {
+    // /images/generations — JSON
+    const r = await fetch(`${base}/images/generations`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: opts.model,
+        prompt: opts.prompt,
+        size: opts.size,
+        quality: opts.quality,
+        n: 1,
+      }),
+    })
+    const text = await r.text()
+    let data: { data?: Array<{ b64_json?: string; url?: string }>; error?: { message?: string } }
+    try { data = JSON.parse(text) } catch {
+      throw new Error(`OpenAI gen non-JSON (${r.status}): ${text.slice(0, 200)}`)
+    }
+    if (data.error) throw new Error(`OpenAI: ${data.error.message ?? 'unknown'}`)
+    if (!r.ok) throw new Error(`OpenAI HTTP ${r.status}: ${text.slice(0, 200)}`)
+    const got = data.data?.[0]?.b64_json
+    if (!got) {
+      if (data.data?.[0]?.url) return [{ kind: 'image', url: await hostOutput(data.data[0].url!) }]
+      throw new Error(`OpenAI: no b64_json in gen response`)
+    }
+    b64 = got
+  }
+
+  const hosted = saveBytesToUploads(Buffer.from(b64, 'base64'), 'image/png')
+  return [{ kind: 'image', url: hosted }]
+}
+
+// ─── Provider: Gemini (sync image, nano-banana via parts API) ────────
+
+async function runGeminiImage(opts: {
+  model: string
+  prompt: string
+  refs: string[]
+  aspectRatio: string
+  imageSize: string
+  keyOverride: string | null
+}): Promise<RouterOutput[]> {
+  const key = opts.keyOverride || process.env.GEMINI_API_KEY
+  if (!key) throw new Error('GEMINI_API_KEY not set')
+  const base = (process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta').replace(/\/+$/, '')
+
+  type Part = { text?: string; inlineData?: { mimeType: string; data: string } }
+  const parts: Part[] = []
+  for (const ref of opts.refs) {
+    const m = ref.match(/^data:([^;]+);base64,(.+)$/)
+    if (m) {
+      parts.push({ inlineData: { mimeType: m[1], data: m[2] } })
+    } else if (/^https?:/.test(ref)) {
+      const fetched = await fetchRemoteToBuffer(ref)
+      parts.push({ inlineData: { mimeType: fetched.mime, data: fetched.buf.toString('base64') } })
+    }
+  }
+  parts.push({ text: opts.prompt })
+
+  const r = await fetch(`${base}/models/${opts.model}:generateContent`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+    body: JSON.stringify({
+      contents: [{ parts }],
+      generationConfig: {
+        responseModalities: ['TEXT', 'IMAGE'],
+        imageConfig: {
+          aspectRatio: opts.aspectRatio,
+          imageSize: opts.imageSize,
+        },
+      },
+    }),
+  })
+  const text = await r.text()
+  type GeminiResp = {
+    candidates?: Array<{
+      finishReason?: string
+      content?: { parts?: Array<{ inlineData?: { data?: string; mimeType?: string }; inline_data?: { data?: string; mime_type?: string } }> }
+    }>
+    error?: { message?: string; status?: string }
+    promptFeedback?: { blockReason?: string }
+  }
+  let data: GeminiResp
+  try { data = JSON.parse(text) } catch {
+    throw new Error(`Gemini non-JSON (${r.status}): ${text.slice(0, 200)}`)
+  }
+  if (data.error) throw new Error(`Gemini: ${data.error.message ?? data.error.status ?? 'unknown'}`)
+  if (!r.ok) throw new Error(`Gemini HTTP ${r.status}: ${text.slice(0, 200)}`)
+  if (data.promptFeedback?.blockReason) throw new Error(`Gemini blocked: ${data.promptFeedback.blockReason}`)
+
+  let b64: string | undefined
+  let mime = 'image/png'
+  for (const cand of data.candidates ?? []) {
+    for (const part of cand.content?.parts ?? []) {
+      const inline = (part.inlineData ?? part.inline_data) as { data?: string; mimeType?: string; mime_type?: string } | undefined
+      if (inline?.data) {
+        b64 = inline.data
+        mime = inline.mimeType ?? inline.mime_type ?? mime
+        break
+      }
+    }
+    if (b64) break
+  }
+  if (!b64) {
+    const finishReason = data.candidates?.[0]?.finishReason ?? 'none'
+    throw new Error(`Gemini: no image in response (finishReason=${finishReason})`)
+  }
+  return [{ kind: 'image', url: saveBytesToUploads(Buffer.from(b64, 'base64'), mime) }]
+}
+
+// ─── Provider: xAI (sync image, grok-imagine) ────────────────────────
+
+async function runXaiImage(opts: {
+  model: string
+  prompt: string
+  refs: string[]
+  aspectRatio: string
+  keyOverride: string | null
+}): Promise<RouterOutput[]> {
+  const key = opts.keyOverride || process.env.XAI_API_KEY
+  if (!key) throw new Error('XAI_API_KEY not set')
+  const base = (process.env.XAI_BASE_URL || 'https://api.x.ai/v1').replace(/\/+$/, '')
+
+  const isEdit = opts.refs.length > 0
+  const url = `${base}/${isEdit ? 'images/edits' : 'images/generations'}`
+
+  // xAI rejects bare ref strings; wrap each as {url:...}. Data URLs need
+  // to be hosted first since the server can't deref them.
+  const refUrls: string[] = []
+  for (const ref of opts.refs) refUrls.push(await refToPublicUrl(ref))
+
+  const body: Record<string, unknown> = {
+    model: opts.model,
+    prompt: opts.prompt,
+    n: 1,
+    aspect_ratio: opts.aspectRatio,
+    response_format: 'url',
+  }
+  if (isEdit) {
+    if (refUrls.length === 1) body.image = { url: refUrls[0] }
+    else body.images = refUrls.slice(0, 5).map((u) => ({ url: u }))
+  }
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const text = await r.text()
+  type XaiResp = { data?: Array<{ url?: string }>; error?: { message?: string } | string }
+  let data: XaiResp
+  try { data = JSON.parse(text) } catch {
+    throw new Error(`xAI non-JSON (${r.status}): ${text.slice(0, 200)}`)
+  }
+  if (data.error) {
+    const m = typeof data.error === 'string' ? data.error : data.error.message
+    throw new Error(`xAI: ${m ?? 'unknown'}`)
+  }
+  if (!r.ok) throw new Error(`xAI HTTP ${r.status}: ${text.slice(0, 200)}`)
+  const imgUrl = data.data?.[0]?.url
+  if (!imgUrl) throw new Error(`xAI: no image url in response`)
+  return [{ kind: 'image', url: await hostOutput(imgUrl) }]
+}
+
+// ─── Provider: Luma (sync image, uni-1 via luma.bragi.now) ───────────
+
+const LUMA_ENDPOINT = process.env.LUMA_ENDPOINT || 'https://luma.bragi.now'
+
+async function runLumaImage(opts: {
+  prompt: string
+  refs: string[]
+  aspectRatio: string
+  keyOverride: string | null
+}): Promise<RouterOutput[]> {
+  const token = opts.keyOverride || process.env.LUMA_TOKEN
+  if (!token) throw new Error('LUMA_TOKEN not set')
+
+  const body: Record<string, unknown> = { prompt: opts.prompt, aspect_ratio: opts.aspectRatio }
+  let url = `${LUMA_ENDPOINT}/v1/images/generate`
+  if (opts.refs.length > 0) {
+    body.image_url = await refToPublicUrl(opts.refs[0])
+    url = `${LUMA_ENDPOINT}/v1/images/img2img`
+  }
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const text = await r.text()
+  if (r.status === 401) throw new Error('Luma: invalid API key')
+  if (r.status === 413) throw new Error('Luma: ref image too large')
+  if (r.status === 503) throw new Error('Luma: no healthy upstream')
+  if (r.status === 504) throw new Error('Luma: generation timed out')
+  let data: { image_url?: string; message?: string; error?: string }
+  try { data = JSON.parse(text) } catch {
+    throw new Error(`Luma non-JSON (${r.status}): ${text.slice(0, 200)}`)
+  }
+  if (r.status >= 400) throw new Error(`Luma: ${data.message ?? data.error ?? `HTTP ${r.status}`}`)
+  if (!data.image_url) throw new Error(`Luma: no image_url in response`)
+  return [{ kind: 'image', url: await hostOutput(data.image_url) }]
 }
 
 // ─── Provider: Seedance (async video via BytePlus海外) ───────────────
@@ -387,55 +717,323 @@ function startSeedancePollLoop(routerTaskId: string, providerTaskId: string, key
   setTimeout(() => { void tick() }, 3000)
 }
 
+// ─── Provider: fal (async video via queue.fal.run) ───────────────────
+
+const FAL_QUEUE = process.env.FAL_QUEUE_URL || 'https://queue.fal.run'
+
+function falKey(override: string | null): string {
+  const key = override || process.env.FAL_KEY
+  if (!key) throw new Error('FAL_KEY not set')
+  return key
+}
+
+/**
+ * Resolve fal sub-endpoint by mode + ref shape. Mirrors bragi-canvas's
+ * fal.ts so the same modelIds produce identical routing on this side.
+ *
+ * Grok-Imagine video sub-endpoints (under xai/grok-imagine-video/):
+ *   /text-to-video        no refs
+ *   /image-to-video       genMode=first-frame + 1 ref
+ *   /reference-to-video   genMode=image-ref + N refs (Grok-specific)
+ *   /extend-video         genMode=video-extend + video URL
+ *
+ * Other-vendor video on fal (Seedance etc.) use base endpoint with image_urls.
+ */
+function resolveFalEndpoint(modelId: string, genMode: string, refImageCount: number): string {
+  const modelBase = modelId.split('/text-to-video')[0].split('/image-to-video')[0]
+    .split('/reference-to-video')[0].split('/extend-video')[0]
+  if (genMode === 'first-frame' && refImageCount >= 1) return `${modelBase}/image-to-video`
+  if (genMode === 'image-ref' && refImageCount >= 1) {
+    return modelBase.includes('grok') ? `${modelBase}/reference-to-video` : modelBase
+  }
+  if (genMode === 'video-extend') return `${modelBase}/extend-video`
+  return `${modelBase}/text-to-video`
+}
+
+function falPollBase(modelEndpoint: string): string {
+  return modelEndpoint.split('/text-to-video')[0].split('/image-to-video')[0]
+    .split('/reference-to-video')[0].split('/extend-video')[0]
+}
+
+async function submitFalVideoTask(opts: {
+  model: string
+  prompt: string
+  genMode: string
+  refImages: string[]
+  refVideos: string[]
+  params: Record<string, unknown>
+  keyOverride: string | null
+}): Promise<{ endpoint: string; requestId: string }> {
+  const endpoint = resolveFalEndpoint(opts.model, opts.genMode, opts.refImages.length)
+  const input: Record<string, unknown> = { prompt: opts.prompt }
+  if (opts.params.duration) input.duration = Number.parseInt(opts.params.duration as string, 10)
+  if (opts.params.durationSeconds) input.duration = Number.parseInt(opts.params.durationSeconds as string, 10)
+  if (opts.params.aspectRatio) input.aspect_ratio = opts.params.aspectRatio
+  if (opts.params.aspect_ratio) input.aspect_ratio = opts.params.aspect_ratio
+  if (opts.params.ratio) input.aspect_ratio = opts.params.ratio
+  if (opts.params.resolution) input.resolution = opts.params.resolution
+
+  if (opts.refImages.length > 0) {
+    const uploaded = await Promise.all(opts.refImages.map(refToPublicUrl))
+    if (opts.genMode === 'first-frame') input.image_url = uploaded[0]
+    else if (opts.genMode === 'image-ref') input.image_urls = uploaded
+    else input.image_urls = uploaded // base endpoint + image_urls for non-Grok image-ref shape
+  }
+  if (opts.genMode === 'video-extend') {
+    if (opts.refVideos.length === 0) throw new Error('fal video-extend needs an upstream video URL')
+    input.video_url = opts.refVideos[0]
+  }
+
+  const r = await fetch(`${FAL_QUEUE}/${endpoint}`, {
+    method: 'POST',
+    headers: { 'Authorization': `Key ${falKey(opts.keyOverride)}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  const text = await r.text()
+  let data: { request_id?: string; detail?: string; message?: string }
+  try { data = JSON.parse(text) } catch {
+    throw new Error(`fal submit non-JSON (${r.status}): ${text.slice(0, 200)}`)
+  }
+  if (!data.request_id) throw new Error(`fal: ${data.detail ?? data.message ?? `HTTP ${r.status}: ${text.slice(0, 200)}`}`)
+  return { endpoint, requestId: data.request_id }
+}
+
+interface FalStatus {
+  status: 'pending' | 'done' | 'failed'
+  videoUrl?: string
+  error?: string
+}
+
+async function pollFalTask(modelEndpoint: string, requestId: string, keyOverride: string | null): Promise<FalStatus> {
+  const base = falPollBase(modelEndpoint)
+  const headers = { 'Authorization': `Key ${falKey(keyOverride)}` }
+  const sr = await fetch(`${FAL_QUEUE}/${base}/requests/${requestId}/status`, { headers })
+  const s = (await sr.json()) as { status?: string }
+  if (s.status === 'COMPLETED') {
+    const rr = await fetch(`${FAL_QUEUE}/${base}/requests/${requestId}`, { headers })
+    const r = (await rr.json()) as { video?: { url?: string }; output?: { video?: { url?: string }; url?: string } }
+    const videoUrl = r.video?.url ?? r.output?.video?.url ?? r.output?.url
+    if (!videoUrl) return { status: 'failed', error: 'fal: COMPLETED but no video URL in result' }
+    return { status: 'done', videoUrl }
+  }
+  if (s.status === 'FAILED') return { status: 'failed', error: 'fal: task FAILED' }
+  return { status: 'pending' }
+}
+
+function startFalPollLoop(routerTaskId: string, modelEndpoint: string, requestId: string, keyOverride: string | null): void {
+  const deadline = Date.now() + 15 * 60 * 1000
+  const tick = async (): Promise<void> => {
+    const state = tasks.get(routerTaskId)
+    if (!state || state.status !== 'pending') return
+    if (Date.now() > deadline) {
+      tasks.set(routerTaskId, { ...state, status: 'failed', error: 'router timeout (15m)', updatedAt: Date.now() })
+      return
+    }
+    try {
+      const r = await pollFalTask(modelEndpoint, requestId, keyOverride)
+      if (r.status === 'done' && r.videoUrl) {
+        try {
+          const hosted = await hostOutput(r.videoUrl)
+          tasks.set(routerTaskId, { ...state, status: 'done', outputs: [{ kind: 'video', url: hosted }], updatedAt: Date.now() })
+        } catch (e) {
+          tasks.set(routerTaskId, { ...state, status: 'failed', error: `download failed: ${(e as Error).message}`, updatedAt: Date.now() })
+        }
+        return
+      }
+      if (r.status === 'failed') {
+        tasks.set(routerTaskId, { ...state, status: 'failed', error: r.error ?? 'unknown', updatedAt: Date.now() })
+        return
+      }
+    } catch (e) {
+      console.warn(`[router] fal poll error (will retry): ${(e as Error).message}`)
+    }
+    setTimeout(() => { void tick() }, 5000)
+  }
+  setTimeout(() => { void tick() }, 3000)
+}
+
 // ─── Capability dispatch ──────────────────────────────────────────────
 
 const SYNC_IMAGE_CAPABILITIES = new Set(['text-to-image', 'image-edit'])
 const ASYNC_VIDEO_CAPABILITIES = new Set(['text-to-video', 'image-to-video', 'video-edit'])
 
+/**
+ * Map a (capability, modelId) pair to the (provider, apiModelId) pair that
+ * actually services it. Mirrors bragi-canvas's src/models/*.ts so the same
+ * plugin-side modelId resolves consistently here.
+ *
+ * Returning `null` from match means "I don't claim this modelId" — try the
+ * next entry. The first match wins.
+ */
+type RouteEntry = {
+  matches: (modelId: string) => boolean
+  provider: string
+  apiModelId: (modelId: string, params: Record<string, unknown>) => string
+}
+
+const IMAGE_ROUTES: RouteEntry[] = [
+  // OpenAI gpt-image-2 (direct)
+  {
+    matches: (m) => m === 'gpt-image-2' || m === 'gpt-image-1' || m.startsWith('gpt-image'),
+    provider: 'openai',
+    apiModelId: (m) => m === 'gpt-image-1' ? 'gpt-image-1' : 'gpt-image-2',
+  },
+  // Gemini nano-banana
+  {
+    matches: (m) => m === 'nano-banana-pro' || m === 'gemini-3-pro-image-preview',
+    provider: 'gemini',
+    apiModelId: () => 'gemini-3-pro-image-preview',
+  },
+  {
+    matches: (m) => m === 'nano-banana-2' || m === 'gemini-3.1-flash-image-preview' || m === 'gemini-2.5-flash-image',
+    provider: 'gemini',
+    apiModelId: (m) => m === 'gemini-2.5-flash-image' ? 'gemini-2.5-flash-image' : 'gemini-3.1-flash-image-preview',
+  },
+  // xAI grok-imagine
+  {
+    matches: (m) => m === 'grok-imagine' || m.startsWith('grok-imagine-image'),
+    provider: 'xai',
+    apiModelId: (_m, params) => params.quality === 'normal' ? 'grok-imagine-image' : 'grok-imagine-image-quality',
+  },
+  // Luma uni-1
+  {
+    matches: (m) => m === 'luma-uni-1' || m === 'uni-1',
+    provider: 'luma',
+    apiModelId: () => 'uni-1',
+  },
+  // Seedream — bragi-canvas-style ids (seedream-5.0 / seedream-4.5) get
+  // translated to the BytePlus apiModelIds; everything else passes through.
+  {
+    matches: (m) => /^(dreamina-|doubao-)?seedream/.test(m) || m === 'seedream-5.0' || m === 'seedream-4.5',
+    provider: 'bytedance',
+    apiModelId: (m) => {
+      if (m === 'seedream-5.0') return process.env.SEEDREAM_MODEL || 'seedream-5-0-260128'
+      if (m === 'seedream-4.5') return 'seedream-4-5-251128'
+      return m
+    },
+  },
+]
+
+const VIDEO_ROUTES: RouteEntry[] = [
+  // Seedance via BytePlus海外 (default).
+  //
+  // SEEDANCE_MODEL / SEEDANCE_ENDPOINT / ARK_SEEDANCE_ENDPOINT env vars take
+  // precedence over the bragi-canvas model id when present — operators pin
+  // an account-specific endpoint id like ep-20260423151341-p2zm9 in .env and
+  // expect both 'seedance-2.0' and 'seedance-2.0-fast' to route there.
+  // Without the override we'd hit AccessDenied on accounts that aren't
+  // provisioned for the public dreamina-* model ids.
+  {
+    matches: (m) => /^(dreamina-|doubao-)?seedance/.test(m) || m === 'seedance-2.0' || m === 'seedance-2.0-fast' || m.startsWith('ep-'),
+    provider: 'bytedance',
+    apiModelId: (m) => {
+      const envOverride = process.env.SEEDANCE_MODEL || process.env.SEEDANCE_ENDPOINT || process.env.ARK_SEEDANCE_ENDPOINT
+      if (envOverride) return envOverride
+      if (m === 'seedance-2.0') return 'dreamina-seedance-2-0-260128'
+      if (m === 'seedance-2.0-fast') return 'dreamina-seedance-2-0-fast-260128'
+      return m
+    },
+  },
+  // fal: Kling-3 + grok-video go through queue.fal.run
+  {
+    matches: (m) => m === 'kling-3.0' || m.startsWith('fal-ai/kling-video') || m === 'fal-ai/kling-video/v3/pro',
+    provider: 'fal',
+    apiModelId: (m) => m === 'kling-3.0' ? 'fal-ai/kling-video/v3/pro' : m,
+  },
+  {
+    matches: (m) => m === 'grok-video' || m.startsWith('xai/grok-imagine-video'),
+    provider: 'fal',
+    apiModelId: () => 'xai/grok-imagine-video',
+  },
+]
+
+function pickRoute(capability: string, modelId: string): RouteEntry | null {
+  const table = SYNC_IMAGE_CAPABILITIES.has(capability) ? IMAGE_ROUTES
+              : ASYNC_VIDEO_CAPABILITIES.has(capability) ? VIDEO_ROUTES
+              : null
+  if (!table) return null
+  return table.find((r) => r.matches(modelId)) ?? null
+}
+
 function pickProvider(req: RunRequest): string {
   if (req.provider) return req.provider
-  const model = req.model ?? ''
-  if (/^(dreamina-|doubao-)?seedream/.test(model)) return 'bytedance'
-  if (/^(dreamina-|doubao-)?seedance/.test(model)) return 'bytedance'
-  if (SYNC_IMAGE_CAPABILITIES.has(req.capability)) return 'bytedance' // V1a default
+  const route = pickRoute(req.capability, req.model ?? '')
+  if (route) return route.provider
+  // Fallbacks when modelId is omitted entirely.
+  if (SYNC_IMAGE_CAPABILITIES.has(req.capability)) return 'openai'
   if (ASYNC_VIDEO_CAPABILITIES.has(req.capability)) return 'bytedance'
-  throw new Error(`router: no default provider for capability=${req.capability}`)
+  throw new Error(`router: no default provider for capability=${req.capability} model=${req.model ?? '<none>'}`)
 }
 
 function pickModel(req: RunRequest, provider: string): string {
-  if (req.model) return req.model
-  if (provider === 'bytedance') {
-    if (SYNC_IMAGE_CAPABILITIES.has(req.capability)) return process.env.SEEDREAM_MODEL || 'seedream-5-0-260128'
-    if (ASYNC_VIDEO_CAPABILITIES.has(req.capability)) return defaultSeedanceModel()
+  if (req.model) {
+    const route = pickRoute(req.capability, req.model)
+    if (route) return route.apiModelId(req.model, req.params ?? {})
+    // Unknown modelId, but a provider was forced — pass through verbatim.
+    return req.model
   }
+  // No model specified → use provider's default for the capability.
+  if (provider === 'openai' && SYNC_IMAGE_CAPABILITIES.has(req.capability)) return 'gpt-image-2'
+  if (provider === 'gemini' && SYNC_IMAGE_CAPABILITIES.has(req.capability)) return 'gemini-3-pro-image-preview'
+  if (provider === 'xai' && SYNC_IMAGE_CAPABILITIES.has(req.capability)) return 'grok-imagine-image-quality'
+  if (provider === 'luma' && SYNC_IMAGE_CAPABILITIES.has(req.capability)) return 'uni-1'
+  if (provider === 'bytedance' && SYNC_IMAGE_CAPABILITIES.has(req.capability)) return process.env.SEEDREAM_MODEL || 'seedream-5-0-260128'
+  if (provider === 'bytedance' && ASYNC_VIDEO_CAPABILITIES.has(req.capability)) return defaultSeedanceModel()
+  if (provider === 'fal' && ASYNC_VIDEO_CAPABILITIES.has(req.capability)) return 'fal-ai/kling-video/v3/pro'
   throw new Error(`router: no default model for provider=${provider} capability=${req.capability}`)
 }
 
-async function dispatchSync(req: RunRequest, provider: string, model: string, keyOverride: string | null): Promise<RouterOutput[]> {
-  if (provider === 'bytedance' && SYNC_IMAGE_CAPABILITIES.has(req.capability)) {
-    const inputs = req.inputs ?? []
-    const refs = inputs.filter((i) => i.kind === 'image' && i.url).map((i) => i.url!)
-    const params = req.params ?? {}
-    return runSeedream({
-      model,
-      prompt: req.prompt ?? '',
+async function dispatchSync(req: RunRequest, provider: string, apiModelId: string, keyOverride: string | null): Promise<RouterOutput[]> {
+  const inputs = req.inputs ?? []
+  const refs = inputs.filter((i) => i.kind === 'image' && i.url).map((i) => i.url!)
+  const params = req.params ?? {}
+  const prompt = req.prompt ?? ''
+  const aspectRatio = (params.aspectRatio as string) || (params.aspect_ratio as string) || '1:1'
+
+  if (provider === 'bytedance') {
+    return runSeedream({ model: apiModelId, prompt, refs, aspectRatio, resolution: (params.resolution as string) || '2K', keyOverride })
+  }
+  if (provider === 'openai') {
+    return runOpenAIImage({
+      model: apiModelId,
+      prompt,
       refs,
-      aspectRatio: (params.aspectRatio as string) || (params.aspect_ratio as string) || '1:1',
-      resolution: (params.resolution as string) || '2K',
+      size: resolveOpenAISize(params),
+      quality: (params.quality as string) || 'auto',
       keyOverride,
     })
+  }
+  if (provider === 'gemini') {
+    return runGeminiImage({
+      model: apiModelId,
+      prompt,
+      refs,
+      aspectRatio,
+      imageSize: (params.imageSize as string) || '1K',
+      keyOverride,
+    })
+  }
+  if (provider === 'xai') {
+    return runXaiImage({ model: apiModelId, prompt, refs, aspectRatio, keyOverride })
+  }
+  if (provider === 'luma') {
+    return runLumaImage({ prompt, refs, aspectRatio, keyOverride })
   }
   throw new Error(`router: no sync handler for provider=${provider} capability=${req.capability}`)
 }
 
-async function dispatchAsync(req: RunRequest, provider: string, model: string, routerTaskId: string, keyOverride: string | null): Promise<void> {
-  if (provider === 'bytedance' && ASYNC_VIDEO_CAPABILITIES.has(req.capability)) {
-    const inputs = req.inputs ?? []
-    const params = req.params ?? {}
-    const mode = (params.genMode as string) || undefined
-    const content = buildSeedanceContent(req.prompt ?? '', inputs, mode)
+async function dispatchAsync(req: RunRequest, provider: string, apiModelId: string, routerTaskId: string, keyOverride: string | null): Promise<void> {
+  const inputs = req.inputs ?? []
+  const params = req.params ?? {}
+  const mode = (params.genMode as string) || undefined
+  const prompt = req.prompt ?? ''
+  const refImages = inputs.filter((i) => i.kind === 'image' && i.url).map((i) => i.url!)
+  const refVideos = inputs.filter((i) => i.kind === 'video' && i.url).map((i) => i.url!)
+
+  if (provider === 'bytedance' || provider === 'byteplus') {
+    const content = buildSeedanceContent(prompt, inputs, mode)
     const providerTaskId = await submitSeedanceTask({
-      model,
+      model: apiModelId,
       contentParts: content,
       duration: Number.parseInt((params.duration as string) ?? '5', 10) || 5,
       ratio: (params.ratio as string) || '16:9',
@@ -443,12 +1041,24 @@ async function dispatchAsync(req: RunRequest, provider: string, model: string, r
       generateAudio: (params.generate_audio as string) !== 'false',
       keyOverride,
     })
-    const now = Date.now()
     const state = tasks.get(routerTaskId)
-    if (state) {
-      tasks.set(routerTaskId, { ...state, providerTaskId, updatedAt: now })
-    }
+    if (state) tasks.set(routerTaskId, { ...state, providerTaskId, updatedAt: Date.now() })
     startSeedancePollLoop(routerTaskId, providerTaskId, keyOverride)
+    return
+  }
+  if (provider === 'fal') {
+    const { endpoint, requestId } = await submitFalVideoTask({
+      model: apiModelId,
+      prompt,
+      genMode: mode ?? (refImages.length === 1 ? 'first-frame' : refImages.length > 1 ? 'image-ref' : 'text-to-video'),
+      refImages,
+      refVideos,
+      params,
+      keyOverride,
+    })
+    const state = tasks.get(routerTaskId)
+    if (state) tasks.set(routerTaskId, { ...state, providerTaskId: `${endpoint}::${requestId}`, updatedAt: Date.now() })
+    startFalPollLoop(routerTaskId, endpoint, requestId, keyOverride)
     return
   }
   throw new Error(`router: no async handler for provider=${provider} capability=${req.capability}`)
@@ -589,39 +1199,109 @@ interface ModelEntry {
   params: Array<{ id: string; label: string; type: string; options?: Array<{ label: string; value: string }>; default: string | number }>
 }
 
+// Aspect-ratio option sets reused across model entries.
+const ASPECT_BASIC = [
+  { label: '1:1', value: '1:1' }, { label: '16:9', value: '16:9' }, { label: '9:16', value: '9:16' },
+  { label: '4:3', value: '4:3' }, { label: '3:4', value: '3:4' }, { label: '3:2', value: '3:2' },
+  { label: '2:3', value: '2:3' }, { label: '21:9', value: '21:9' },
+]
+const ASPECT_FULL = [
+  ...ASPECT_BASIC,
+  { label: '4:5', value: '4:5' }, { label: '5:4', value: '5:4' },
+  { label: '1:4', value: '1:4' }, { label: '4:1', value: '4:1' },
+  { label: '1:8', value: '1:8' }, { label: '8:1', value: '8:1' },
+]
+const GPT_IMAGE_ASPECTS = [
+  { label: 'Auto', value: 'auto' },
+  ...ASPECT_FULL.filter((a) => !['1:8', '8:1', '1:4', '4:1'].includes(a.value)),
+  { label: '2:1', value: '2:1' }, { label: '1:2', value: '1:2' },
+  { label: '3:1', value: '3:1' }, { label: '1:3', value: '1:3' }, { label: '9:21', value: '9:21' },
+]
+const SIZE_TIERS_1_2_4K = [{ label: '1K', value: '1K' }, { label: '2K', value: '2K' }, { label: '4K', value: '4K' }]
+const SEEDANCE_DURATIONS = [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15].map((d) => ({ label: `${d}s`, value: String(d) }))
+
 const V1A_MODELS: ModelEntry[] = [
+  // ── Image: user's enabled set, ordered by api_key.json modelOrder ──
   {
-    id: 'seedream-5.0',
-    apiModelId: 'seedream-5-0-260128',
-    label: 'Seedream 5.0',
-    type: 'image',
-    provider: 'bytedance',
-    capabilities: ['text-to-image', 'image-edit'],
+    id: 'gpt-image-2', apiModelId: 'gpt-image-2', label: 'GPT Image 2', type: 'image',
+    provider: 'openai', capabilities: ['text-to-image', 'image-edit'],
+    params: [
+      { id: 'aspectRatio', label: 'Aspect ratio', type: 'select', options: GPT_IMAGE_ASPECTS, default: '1:1' },
+      { id: 'imageSize', label: 'Size', type: 'select', options: SIZE_TIERS_1_2_4K, default: '2K' },
+      { id: 'quality', label: 'Quality', type: 'select',
+        options: [{ label: 'Auto', value: 'auto' }, { label: 'High', value: 'high' }, { label: 'Medium', value: 'medium' }, { label: 'Low', value: 'low' }],
+        default: 'auto' },
+    ],
+  },
+  {
+    id: 'nano-banana-pro', apiModelId: 'gemini-3-pro-image-preview', label: 'Nano Banana Pro', type: 'image',
+    provider: 'gemini', capabilities: ['text-to-image', 'image-edit'],
+    params: [
+      { id: 'aspectRatio', label: 'Aspect ratio', type: 'select', options: ASPECT_FULL.filter((a) => !['1:4', '4:1', '1:8', '8:1'].includes(a.value)), default: '1:1' },
+      { id: 'imageSize', label: 'Size', type: 'select', options: SIZE_TIERS_1_2_4K, default: '1K' },
+    ],
+  },
+  {
+    id: 'nano-banana-2', apiModelId: 'gemini-3.1-flash-image-preview', label: 'Nano Banana 2', type: 'image',
+    provider: 'gemini', capabilities: ['text-to-image', 'image-edit'],
+    params: [
+      { id: 'aspectRatio', label: 'Aspect ratio', type: 'select', options: ASPECT_FULL, default: '1:1' },
+      { id: 'imageSize', label: 'Size', type: 'select', options: SIZE_TIERS_1_2_4K, default: '1K' },
+    ],
+  },
+  {
+    id: 'grok-imagine', apiModelId: 'grok-imagine-image-quality', label: 'Grok Imagine', type: 'image',
+    provider: 'xai', capabilities: ['text-to-image', 'image-edit'],
+    params: [
+      { id: 'aspectRatio', label: 'Aspect ratio', type: 'select', options: ASPECT_BASIC, default: '1:1' },
+      { id: 'quality', label: 'Quality', type: 'select',
+        options: [{ label: 'Quality', value: 'quality' }, { label: 'Normal', value: 'normal' }],
+        default: 'quality' },
+    ],
+  },
+  {
+    id: 'luma-uni-1', apiModelId: 'uni-1', label: 'Luma Uni-1', type: 'image',
+    provider: 'luma', capabilities: ['text-to-image', 'image-edit'],
     params: [
       { id: 'aspectRatio', label: 'Aspect ratio', type: 'select',
-        options: [
-          { label: '1:1', value: '1:1' }, { label: '4:3', value: '4:3' }, { label: '3:4', value: '3:4' },
-          { label: '16:9', value: '16:9' }, { label: '9:16', value: '9:16' }, { label: '3:2', value: '3:2' },
-          { label: '2:3', value: '2:3' }, { label: '21:9', value: '21:9' },
-        ], default: '1:1' },
+        options: [{ label: '1:1', value: '1:1' }, { label: '16:9', value: '16:9' }, { label: '9:16', value: '9:16' }, { label: '4:3', value: '4:3' }, { label: '3:4', value: '3:4' }],
+        default: '16:9' },
+    ],
+  },
+  {
+    id: 'seedream-5.0', apiModelId: 'seedream-5-0-260128', label: 'Seedream 5.0', type: 'image',
+    provider: 'bytedance', capabilities: ['text-to-image', 'image-edit'],
+    params: [
+      { id: 'aspectRatio', label: 'Aspect ratio', type: 'select', options: ASPECT_BASIC, default: '1:1' },
       { id: 'resolution', label: 'Resolution', type: 'select',
         options: [{ label: '1K', value: '1K' }, { label: '2K', value: '2K' }, { label: '3K', value: '3K' }, { label: '4K', value: '4K' }],
         default: '2K' },
     ],
   },
+  // ── Video: user's enabled set, ordered by api_key.json modelOrder ──
   {
-    id: 'seedance-2.0-fast',
-    apiModelId: 'dreamina-seedance-2-0-fast-260128',
-    label: 'Seedance 2.0 Fast',
-    type: 'video',
-    provider: 'bytedance',
-    capabilities: ['text-to-video', 'image-to-video'],
+    id: 'seedance-2.0', apiModelId: 'dreamina-seedance-2-0-260128', label: 'Seedance 2.0', type: 'video',
+    provider: 'bytedance', capabilities: ['text-to-video', 'image-to-video'],
     params: [
-      { id: 'duration', label: 'Duration', type: 'select',
-        options: [4, 5, 6, 7, 8, 9, 10, 11, 12].map((d) => ({ label: `${d}s`, value: String(d) })),
-        default: '5' },
+      { id: 'duration', label: 'Duration', type: 'select', options: SEEDANCE_DURATIONS, default: '5' },
       { id: 'ratio', label: 'Ratio', type: 'select',
-        options: ['16:9', '9:16', '1:1'].map((r) => ({ label: r, value: r })),
+        options: [{ label: '16:9', value: '16:9' }, { label: '9:16', value: '9:16' }, { label: '1:1', value: '1:1' }, { label: '4:3', value: '4:3' }, { label: '3:4', value: '3:4' }],
+        default: '16:9' },
+      { id: 'resolution', label: 'Resolution', type: 'select',
+        options: [{ label: '480p', value: '480p' }, { label: '720p', value: '720p' }, { label: '1080p', value: '1080p' }],
+        default: '720p' },
+      { id: 'generate_audio', label: 'Audio', type: 'select',
+        options: [{ label: 'On', value: 'true' }, { label: 'Off', value: 'false' }],
+        default: 'true' },
+    ],
+  },
+  {
+    id: 'seedance-2.0-fast', apiModelId: 'dreamina-seedance-2-0-fast-260128', label: 'Seedance 2.0 Fast', type: 'video',
+    provider: 'bytedance', capabilities: ['text-to-video', 'image-to-video'],
+    params: [
+      { id: 'duration', label: 'Duration', type: 'select', options: SEEDANCE_DURATIONS.slice(0, 9), default: '5' },
+      { id: 'ratio', label: 'Ratio', type: 'select',
+        options: [{ label: '16:9', value: '16:9' }, { label: '9:16', value: '9:16' }, { label: '1:1', value: '1:1' }],
         default: '16:9' },
       { id: 'resolution', label: 'Resolution', type: 'select',
         options: [{ label: '480p', value: '480p' }, { label: '720p', value: '720p' }],
@@ -629,6 +1309,30 @@ const V1A_MODELS: ModelEntry[] = [
       { id: 'generate_audio', label: 'Audio', type: 'select',
         options: [{ label: 'On', value: 'true' }, { label: 'Off', value: 'false' }],
         default: 'true' },
+    ],
+  },
+  {
+    id: 'kling-3.0', apiModelId: 'fal-ai/kling-video/v3/pro', label: 'Kling 3', type: 'video',
+    provider: 'fal', capabilities: ['text-to-video', 'image-to-video'],
+    params: [
+      { id: 'duration', label: 'Duration', type: 'select',
+        options: [{ label: '5s', value: '5' }, { label: '10s', value: '10' }],
+        default: '5' },
+      { id: 'aspectRatio', label: 'Ratio', type: 'select',
+        options: [{ label: '16:9', value: '16:9' }, { label: '9:16', value: '9:16' }, { label: '1:1', value: '1:1' }],
+        default: '16:9' },
+    ],
+  },
+  {
+    id: 'grok-video', apiModelId: 'xai/grok-imagine-video', label: 'Grok Video', type: 'video',
+    provider: 'fal', capabilities: ['text-to-video', 'image-to-video'],
+    params: [
+      { id: 'duration', label: 'Duration', type: 'select',
+        options: [{ label: '5s', value: '5' }, { label: '10s', value: '10' }, { label: '15s', value: '15' }],
+        default: '5' },
+      { id: 'aspect_ratio', label: 'Ratio', type: 'select',
+        options: [{ label: '16:9', value: '16:9' }, { label: '9:16', value: '9:16' }, { label: '1:1', value: '1:1' }],
+        default: '16:9' },
     ],
   },
 ]
@@ -653,17 +1357,56 @@ async function handleTestKey(req: IncomingMessage, res: ServerResponse): Promise
   const key = body.key ?? ''
   if (!key) return sendJson(res, 200, { ok: false, message: 'API key is empty.' })
 
-  if (body.provider === 'bytedance' || body.provider === 'byteplus') {
-    try {
+  // Mirror the bragi-canvas testConnection contract per provider. Each path
+  // picks the cheapest endpoint that distinguishes "bad key" from "valid
+  // but rate-limited / missing scope". All return {ok, message} so the
+  // plugin Settings button needs no per-provider client logic.
+  try {
+    if (body.provider === 'bytedance' || body.provider === 'byteplus') {
       const r = await fetch(`${arkBaseUrl()}/models`, { headers: { 'Authorization': `Bearer ${key}` } })
       if (r.status === 200) return sendJson(res, 200, { ok: true, message: 'Connected.' })
       if (r.status === 401 || r.status === 403) return sendJson(res, 200, { ok: false, message: 'Invalid API key.' })
       return sendJson(res, 200, { ok: false, message: `Unexpected status ${r.status}.` })
-    } catch (e) {
-      return sendJson(res, 200, { ok: false, message: `Network error: ${(e as Error).message}` })
     }
+    if (body.provider === 'openai') {
+      const r = await fetch('https://api.openai.com/v1/models', { headers: { 'Authorization': `Bearer ${key}` } })
+      if (r.status === 200) return sendJson(res, 200, { ok: true, message: 'Connected.' })
+      if (r.status === 401 || r.status === 403) return sendJson(res, 200, { ok: false, message: 'Invalid API key.' })
+      return sendJson(res, 200, { ok: false, message: `Unexpected status ${r.status}.` })
+    }
+    if (body.provider === 'gemini') {
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`)
+      if (r.status === 200) return sendJson(res, 200, { ok: true, message: 'Connected.' })
+      if (r.status === 401 || r.status === 403 || r.status === 400) return sendJson(res, 200, { ok: false, message: 'Invalid API key.' })
+      return sendJson(res, 200, { ok: false, message: `Unexpected status ${r.status}.` })
+    }
+    if (body.provider === 'xai') {
+      const r = await fetch('https://api.x.ai/v1/models', { headers: { 'Authorization': `Bearer ${key}` } })
+      if (r.status === 200) return sendJson(res, 200, { ok: true, message: 'Connected.' })
+      if (r.status === 401 || r.status === 403) return sendJson(res, 200, { ok: false, message: 'Invalid API key.' })
+      return sendJson(res, 200, { ok: false, message: `Unexpected status ${r.status}.` })
+    }
+    if (body.provider === 'fal') {
+      const r = await fetch('https://queue.fal.run/fal-ai/fast-sdxl/requests/ping-test/status', { headers: { 'Authorization': `Key ${key}` } })
+      if (r.status === 401 || r.status === 403) return sendJson(res, 200, { ok: false, message: 'Invalid API key.' })
+      return sendJson(res, 200, { ok: true, message: 'Connected.' })
+    }
+    if (body.provider === 'luma') {
+      // Same trick bragi-canvas's testConnection uses: POST with empty body —
+      // 401 = bad token, 400 = token good (missing prompt), 200 = unexpected.
+      const r = await fetch(`${LUMA_ENDPOINT}/v1/images/generate`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+        body: '{}',
+      })
+      if (r.status === 401) return sendJson(res, 200, { ok: false, message: 'Invalid API key.' })
+      if (r.status === 400 || r.status === 200) return sendJson(res, 200, { ok: true, message: 'Connected.' })
+      return sendJson(res, 200, { ok: false, message: `Unexpected status ${r.status}.` })
+    }
+    return sendJson(res, 200, { ok: false, message: `Provider ${body.provider} not supported.` })
+  } catch (e) {
+    return sendJson(res, 200, { ok: false, message: `Network error: ${(e as Error).message}` })
   }
-  return sendJson(res, 200, { ok: false, message: `Provider ${body.provider} not supported in V1a.` })
 }
 
 // ─── Vite plugin entrypoint ───────────────────────────────────────────

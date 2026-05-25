@@ -147,7 +147,77 @@ assert_http "GET unknown route → 404" 404 GET /does-not-exist
 
 assert_http "GET /tasks/unknown → 404" 404 GET /tasks/tr_does_not_exist
 
-# ─── 6. /run text-to-video (Seedance, async) ─────────────────────────
+# ─── 6. Per-provider sync image smoke tests ──────────────────────────
+#
+# Each smoke test issues a real text-to-image call against the provider.
+# Upstream credential / account / project issues (key missing scope, model
+# not activated, API not enabled) get reclassified from FAIL to SKIP with
+# the provider's own error message — those aren't router bugs and a clean
+# regression run on a misconfigured host shouldn't mask the real failures.
+
+UPSTREAM_PATTERNS='not activated|ModelNotOpen|AccessDenied|InvalidEndpointOrModel|do not have access|has not been used|API_KEY|not authorized|missing_permissions|insufficient_quota'
+
+smoke_sync_image() {
+  local name="$1" model="$2" extra_params="$3"
+  printf 'Smoke: %s … ' "$name"
+  local body
+  body="{\"capability\":\"text-to-image\",\"model\":\"$model\",\"prompt\":\"a single red cube on a white background, studio lighting\",\"params\":${extra_params}}"
+  local resp
+  resp=$(curl -sS --max-time 90 -X POST "${auth_header_args[@]}" -H 'Content-Type: application/json' -d "$body" "${ROUTE}/run")
+  if printf '%s' "$resp" | grep -q '"outputs"'; then
+    printf '\033[32mPASS\033[0m\n'
+    PASS=$((PASS+1))
+  elif printf '%s' "$resp" | grep -qE "$UPSTREAM_PATTERNS"; then
+    local reason
+    reason=$(printf '%s' "$resp" | python3 -c 'import sys,json; d=json.load(sys.stdin); print((d.get("error","")[:80]))' 2>/dev/null || true)
+    printf '\033[33mSKIP\033[0m (upstream creds: %s)\n' "$reason"
+  else
+    printf '\033[31mFAIL\033[0m\n  body: %s\n' "${resp:0:300}"
+    FAIL=$((FAIL+1))
+    FAILED_NAMES+=("$name")
+  fi
+}
+
+smoke_sync_image 'OpenAI gpt-image-2'    'gpt-image-2'    '{"aspectRatio":"1:1","imageSize":"1K","quality":"low"}'
+smoke_sync_image 'Gemini nano-banana-2'  'nano-banana-2'  '{"aspectRatio":"1:1","imageSize":"1K"}'
+smoke_sync_image 'xAI grok-imagine'      'grok-imagine'   '{"aspectRatio":"1:1","quality":"normal"}'
+smoke_sync_image 'Luma uni-1'            'luma-uni-1'     '{"aspectRatio":"16:9"}'
+smoke_sync_image 'Seedream 5.0'          'seedream-5.0'   '{"aspectRatio":"1:1","resolution":"1K"}'
+
+# ─── 7. fal video submit (dispatch verification, no completion wait) ──
+
+printf 'Smoke: fal grok-video (submit only, no await) … '
+RESP=$(curl -sS --max-time 30 -X POST "${auth_header_args[@]}" -H 'Content-Type: application/json' \
+  -d '{"capability":"text-to-video","model":"grok-video","prompt":"red cube spinning","params":{"duration":"5","aspect_ratio":"16:9"}}' \
+  "${ROUTE}/run")
+if printf '%s' "$RESP" | grep -q '"taskId"'; then
+  TID=$(printf '%s' "$RESP" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("taskId",""))' 2>/dev/null || true)
+  printf '\033[32mPASS\033[0m  (taskId=%s)\n' "$TID"
+  PASS=$((PASS+1))
+elif printf '%s' "$RESP" | grep -qE "$UPSTREAM_PATTERNS"; then
+  printf '\033[33mSKIP\033[0m (upstream)\n'
+else
+  printf '\033[31mFAIL\033[0m\n  body: %s\n' "${RESP:0:300}"
+  FAIL=$((FAIL+1))
+  FAILED_NAMES+=("fal submit")
+fi
+
+printf 'Smoke: fal kling-3.0 (submit only, no await) … '
+RESP=$(curl -sS --max-time 30 -X POST "${auth_header_args[@]}" -H 'Content-Type: application/json' \
+  -d '{"capability":"text-to-video","model":"kling-3.0","prompt":"red cube spinning","params":{"duration":"5","aspectRatio":"16:9"}}' \
+  "${ROUTE}/run")
+if printf '%s' "$RESP" | grep -q '"taskId"'; then
+  printf '\033[32mPASS\033[0m\n'
+  PASS=$((PASS+1))
+elif printf '%s' "$RESP" | grep -qE "$UPSTREAM_PATTERNS"; then
+  printf '\033[33mSKIP\033[0m (upstream)\n'
+else
+  printf '\033[31mFAIL\033[0m\n  body: %s\n' "${RESP:0:300}"
+  FAIL=$((FAIL+1))
+  FAILED_NAMES+=("kling-3.0 submit")
+fi
+
+# ─── 8. /run text-to-video (Seedance, full async + long-poll) ────────
 
 if [ "${SKIP_VIDEO:-0}" = "1" ]; then
   printf '\033[33mSKIP\033[0m  Seedance video test (SKIP_VIDEO=1)\n'
@@ -155,6 +225,7 @@ else
   printf 'Submitting Seedance text-to-video task… (takes 60-180s)\n'
   RESP=$(call_router POST /run -H 'Content-Type: application/json' -d '{
     "capability": "text-to-video",
+    "model": "seedance-2.0-fast",
     "prompt": "A serene mountain lake at dawn, gentle mist, soft golden light",
     "params": {"duration": "5", "ratio": "16:9", "resolution": "480p", "generate_audio": "false"}
   }')
