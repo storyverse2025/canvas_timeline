@@ -2,16 +2,16 @@
  * Bragi Router — provider-agnostic generation endpoint.
  *
  * Sits next to vite-capabilities-plugin (which serves the web app's
- * /capabilities/run path) and exposes a clean /v1/* surface that Obsidian
+ * /capabilities/run path) and exposes a clean /api/router/* surface that Obsidian
  * (bragi-canvas plugin) can target instead of calling each provider
  * directly. The web app is NOT touched; this is purely additive.
  *
  * V1a scope:
- *   POST /v1/run         — image (Seedream, sync) + video (Seedance, async)
- *   GET  /v1/tasks/:id   — long-poll for async task state
- *   POST /v1/assets      — multipart upload, returns hosted URL
- *   GET  /v1/models      — model catalog (hardcoded for V1a; grows in 1b)
- *   POST /v1/test-key    — connection test for Settings → Test buttons
+ *   POST /api/router/run         — image (Seedream, sync) + video (Seedance, async)
+ *   GET  /api/router/tasks/:id   — long-poll for async task state
+ *   POST /api/router/assets      — multipart upload, returns hosted URL
+ *   GET  /api/router/models      — model catalog (hardcoded for V1a; grows in 1b)
+ *   POST /api/router/test-key    — connection test for Settings → Test buttons
  *
  * Auth: optional Bearer token. If ROUTER_TOKEN env is set, every request
  * needs `Authorization: Bearer <token>`. If not set, requests pass — the
@@ -454,7 +454,7 @@ async function dispatchAsync(req: RunRequest, provider: string, model: string, r
   throw new Error(`router: no async handler for provider=${provider} capability=${req.capability}`)
 }
 
-// ─── Endpoint: POST /v1/run ───────────────────────────────────────────
+// ─── Endpoint: POST /api/router/run ───────────────────────────────────────────
 
 async function handleRun(req: IncomingMessage, res: ServerResponse): Promise<void> {
   let body: RunRequest
@@ -512,7 +512,7 @@ async function handleRun(req: IncomingMessage, res: ServerResponse): Promise<voi
   }
 }
 
-// ─── Endpoint: GET /v1/tasks/:id?wait=20 ─────────────────────────────
+// ─── Endpoint: GET /api/router/tasks/:id?wait=20 ─────────────────────────────
 
 async function handleTaskGet(req: IncomingMessage, res: ServerResponse, taskId: string): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://localhost')
@@ -542,7 +542,7 @@ async function handleTaskGet(req: IncomingMessage, res: ServerResponse, taskId: 
   return respond(state)
 }
 
-// ─── Endpoint: POST /v1/assets ────────────────────────────────────────
+// ─── Endpoint: POST /api/router/assets ────────────────────────────────────────
 //
 // Two body shapes supported for V1a:
 //   1. application/json { dataUrl: "data:image/png;base64,..." }
@@ -577,7 +577,7 @@ async function handleAssetUpload(req: IncomingMessage, res: ServerResponse): Pro
   return sendJson(res, 200, { assetId, url: hosted })
 }
 
-// ─── Endpoint: GET /v1/models ─────────────────────────────────────────
+// ─── Endpoint: GET /api/router/models ─────────────────────────────────────────
 
 interface ModelEntry {
   id: string
@@ -637,7 +637,7 @@ function handleModels(_req: IncomingMessage, res: ServerResponse): void {
   sendJson(res, 200, { models: V1A_MODELS })
 }
 
-// ─── Endpoint: POST /v1/test-key ──────────────────────────────────────
+// ─── Endpoint: POST /api/router/test-key ──────────────────────────────────────
 //
 // Body: { provider: 'bytedance' | ..., key: 'sk-...' }
 // Result: { ok: boolean, message: string }
@@ -674,7 +674,7 @@ export function routerPlugin(): Plugin {
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
         const path = req.url ?? ''
-        if (!path.startsWith('/v1/')) return next()
+        if (!path.startsWith('/api/router/')) return next()
 
         if (req.method === 'OPTIONS') {
           res.setHeader('Access-Control-Allow-Origin', '*')
@@ -691,12 +691,12 @@ export function routerPlugin(): Plugin {
           // Strip query string for routing
           const cleanPath = path.split('?')[0]
 
-          if (cleanPath === '/v1/run' && req.method === 'POST') return handleRun(req, res)
-          if (cleanPath === '/v1/models' && req.method === 'GET') return handleModels(req, res)
-          if (cleanPath === '/v1/test-key' && req.method === 'POST') return handleTestKey(req, res)
-          if (cleanPath === '/v1/assets' && req.method === 'POST') return handleAssetUpload(req, res)
+          if (cleanPath === '/api/router/run' && req.method === 'POST') return handleRun(req, res)
+          if (cleanPath === '/api/router/models' && req.method === 'GET') return handleModels(req, res)
+          if (cleanPath === '/api/router/test-key' && req.method === 'POST') return handleTestKey(req, res)
+          if (cleanPath === '/api/router/assets' && req.method === 'POST') return handleAssetUpload(req, res)
 
-          const taskMatch = cleanPath.match(/^\/v1\/tasks\/([^/]+)$/)
+          const taskMatch = cleanPath.match(/^\/api\/router\/tasks\/([^/]+)$/)
           if (taskMatch && req.method === 'GET') return handleTaskGet(req, res, taskMatch[1])
 
           return sendJson(res, 404, { error: `unknown route: ${req.method} ${cleanPath}` })
