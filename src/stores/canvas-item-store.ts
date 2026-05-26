@@ -41,6 +41,21 @@ export type CanvasItemRole =
   | 'prop'
   | 'prop-description';
 
+/** Snapshot of an item before a destructive update (regenerate, prompt
+ *  rewrite). Pushed onto `CanvasItem.versions[]` by the canvas-api
+ *  mutation layer so the user can roll back without losing the prior
+ *  generation. Head = current item; versions[] = stack in reverse time
+ *  order (newest first). */
+export interface CanvasItemVersion {
+  content: string;
+  prompt?: string;
+  refImages?: string[];
+  refAudios?: string[];
+  provider?: string;
+  model?: string;
+  timestamp: number;
+}
+
 export interface CanvasItem {
   id: string;
   kind: CanvasItemKind;
@@ -61,6 +76,10 @@ export interface CanvasItem {
   refAudios?: string[];
   provider?: string;
   model?: string;
+  /** Prior heads, newest first. Written by canvas-api mutations before
+   *  overwriting `content` / `prompt`. Absent on items that have never
+   *  been regenerated. */
+  versions?: CanvasItemVersion[];
   createdAt: number;
 }
 
