@@ -169,3 +169,49 @@ export interface CritiqueVideoConsistencyRequest {
   /** Optional canvas keyframe URL the video was generated from. */
   keyframeUrl?: string
 }
+
+// ─── searchAndRewrite ─────────────────────────────────────────────
+//
+// "Find every image whose prompt contains X and rewrite/regenerate it
+// according to intent Y, preserving style and unrelated elements."
+//
+// The verb walks canvas-api.searchNodes, calls the rewrite-prompt LLM
+// per-match (so each prompt keeps its specific character/lighting/
+// composition context), and then calls canvas-api.regenerateImage on
+// each. Per-node rewriting was a deliberate choice over batch (chosen
+// by the user earlier): higher accuracy, predictable cost per node,
+// and partial-failure semantics that don't poison the whole batch.
+
+export interface SearchAndRewriteRequest {
+  /** Forwarded to canvas-api.searchNodes — see canvas-api/types.ts. */
+  target: {
+    promptContains: string[]
+    kinds?: Array<'image' | 'text' | 'video' | 'audio'>
+    roles?: string[]
+  }
+  /** Free-form description of the desired change, fed verbatim to the
+   *  rewrite-prompt LLM. */
+  intent: string
+  /** Concurrency cap for the regenerateImage fan-out. Defaults to 3
+   *  — high enough to feel responsive, low enough to avoid hammering
+   *  the image backend or burning the user's quota in one go. */
+  maxConcurrent?: number
+}
+
+export interface SearchAndRewriteNodeResult {
+  nodeId: string
+  shotNumber?: string
+  oldPrompt: string
+  newPrompt: string
+  /** New image URL, or undefined if generation failed. */
+  newImageUrl?: string
+  error?: string
+}
+
+export interface SearchAndRewriteResult {
+  /** How many matches the search returned before any work. */
+  matchCount: number
+  /** Per-node outcome. Includes failures so the caller can show
+   *  which shots need user attention. */
+  results: SearchAndRewriteNodeResult[]
+}
