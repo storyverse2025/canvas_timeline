@@ -181,6 +181,70 @@ describe('interpretRequest', () => {
     ).rejects.toThrow(/failed validation/)
   })
 
+  it('parses patch-canvas-pattern with target + intent + alsoRegenerateVideo', async () => {
+    const { llm } = llmReturning(JSON.stringify({
+      reasoning: '用户描述了批量改写模式',
+      actions: [{
+        type: 'patch-canvas-pattern',
+        target: { promptContains: ['左轮手枪'] },
+        intent: '机甲手持巨型手枪、人类坐在机甲驾驶舱内',
+        alsoRegenerateVideo: 'ask',
+      }],
+    }))
+    const ctx = createMemoryContext({ llm })
+    const result = await driveAuto(
+      interpretRequest(
+        {
+          userMessage: '找出所有左轮手枪的图，改成机甲持枪、人坐机甲内',
+          gapSummary: emptyGap,
+          recentMessages: [],
+        },
+        ctx,
+      ),
+    )
+    expect(result.actions).toHaveLength(1)
+    const action = result.actions[0]
+    if (action.type !== 'patch-canvas-pattern') throw new Error('expected patch-canvas-pattern')
+    expect(action.target.promptContains).toEqual(['左轮手枪'])
+    expect(action.intent).toContain('机甲')
+    expect(action.alsoRegenerateVideo).toBe('ask')
+  })
+
+  it('defaults patch-canvas-pattern.alsoRegenerateVideo to "ask" when omitted', async () => {
+    const { llm } = llmReturning(JSON.stringify({
+      reasoning: '省略 alsoRegenerateVideo，schema 应当默认 ask',
+      actions: [{
+        type: 'patch-canvas-pattern',
+        target: { promptContains: ['night']  },
+        intent: 'switch night scenes to dusk',
+      }],
+    }))
+    const ctx = createMemoryContext({ llm })
+    const result = await driveAuto(
+      interpretRequest({ userMessage: 'all night → dusk', gapSummary: emptyGap, recentMessages: [] }, ctx),
+    )
+    const action = result.actions[0]
+    if (action.type !== 'patch-canvas-pattern') throw new Error('expected patch-canvas-pattern')
+    expect(action.alsoRegenerateVideo).toBe('ask')
+  })
+
+  it('rejects patch-canvas-pattern with empty promptContains', async () => {
+    const { llm } = llmReturning(JSON.stringify({
+      reasoning: 'empty target',
+      actions: [{
+        type: 'patch-canvas-pattern',
+        target: { promptContains: [] },
+        intent: 'change something',
+      }],
+    }))
+    const ctx = createMemoryContext({ llm })
+    await expect(
+      driveAuto(
+        interpretRequest({ userMessage: '?', gapSummary: emptyGap, recentMessages: [] }, ctx),
+      ),
+    ).rejects.toThrow(/failed validation/)
+  })
+
   it('rejects unknown action types', async () => {
     const { llm } = llmReturning(JSON.stringify({
       reasoning: 'unknown',

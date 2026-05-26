@@ -241,6 +241,66 @@ export function ChatPanel() {
         }
         break
       }
+      case 'patch-canvas-pattern': {
+        // Director.searchAndRewrite enumerates matching nodes via
+        // canvas-api, rewrites each prompt via LLM, and regenerates the
+        // images. Per-node failures are surfaced in the result; the
+        // batch does not abort on a single failure.
+        const { searchAndRewrite } = await import('@/lib/agents/director-agent')
+        try {
+          const ctx = createMemoryContext({ llm: createCapabilityLLM() })
+          const result = await runAgentWithChatBridge(
+            'director-agent',
+            searchAndRewrite(
+              {
+                target: action.target,
+                intent: action.intent,
+              },
+              ctx,
+            ),
+            { verb: 'search-and-rewrite' },
+          )
+          const ok = result.results.filter((r) => r.newImageUrl)
+          const failed = result.results.filter((r) => !r.newImageUrl)
+          if (result.matchCount === 0) {
+            addMessage('system', `PM: 画布上没有 prompt 命中 ${JSON.stringify(action.target.promptContains)} 的节点`)
+            break
+          }
+          addMessage(
+            'system',
+            `✓ 改写完成：${ok.length}/${result.matchCount} 张已重生${
+              failed.length ? `（失败 ${failed.length} 张，旧版本仍在 versions[]）` : ''
+            }`,
+          )
+          // alsoRegenerateVideo handling. 'always' enqueues video regen
+          // for every row whose keyframe was successfully replaced;
+          // 'ask' prompts the user; 'never' is a no-op.
+          const rowIdsToRegen = Array.from(
+            new Set(
+              ok
+                .map((r) => r.shotNumber)
+                .filter((s): s is string => Boolean(s))
+                .map((shotNum) => {
+                  const row = useStoryboardStore.getState().rows.find((x) => x.shot_number === shotNum)
+                  return row?.id
+                })
+                .filter((id): id is string => Boolean(id)),
+            ),
+          )
+          if (rowIdsToRegen.length === 0) break
+          if (action.alsoRegenerateVideo === 'always') {
+            await quickUpdateDownstreamVideos(deps, rowIdsToRegen)
+          } else if (action.alsoRegenerateVideo === 'ask') {
+            addMessage(
+              'assistant',
+              `图片已更新。要不要根据新图重拍 ${rowIdsToRegen.length} 个镜头的视频？回复 "是" 重拍，"否" 跳过。`,
+            )
+          }
+        } catch (e) {
+          addMessage('system', `✗ 批量改写失败: ${(e as Error).message}`)
+        }
+        break
+      }
       case 'chat-response':
         addMessage('assistant', action.text)
         break

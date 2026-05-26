@@ -55,6 +55,43 @@ export const PMActionSchema = z.discriminatedUnion('type', [
     type: z.literal('sound-design-row'),
     rowId: z.string().min(1),
   }),
+  // ─── patch-canvas-pattern ───────────────────────────────────────
+  // "Find every image whose prompt contains X and rewrite it to Y."
+  // PM emits this when the user describes a *pattern fix* — a
+  // misconception baked into many shots — rather than asking for a
+  // single edit. Director then enumerates matches via canvas-api
+  // searchNodes, rewrites each prompt through an LLM (preserving
+  // style/lighting/character), regenerates the images, and decides
+  // about downstream video based on `alsoRegenerateVideo`.
+  //
+  // Concrete: 用户说"所有手持左轮手枪的角色改成机甲持枪、人坐机甲内"
+  //   → target.promptContains: ['左轮手枪']
+  //   → intent: '机甲手持巨型手枪，人类坐在机甲内部操控'
+  //   → alsoRegenerateVideo: 'ask'
+  z.object({
+    type: z.literal('patch-canvas-pattern'),
+    target: z.object({
+      /** Substring terms; canvas-api auto-expands via the synonym
+       *  dictionary, so PM should emit the user's natural phrase
+       *  ("左轮手枪") — the search layer handles 中英 synonyms. */
+      promptContains: z.array(z.string().min(1)).min(1),
+      /** Optional: restrict to specific item kinds. Default: image. */
+      kinds: z.array(z.enum(['image', 'text', 'video', 'audio'])).optional(),
+      /** Optional: restrict to roles (character, scene, prop,
+       *  keyframe, ...). Default: all roles. */
+      roles: z.array(z.string().min(1)).optional(),
+    }),
+    /** Free-form description of the desired change. Fed verbatim to
+     *  the rewrite-prompt LLM as the "what should change" instruction;
+     *  the LLM preserves style / lighting / composition. */
+    intent: z.string().min(1),
+    /** Whether to also regenerate videos for any storyboard rows
+     *  whose keyframe was changed. 'ask' surfaces a chat question
+     *  after image regen finishes (recommended default — image
+     *  changes are often enough to validate without burning video
+     *  generation budget). */
+    alsoRegenerateVideo: z.enum(['ask', 'always', 'never']).default('ask'),
+  }),
   z.object({
     type: z.literal('chat-response'),
     text: z.string().min(1),
