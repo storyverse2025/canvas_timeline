@@ -233,8 +233,10 @@ describe('regenerateImage', () => {
 
     const call = vi.mocked(runCapability).mock.calls[0][0]
     expect(call.capability).toBe('text-to-image')
-    expect(call.params?.provider).toBe('openai')
-    expect(call.params?.model).toBe('gpt-image-2')
+    // Defaults inherit from director-agent so canvas-api regens
+    // visually match director-agent keyframes.
+    expect(call.params?.provider).toBe('tokenrouter')
+    expect(call.params?.model).toBe('openai/gpt-5.4-image-2')
   })
 
   it('failure path: when text-to-image returns no url, state is untouched', async () => {

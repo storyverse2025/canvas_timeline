@@ -17,6 +17,12 @@ import { useCanvasItemStore } from '@/stores/canvas-item-store';
 import { useStoryboardStore } from '@/stores/storyboard-store';
 import type { CanvasItem, CanvasItemVersion } from '@/stores/canvas-item-store';
 import { runCapability } from '@/lib/capabilities/client';
+// Pin keyframe defaults to whatever director-agent uses, so canvas-api
+// regenerations stay visually consistent with director-agent-generated
+// keyframes (same backend, same style bias). Single source of truth
+// lives in director-agent/index.ts. Override via RegenerateImageOptions
+// when a caller wants something else.
+import { KEYFRAME_PROVIDER, KEYFRAME_MODEL } from '@/lib/agents/director-agent';
 import { getNode } from './snapshot';
 import type {
   AddNodeSpec,
@@ -24,14 +30,6 @@ import type {
   PromptPatch,
   RegenerateImageOptions,
 } from './types';
-
-// Keyframe defaults mirror director-agent/index.ts. We pin the same
-// provider/model so canvas-api regenerations are visually consistent
-// with director-agent-generated keyframes (same backend, same style
-// bias). Override via RegenerateImageOptions when a caller wants
-// something else.
-const KEYFRAME_PROVIDER = 'openai';
-const KEYFRAME_MODEL = 'gpt-image-2';
 
 class CanvasApiError extends Error {
   constructor(message: string) {
