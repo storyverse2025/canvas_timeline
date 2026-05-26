@@ -24,12 +24,15 @@ import { fillTemplate, parseFrontmatter } from '@/lib/agents/_shared/mustache'
 import type { ProjectContext } from '@/lib/agents/_shared/context/types'
 import type { AgentGenerator } from '@/lib/agents/_shared/runtime/types'
 
+import { searchNodes, getNode, regenerateImage, updateNodePrompt } from '@/lib/canvas-api'
+
 import skillSource from './SKILL.md?raw'
 import allocateShotsSource from './prompts/allocate-shots.md?raw'
 import composeShotsSource from './prompts/compose-shots.md?raw'
 import generateTableSource from './prompts/generate-storyboard-table.md?raw'
 import critiqueTimelineSource from './prompts/critique-timeline.md?raw'
 import applyTimelineFixesSource from './prompts/apply-timeline-fixes.md?raw'
+import rewritePromptSource from './prompts/rewrite-prompt.md?raw'
 
 import {
   TimelineIssueSchema,
@@ -42,6 +45,9 @@ import {
   type GenerateKeyframeRequest,
   type GenerateStoryboardTableRequest,
   type KeyframeResult,
+  type SearchAndRewriteNodeResult,
+  type SearchAndRewriteRequest,
+  type SearchAndRewriteResult,
   type TimelineIssue,
   type VideoConsistencyIssue,
 } from './schema'
@@ -53,6 +59,7 @@ const TPL = {
   generateTable: parseFrontmatter(generateTableSource).body,
   critiqueTimeline: parseFrontmatter(critiqueTimelineSource).body,
   applyTimelineFixes: parseFrontmatter(applyTimelineFixesSource).body,
+  rewritePrompt: parseFrontmatter(rewritePromptSource).body,
 }
 
 // ─── Keyframe model pin ────────────────────────────────────────────
@@ -548,6 +555,169 @@ export async function* critiqueVideoConsistency(
   yield { type: 'result', payload: out }
 }
 
+// ─── Verb: searchAndRewrite ───────────────────────────────────────
+//
+// Bulk concept replacement across the canvas. PM emits the
+// 'patch-canvas-pattern' action; chat-bridge routes it here.
+//
+// Flow:
+//   1. searchNodes via canvas-api (synonym-expanded substring match)
+//   2. yield candidates as a progress turn (chat panel surfaces the list)
+//   3. for each match, in parallel batches of maxConcurrent:
+//        a. LLM-rewrite the prompt with the rewrite-prompt template
+//        b. updateNodePrompt (versions the old prompt)
+//        c. regenerateImage (versions the old url, calls text-to-image)
+//      capture per-node {ok, error} so a single failure doesn't poison
+//      the batch
+//   4. yield final SearchAndRewriteResult — caller decides whether to
+//      regenerate downstream videos
+//
+// Choice: per-node LLM rewrite (not batch) — better fidelity (the LLM
+// sees one prompt's full context per call), predictable cost, and
+// partial-failure semantics.
+
+const DEFAULT_REWRITE_CONCURRENCY = 3
+
+async function runWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let cursor = 0
+  const runners: Promise<void>[] = []
+  const slots = Math.max(1, Math.min(limit, items.length))
+  for (let s = 0; s < slots; s++) {
+    runners.push(
+      (async () => {
+        while (true) {
+          const i = cursor++
+          if (i >= items.length) return
+          results[i] = await worker(items[i], i)
+        }
+      })(),
+    )
+  }
+  await Promise.all(runners)
+  return results
+}
+
+export async function* searchAndRewrite(
+  req: SearchAndRewriteRequest,
+  ctx: ProjectContext,
+): AgentGenerator<SearchAndRewriteResult> {
+  yield { type: 'progress', message: 'director: searching canvas for matching nodes' }
+  const matches = searchNodes({
+    promptContains: req.target.promptContains,
+    kinds: req.target.kinds ?? ['image'],
+    roles: req.target.roles as never,
+  })
+
+  if (matches.length === 0) {
+    yield {
+      type: 'progress',
+      message: `director: no matches for ${JSON.stringify(req.target.promptContains)}`,
+    }
+    yield { type: 'result', payload: { matchCount: 0, results: [] } }
+    return
+  }
+
+  // Surface the candidate list so the chat panel can render thumbnails /
+  // a confirmation. The hand-off contract: the chat panel may show this
+  // to the user, but it does NOT pause for confirmation — the user
+  // chose "直接执行 + 版本化" earlier, so versions[] is the rollback.
+  yield {
+    type: 'progress',
+    message: `director: found ${matches.length} matching shot(s) — rewriting prompts`,
+    data: {
+      matches: matches.map((m) => ({
+        nodeId: m.nodeId,
+        name: m.name,
+        promptPreview: m.promptPreview,
+        matchedTerms: m.matchedTerms,
+        shotNumbers: m.storyboardBindings.map((b) => b.shotNumber),
+      })),
+    },
+  }
+
+  const limit = Math.max(1, req.maxConcurrent ?? DEFAULT_REWRITE_CONCURRENCY)
+  const results = await runWithConcurrency<typeof matches[number], SearchAndRewriteNodeResult>(
+    matches,
+    limit,
+    async (m) => {
+      // searchNodes returns a truncated promptPreview for display; pull
+      // the full prompt from the item head via getNode so the LLM
+      // rewrites the complete prompt (truncating would silently drop
+      // style suffixes, ref-image legends, etc.).
+      const detail = getNode(m.nodeId)
+      const fullPrompt = detail?.item.prompt ?? ''
+      if (!fullPrompt) {
+        return {
+          nodeId: m.nodeId,
+          shotNumber: m.storyboardBindings[0]?.shotNumber,
+          oldPrompt: '',
+          newPrompt: '',
+          error: 'node has no prompt to rewrite',
+        }
+      }
+      try {
+        const llmResponse = await ctx.llm.complete(
+          [
+            {
+              role: 'user',
+              content: fillTemplate(TPL.rewritePrompt, {
+                oldPrompt: fullPrompt,
+                intent: req.intent,
+              }),
+            },
+          ],
+          { system: SYSTEM, signal: ctx.abort },
+        )
+        const newPrompt = stripFencesAndLabels(llmResponse).trim()
+        if (!newPrompt) throw new Error('rewrite LLM returned empty prompt')
+
+        updateNodePrompt(m.nodeId, { type: 'replace', prompt: newPrompt })
+        const detail = await regenerateImage(m.nodeId, { prompt: newPrompt })
+        return {
+          nodeId: m.nodeId,
+          shotNumber: m.storyboardBindings[0]?.shotNumber,
+          oldPrompt: fullPrompt,
+          newPrompt,
+          newImageUrl: detail.item.content,
+        }
+      } catch (e) {
+        return {
+          nodeId: m.nodeId,
+          shotNumber: m.storyboardBindings[0]?.shotNumber,
+          oldPrompt: fullPrompt,
+          newPrompt: '',
+          error: (e as Error).message,
+        }
+      }
+    },
+  )
+
+  yield {
+    type: 'progress',
+    message: `director: done — ${results.filter((r) => r.newImageUrl).length}/${results.length} regenerated`,
+  }
+  yield { type: 'result', payload: { matchCount: matches.length, results } }
+}
+
+/**
+ * Strip markdown code fences and conversational lead-ins ("Here is the
+ * rewritten prompt:") that small LLMs sometimes add despite the prompt
+ * telling them not to. Mirrors the defensive parsing in extractFirst*
+ * helpers above but for free-form text output.
+ */
+function stripFencesAndLabels(text: string): string {
+  let out = text.trim()
+  const fence = out.match(/^```(?:[a-z]*)?\s*([\s\S]*?)\s*```$/i)
+  if (fence) out = fence[1].trim()
+  out = out.replace(/^(?:here(?:'s| is)|改写后的 ?prompt[:：]|rewritten prompt[:：]|new prompt[:：])\s*/i, '')
+  return out
+}
+
 // ─── Module metadata ──────────────────────────────────────────────
 
 export const directorAgent = {
@@ -564,6 +734,7 @@ export const directorAgent = {
   applyTimelineFixes,
   generateKeyframe,
   critiqueVideoConsistency,
+  searchAndRewrite,
 } as const
 
 export type {
@@ -582,4 +753,7 @@ export type {
   ApplyTimelineFixesRequest,
   GenerateKeyframeRequest,
   CritiqueVideoConsistencyRequest,
+  SearchAndRewriteRequest,
+  SearchAndRewriteResult,
+  SearchAndRewriteNodeResult,
 } from './schema'

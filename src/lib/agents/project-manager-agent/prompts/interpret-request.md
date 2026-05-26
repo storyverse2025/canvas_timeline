@@ -58,6 +58,24 @@ project-manager-agent / interpret-request
   必须给 `rowId: string`。
 - `sound-design-row` — 让 sound-agent 写某行的 BGM/SFX/混音。
   必须给 `rowId: string`。
+- `patch-canvas-pattern` — 用户描述了一个 **批量改写模式**："所有 X 的图改成 Y"、
+  "把所有 ... 换成 ..."、"全部夜景改成黄昏"。Director 会调
+  canvas-api.searchNodes 把所有 prompt 命中的 image 节点列出来，
+  逐条用 LLM 改写 prompt（保留风格 / 角色 / 光照），重生图片，
+  最后视 `alsoRegenerateVideo` 决定要不要重拍视频。
+  必填：
+    - `target.promptContains: string[]` — 用户的自然措辞 (例如 `["左轮手枪"]`)，
+      canvas-api 会自动展开同义词 (revolver / pistol / handgun)，
+      所以不要自己手动列出同义词。
+    - `intent: string` — 一句话描述要改成什么（直接喂给 LLM 当 rewrite 指令）。
+    - `alsoRegenerateVideo: "ask" | "always" | "never"` — 默认 `"ask"`，
+      让用户在图片重生完后再决定是否重拍视频（图片改完往往就足够验证概念）。
+  可选：
+    - `target.kinds: ["image"]` — 默认就是 image，可省。
+    - `target.roles: ["keyframe", "character"]` — 限定某些角色/场景/keyframe。
+  适用："所有 X 改成 Y"、"把所有 ... 换成 ..."、"全部 ... 改为 ..."。
+  不适用：单个镜头改动（用 `chat-response` 让用户右键 inpaint），
+  或全盘重做（用 `run-director-assistant`）。
 - `chat-response` — 直接回复用户。必须给 `text: string`。
 - `ask-user` — 反问澄清。必须给 `question: string`。整个 plan 只能有这一条。
 
@@ -71,6 +89,17 @@ project-manager-agent / interpret-request
 - 用户："你好" → `[{ type: "chat-response", text: "你好。当前进度：…" }]`
 - 用户："分镜表是空的怎么办" → 在 gapSummary 里看 `nextSuggestion: 'run-director-assistant'`
   → `[{ type: "run-director-assistant" }]`
+- 用户："找出所有人物角色手持左轮手枪的图，改成机甲持有巨型手枪、人类坐在机甲里面控制"
+  → `[{ type: "patch-canvas-pattern",
+        target: { promptContains: ["左轮手枪"] },
+        intent: "把手持左轮手枪的人类角色，替换为机甲手持巨型手枪、人类坐在机甲驾驶舱内操控",
+        alsoRegenerateVideo: "ask" }]`
+  ← 不要在 promptContains 里写 ["左轮手枪","revolver","pistol"]：canvas-api
+    会自动展开同义词。
+- 用户："把所有夜景改成黄昏" → `[{ type: "patch-canvas-pattern",
+        target: { promptContains: ["夜景","夜晚"] },
+        intent: "把夜景改成黄昏：天空泛橙红色、夕阳低斜、长投影",
+        alsoRegenerateVideo: "ask" }]`
 
 ═══ 硬约束 ═══
 
