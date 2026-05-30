@@ -61,6 +61,7 @@ function makeDossierJson(): ScriptDossier {
       { name: '怀表', description: '银色', dramatic_significance: '亡父遗物' },
     ],
     storyboard_directives: ['尽量保留长镜头', '主角视线轴线一致'],
+    clarifications: [],
   }
 }
 

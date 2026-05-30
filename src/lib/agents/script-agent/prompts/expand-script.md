@@ -125,10 +125,21 @@ output: ScriptDossier (JSON only)
 - 每个 casting_cards.performance_anchors 必须是演员可执行动作（眼神/呼吸/手部/姿态/节奏），不要抽象鸡汤。
 - 必须保留至少一个 main_risk 或 must_fix，真实反馈，不捧杀。
 - 若信息不足，在对应字段写"待用户确认"，不要编。
-- 根据 {{inputShape}} 调整粒度：
-  - rough-idea 时多扩写，补完整结构；
-  - complete-draft 时多保留原文，做轻量清洁；
-  - specific-scene 时只动这一场。
+- 根据 {{inputShape}} 与"原剧本是否已含显式分镜"分级处理（**先判断再写**）：
+  - **MOST-STRICT 模式** —— 当 `{{inputShape}} == complete-draft` **并且** 原 `{{scriptText}}` 中已经含有显式分镜结构（"镜头 A/B/C"、"SERIES OF SHOTS"、"RAPID CUTS"、"FLASH IMAGES"、"SHOT N"、"场景 N. 时间.地点"等任意一种）：
+    - `expanded_script_baseline.script_text` 与 `post_doctor_revised_script.script_text` 两个字段**几乎就是 `{{scriptText}}` 原文**，只允许：(a) 修正明显错别字 / 病句；(b) 应用 `doctor_roundtable_summary.must_fix` 中 must_fix 一项的最小手术式补丁。
+    - **严格禁止**：重新组织叙事顺序、合并/拆分场景、删除任何带分镜标记的段落、用更"凝练"的句子覆盖原文、加入 `【0-20s】` 时间码概述。
+    - `revision_notes` 必须明确每一处修改的依据（must_fix 第 N 条 / 错别字订正），不能"为了更顺更好读"做无依据改动。
+  - **STRONG 模式** —— 当 `{{inputShape}} == complete-draft` 但**没有**显式分镜标记：
+    - 保留所有场景、人物、对白、视觉描述的内容与顺序不动；
+    - 允许在不改变叙事的前提下润色文字、补全场景标题、补统一格式（例如统一 "场景 N. 时间. 地点"）；
+    - 不要增加新场景或新角色。
+  - **NORMAL 模式** —— 当 `{{inputShape}} == partial-script` 或 `specific-scene`：
+    - 保留用户已写的内容不动；
+    - 在用户明显留白的地方补完整结构（缺场景标题、缺人物动作、缺对白衔接），新增内容必须紧贴用户已有的设定与基调。
+  - **EXPAND 模式** —— 当 `{{inputShape}} == rough-idea`：
+    - 用户只给了概念/大纲，按完整 Script → Casting 契约扩写出完整剧本基准；
+    - 即使如此，凡是用户已经用文字明示的设定（人物名、关键道具、世界观、转折点）都要保留。
 - 必须遵守内容禁忌：{{taboos}}。如有冲突，在 main_risk 中说明并给出兼容方案。
 - 必须严格采纳"用户对该剧本的关键澄清"中所有 Q/A，相关字段（logline、casting_cards、scene_cards、storyboard_directives 等）必须与用户的选择保持一致，不要按你自己的偏好覆盖用户的回答。
 - `post_doctor_revised_script.script_text` 必须是把 `doctor_roundtable_summary.must_fix` 全部应用后的版本：保留 `keep` 的亮点不动，针对每条 `must_fix` 给出实际改写，而不是改写计划。每条 `must_fix` 在 `revision_notes` 里有一条对应说明。下游 (storyboard / casting / keyframe) 只读 `post_doctor_revised_script.script_text`，不再读 `expanded_script_baseline.script_text`，所以这一版必须是完整可用的剧本。

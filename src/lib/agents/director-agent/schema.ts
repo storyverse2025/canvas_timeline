@@ -87,6 +87,18 @@ export interface CritiqueTimelineRequest {
   targetRowCount: number
   /** Total duration in seconds; sums of row durations must equal this. */
   totalDurationSeconds: number
+  /** Original user-provided script text. The critic uses this to flag
+   *  rows that contradict the user's input — added/removed scenes,
+   *  reshuffled shot order, fabricated character actions the user
+   *  never wrote, etc. Without this anchor the critic can only check
+   *  internal consistency, not faithfulness to the source. */
+  userScript: string
+  /** Formatted Q&A of the user's answers to script-agent's ask phase
+   *  (the script-specific 3-5 clarification questions). Lines like
+   *  "Q: 沃斯的动机是什么？\nA: 维护秩序的执念，不是单纯的恶。"
+   *  The critic verifies the storyboard doesn't violate these
+   *  user-stated choices. Empty string when the user answered nothing. */
+  userClarifications: string
 }
 
 export interface ApplyTimelineFixesRequest {

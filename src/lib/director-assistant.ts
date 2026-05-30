@@ -213,7 +213,13 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   const revisedScript = dossier.post_doctor_revised_script?.script_text?.trim()
     || dossier.expanded_script_baseline.script_text.trim()
   const revisionNotes = dossier.post_doctor_revised_script?.revision_notes ?? []
-  useProjectDBImport.getState().updateScript({ optimizedText: revisedScript })
+  // Persist the ask-phase clarifications too — runSelfCheck reads them from
+  // projectDB so the critic can verify the storyboard doesn't contradict
+  // what the user explicitly chose during the script-agent ask phase.
+  useProjectDBImport.getState().updateScript({
+    optimizedText: revisedScript,
+    clarifications: dossier.clarifications ?? [],
+  })
   try {
     const { ensureRevisedScriptCanvasNode } = await import('@/lib/revised-script-node')
     ensureRevisedScriptCanvasNode(revisedScript, revisionNotes)
@@ -475,6 +481,17 @@ async function runSelfCheck(state: PipelineState, storyboardJson: string, onUpda
 
   const agentCtx = createMemoryContext({ llm: createCapabilityLLM() })
 
+  // Source-of-truth anchors for "did the generator stay faithful to what
+  // the user actually said?" The critic compares storyboard rows against:
+  //   - userScript: the raw script the user typed into 导演助手
+  //   - userClarifications: their answers to script-agent's ask phase
+  // Empty inputs are handled gracefully by the prompt (it just skips the
+  // anchor check rather than throwing).
+  const userScript = (db.script.text ?? '').trim()
+  const userClarifications = (db.script.clarifications ?? [])
+    .map((c) => `Q: ${c.q}\nA: ${c.answer}`)
+    .join('\n\n')
+
   // Timeline / continuity check — director-agent.critiqueTimeline
   setStep(state, 1, 0, 'running'); onUpdate(state)
   const timelineIssues = await runAgentWithChatBridge(
@@ -486,6 +503,8 @@ async function runSelfCheck(state: PipelineState, storyboardJson: string, onUpda
         characterNames,
         targetRowCount,
         totalDurationSeconds,
+        userScript,
+        userClarifications,
       },
       agentCtx,
     ),

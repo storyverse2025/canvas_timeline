@@ -138,7 +138,7 @@ describe('critiqueTimeline', () => {
     const { llm } = llmReturning('[{"shot":"S2","issue":"角色瞬移","fix":"补一个过渡镜头"}]')
     const ctx = createMemoryContext({ llm })
     const issues = await driveAuto(critiqueTimeline(
-        { storyboardJson: '[]', artStyle: 'cinematic', characterNames: [], targetRowCount: 3, totalDurationSeconds: 30 },
+        { storyboardJson: '[]', artStyle: 'cinematic', characterNames: [], targetRowCount: 3, totalDurationSeconds: 30, userScript: 'USR', userClarifications: '' },
         ctx,
       ))
     expect(issues).toEqual([{ shot: 'S2', issue: '角色瞬移', fix: '补一个过渡镜头' }])
@@ -149,7 +149,7 @@ describe('critiqueTimeline', () => {
     const ctx = createMemoryContext({ llm })
     expect(
       await driveAuto(critiqueTimeline(
-        { storyboardJson: '[]', artStyle: 'cinematic', characterNames: [], targetRowCount: 3, totalDurationSeconds: 30 },
+        { storyboardJson: '[]', artStyle: 'cinematic', characterNames: [], targetRowCount: 3, totalDurationSeconds: 30, userScript: 'USR', userClarifications: '' },
         ctx,
       )),
     ).toEqual([])
@@ -159,7 +159,7 @@ describe('critiqueTimeline', () => {
     const { llm } = llmReturning('[{"shot":"S1","issue":"x","fix":"y"},{"shot":42}]')
     const ctx = createMemoryContext({ llm })
     const issues = await driveAuto(critiqueTimeline(
-        { storyboardJson: '[]', artStyle: 'cinematic', characterNames: [], targetRowCount: 3, totalDurationSeconds: 30 },
+        { storyboardJson: '[]', artStyle: 'cinematic', characterNames: [], targetRowCount: 3, totalDurationSeconds: 30, userScript: 'USR', userClarifications: '' },
         ctx,
       ))
     expect(issues).toHaveLength(1)
@@ -169,7 +169,7 @@ describe('critiqueTimeline', () => {
     const { llm, spy } = llmReturning('[]')
     const ctx = createMemoryContext({ llm })
     await driveAuto(critiqueTimeline(
-        { storyboardJson: '[]', artStyle: 'cinematic', characterNames: [], targetRowCount: 3, totalDurationSeconds: 30 },
+        { storyboardJson: '[]', artStyle: 'cinematic', characterNames: [], targetRowCount: 3, totalDurationSeconds: 30, userScript: 'USR', userClarifications: '' },
         ctx,
       ))
     const sent = spy.mock.calls[0]![0]![0]!.content as string
