@@ -131,18 +131,27 @@ async function apimartChat(systemPrompt: string, userText: string, imageUrl?: st
  * Parse an OpenAI-compatible /chat/completions response that may be either
  * a single JSON envelope or an SSE stream (`data: {chunk}\n\n…data: [DONE]`).
  *
- * Apimart sometimes returns SSE without `stream:true` being requested;
- * sniffing the body and accumulating `delta.content` keeps callers working
- * regardless of which format comes back.
+ * Apimart sometimes returns SSE without `stream: true` being requested. The
+ * detection used to sniff the body prefix for `data:`, but real SSE streams
+ * can lead with `: <comment>` heartbeat lines (e.g. `: PING\n\ndata: …`),
+ * which made the prefix sniffer misclassify them as JSON envelope and the
+ * `JSON.parse` call threw `Unexpected token ':'`. Try-JSON-then-SSE is more
+ * robust: a real envelope parses cleanly; anything else (SSE with
+ * heartbeats, plain text, malformed) falls into the line-by-line accumulator.
  */
 function parseOpenAIChatResponse(raw: string): string {
-  const trimmed = raw.trimStart()
-  if (!trimmed.startsWith('data:')) {
+  // Fast path: well-formed JSON envelope.
+  try {
     const data = JSON.parse(raw) as { choices?: Array<{ message?: { content?: string } }> }
     return data.choices?.[0]?.message?.content ?? ''
+  } catch {
+    // fall through to the SSE accumulator
   }
   let out = ''
   for (const line of raw.split('\n')) {
+    // SSE heartbeats start with `:` (or `: `); other field names (event:,
+    // id:, retry:) are non-data and ignored here. Only `data:` carries
+    // chat content.
     if (!line.startsWith('data:')) continue
     const payload = line.slice(5).trim()
     if (!payload || payload === '[DONE]') continue
