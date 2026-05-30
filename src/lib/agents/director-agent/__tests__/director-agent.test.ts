@@ -100,6 +100,7 @@ describe('generateStoryboardTable', () => {
           shotComposition: 'C',
           visualStrategy: 'S',
           elementContext: 'E',
+          revisedScript: 'rev',
         },
         ctx,
       ),
@@ -119,6 +120,7 @@ describe('generateStoryboardTable', () => {
           artStyle: 'cinematic', totalDurationSeconds: 60,
           characterDesigns: '[]', sceneDesigns: '[]', propDesigns: '[]',
           shotAllocation: 'A', shotComposition: 'C', visualStrategy: 'S', elementContext: 'E',
+          revisedScript: 'rev',
         },
         ctx,
       ),
@@ -135,7 +137,10 @@ describe('critiqueTimeline', () => {
   it('parses TimelineIssue[] from the LLM response', async () => {
     const { llm } = llmReturning('[{"shot":"S2","issue":"角色瞬移","fix":"补一个过渡镜头"}]')
     const ctx = createMemoryContext({ llm })
-    const issues = await driveAuto(critiqueTimeline({ storyboardJson: '[]' }, ctx))
+    const issues = await driveAuto(critiqueTimeline(
+        { storyboardJson: '[]', artStyle: 'cinematic', characterNames: [], targetRowCount: 3, totalDurationSeconds: 30 },
+        ctx,
+      ))
     expect(issues).toEqual([{ shot: 'S2', issue: '角色瞬移', fix: '补一个过渡镜头' }])
   })
 
@@ -143,21 +148,30 @@ describe('critiqueTimeline', () => {
     const { llm } = llmReturning('[]')
     const ctx = createMemoryContext({ llm })
     expect(
-      await driveAuto(critiqueTimeline({ storyboardJson: '[]' }, ctx)),
+      await driveAuto(critiqueTimeline(
+        { storyboardJson: '[]', artStyle: 'cinematic', characterNames: [], targetRowCount: 3, totalDurationSeconds: 30 },
+        ctx,
+      )),
     ).toEqual([])
   })
 
   it('drops malformed items rather than throwing', async () => {
     const { llm } = llmReturning('[{"shot":"S1","issue":"x","fix":"y"},{"shot":42}]')
     const ctx = createMemoryContext({ llm })
-    const issues = await driveAuto(critiqueTimeline({ storyboardJson: '[]' }, ctx))
+    const issues = await driveAuto(critiqueTimeline(
+        { storyboardJson: '[]', artStyle: 'cinematic', characterNames: [], targetRowCount: 3, totalDurationSeconds: 30 },
+        ctx,
+      ))
     expect(issues).toHaveLength(1)
   })
 
   it('asks the critic to flag rows with 3+ characters or two scenes and propose a split', async () => {
     const { llm, spy } = llmReturning('[]')
     const ctx = createMemoryContext({ llm })
-    await driveAuto(critiqueTimeline({ storyboardJson: '[]' }, ctx))
+    await driveAuto(critiqueTimeline(
+        { storyboardJson: '[]', artStyle: 'cinematic', characterNames: [], targetRowCount: 3, totalDurationSeconds: 30 },
+        ctx,
+      ))
     const sent = spy.mock.calls[0]![0]![0]!.content as string
     expect(sent).toContain('每行 scene + character 人数上限')
     expect(sent).toContain('3 位以上主要角色')

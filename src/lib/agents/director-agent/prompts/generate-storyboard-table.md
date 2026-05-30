@@ -15,7 +15,7 @@ output: text (JSON array of storyboard rows)
 
 director-agent / generate-storyboard-table
 
-将以上所有分析整合，输出最终的分镜表 JSON 数组。
+你的任务：把"医生诊断后剧本"+ 角色/场景/道具设计 + 镜头分配/构图/视觉策略 整合，最终输出可直接喂下游 keyframe / video 的分镜表 JSON 数组。具体输出指令在本提示词末尾，请先读完全部硬约束与输入再开始构思。
 
 【时长硬约束（不可违反）】
 - 用户已指定本片总时长为 **{{totalDurationSeconds}} 秒**。
@@ -89,6 +89,9 @@ scene 的 description 必须使用场景提取步骤中的详细描述。这样�
 - storyboard_prompts 必须明确是多格导演分镜图，并包含每格的时间切片和动作/情绪推进；不要只写单帧 keyframe prompt。
 - motion_prompts 必须引用 storyboard_prompts 的格子顺序，让 Seedance 2 视频按多格时间推进生成，不要把多格图当最终分屏画面。
 
+【医生诊断后剧本（权威基准，所有镜头必须忠实于它，不要再次"扩写"或"总结"它，只是把它转成分镜）】
+{{revisedScript}}
+
 角色设计：
 {{characterDesigns}}
 
@@ -103,4 +106,5 @@ scene 的 description 必须使用场景提取步骤中的详细描述。这样�
 视觉策略：{{visualStrategy}}
 画布元素：{{elementContext}}
 
-只输出 ```json ... ``` 代码块，不要其他文字。
+═══ 输出指令（最重要，最后阅读） ═══
+现在把上面"医生诊断后剧本"+ 所有设计 + 分配/构图/策略 整合为最终分镜表 JSON 数组。**输出格式必须是 ```json ... ``` 代码块，里面是一个 JSON 数组**，第一个字符是 `[`，最后一个字符是 `]`。不要输出任何解释、思路、Markdown 标题、提纲或自然语言段落。不要先写"好的，我来整合"，不要写"分镜表如下"。直接给代码块。整张表必须满足上文的所有硬约束（每行 2-15s、总时长锁定、单 row 一个 scene + 至多两位 character、字段齐全等）。

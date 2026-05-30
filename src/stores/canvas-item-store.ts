@@ -27,6 +27,10 @@ export type CanvasItemKind = 'image' | 'text' | 'video' | 'audio';
  *   - 'scene'    : a 360° equirectangular panorama from art-director.
  *                  Renders via PanoramaViewer (drag to look around) instead
  *                  of a flat <img>.
+ *   - 'script'   : the post-doctor revised expanded script (text node named
+ *                  "最终扩写剧本"). Spawned by the director pipeline so the
+ *                  baseline that all downstream agents consume is visible
+ *                  on the canvas and the user can edit it inline.
  */
 export type CanvasItemRole =
   | 'style'
@@ -39,7 +43,8 @@ export type CanvasItemRole =
   | 'scene'
   | 'scene-description'
   | 'prop'
-  | 'prop-description';
+  | 'prop-description'
+  | 'script';
 
 /** Snapshot of an item before a destructive update (regenerate, prompt
  *  rewrite). Pushed onto `CanvasItem.versions[]` by the canvas-api

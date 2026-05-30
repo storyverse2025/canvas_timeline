@@ -97,7 +97,7 @@ export function TopBar() {
     input.click()
   }, [])
 
-  const handleClear = useCallback(() => {
+  const handleClear = useCallback(async () => {
     if (!window.confirm(
       '清空所有内容？画布节点、资产、时间轴、分镜表、聊天历史、生成历史、画布-时间轴关联都会被清空，此操作不可撤销。'
     )) return
@@ -115,12 +115,20 @@ export function TopBar() {
     // resets messages to a single welcome line, then addMessage tacks on
     // the system confirmation. Order reversed would drop the confirmation.
     useChatStore.getState().clearHistory()
-    // Dynamically import stores that may not be in the original imports
-    import('@/stores/canvas-item-store').then((m) => m.useCanvasItemStore.setState({ items: {} }))
-    import('@/stores/storyboard-store').then((m) => m.useStoryboardStore.getState().clear())
-    import('@/stores/libtv-tasks-store').then((m) =>
-      m.useLibtvTasksStore.setState({ tasks: {} })
-    )
+    // Dynamically-imported stores that may not be in the original imports.
+    // AWAIT all three before the "已清空" confirmation: prior fire-and-forget
+    // pattern let users open 导演助手 → 优化 in the same gesture before
+    // storyboard-store / canvas-item-store / libtv-tasks-store actually
+    // cleared, leading to "canvas is new but the storyboard table is from a
+    // previous session" bugs.
+    const [itemStore, sbStore, libtvStore] = await Promise.all([
+      import('@/stores/canvas-item-store'),
+      import('@/stores/storyboard-store'),
+      import('@/stores/libtv-tasks-store'),
+    ])
+    itemStore.useCanvasItemStore.setState({ items: {} })
+    sbStore.useStoryboardStore.getState().clear()
+    libtvStore.useLibtvTasksStore.setState({ tasks: {} })
     useChatStore.getState().addMessage('system', '已清空所有内容')
   }, [])
 

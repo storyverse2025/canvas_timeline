@@ -22,7 +22,6 @@ import {
 import { runAgentWithChatBridge } from '@/lib/agents/chat-bridge'
 import { createMemoryContext } from '@/lib/agents/_shared/context/memory'
 import { createCapabilityLLM } from '@/lib/agents/_shared/llm/capability'
-
 export type StepStatus = 'pending' | 'running' | 'done' | 'error'
 
 export interface PipelineStep {
@@ -58,6 +57,7 @@ export function createDirectorInitialState(): PipelineState {
           { id: 'skill-calibration', label: '剧本框架七层校准', status: 'pending' },
           { id: 'script-expansion', label: '完整剧本扩写', status: 'pending' },
           { id: 'script-doctor', label: '剧本医生圆桌会诊', status: 'pending' },
+          { id: 'post-doctor-revision', label: '医生诊断后剧本修改', status: 'pending' },
           { id: 'dialogue-diagnosis', label: '台词专家全量诊断', status: 'pending' },
           { id: 'casting-breakdown', label: 'Casting 角色卡与表演锚点', status: 'pending' },
           { id: 'element-generation', label: '角色/场景/道具素材生成', status: 'pending' },
@@ -65,6 +65,7 @@ export function createDirectorInitialState(): PipelineState {
           { id: 'visual-strategy', label: '全局视觉策略', status: 'pending' },
           { id: 'shot-allocation', label: '镜头分配计划', status: 'pending' },
           { id: 'shot-composition', label: '镜头构图设计', status: 'pending' },
+          { id: 'storyboard-design', label: '分镜设计', status: 'pending' },
           { id: 'optimize-result', label: '优化结果', status: 'pending' },
         ],
       },
@@ -127,6 +128,22 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   // ChatPanel surfaces InterviewCard, swap driveAuto for drive() with a real
   // onQuestion handler.
   setStep(state, 0, 0, 'running'); onUpdate(state)
+
+  // Generate a session title from scriptText before the heavy work begins.
+  // Non-blocking — failure keeps any existing title or proceeds without one.
+  // The result lands in projectDB.script.sessionTitle and surfaces in the
+  // cross-machine session picker (vite-session-snapshot-plugin uses it as
+  // the preview title for /local-session/list entries).
+  void (async () => {
+    try {
+      const { ensureSessionTitle } = await import('@/lib/session-title')
+      await ensureSessionTitle(scriptText)
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn('[director-assistant] session-title generation failed (non-fatal):', (e as Error).message)
+    }
+  })()
+
   const agentCtx = createMemoryContext({
     llm: createCapabilityLLM(),
     snapshot: { style: { presetId: artDir.stylePreset, promptText: artStyle } },
@@ -139,8 +156,8 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
         canvasContext: canvasCtx,
         existingStoryboard,
         // Tell the agent what's already locked from the dialog + canvas so
-        // it skips Q1 (项目类型 — derived from duration) and Q3 (视觉风格
-        // — handled by {{artStyle}}). Saves the user redundant clicks.
+        // its auto-inferred project type anchors to the user's duration and
+        // its visual-style recap names the canvas style instead of guessing.
         knownContext: {
           totalDurationSeconds,
           visualStyle: artStyle,
@@ -187,9 +204,36 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   setStep(state, 0, 0, 'done', '已按 script-framework-qa 完成七层框架校准'); onUpdate(state)
   setStep(state, 0, 1, 'done', '已按 script-writing-expansion 生成/补齐完整剧本基准'); onUpdate(state)
   setStep(state, 0, 2, 'done', '已按 script-doctor-roundtable 完成结构会诊摘要'); onUpdate(state)
-  setStep(state, 0, 3, 'done', '已按 dialogue-doctor-diagnosis 完成台词病灶摘要'); onUpdate(state)
-  setStep(state, 0, 4, 'done', scriptToCastingReport); onUpdate(state)
 
+  // Step 4: 医生诊断后剧本修改 — persist the revised script as the durable
+  // baseline. expand-script's `post_doctor_revised_script.script_text` is
+  // what downstream agents (storyboard / casting / keyframe) read from now
+  // on; we write it into useProjectDB.script.optimizedText and spawn a
+  // "最终扩写剧本" canvas node so the user can see + edit it inline.
+  const revisedScript = dossier.post_doctor_revised_script?.script_text?.trim()
+    || dossier.expanded_script_baseline.script_text.trim()
+  const revisionNotes = dossier.post_doctor_revised_script?.revision_notes ?? []
+  useProjectDBImport.getState().updateScript({ optimizedText: revisedScript })
+  try {
+    const { ensureRevisedScriptCanvasNode } = await import('@/lib/revised-script-node')
+    ensureRevisedScriptCanvasNode(revisedScript, revisionNotes)
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn('[director-assistant] spawning revised-script canvas node failed:', (e as Error).message)
+  }
+  setStep(state, 0, 3, 'done',
+    revisionNotes.length > 0
+      ? `已按医生诊断修订剧本（${revisionNotes.length} 条 must_fix）`
+      : '医生诊断未提出 must_fix，沿用扩写基准'
+  ); onUpdate(state)
+
+  setStep(state, 0, 4, 'done', '已按 dialogue-doctor-diagnosis 完成台词病灶摘要'); onUpdate(state)
+  setStep(state, 0, 5, 'done', scriptToCastingReport); onUpdate(state)
+
+  // Downstream agents read the post-doctor revised script as the canonical
+  // baseline. The full dossier still flows for casting / scene / prop
+  // context, but the storyboard prompt receives `revisedScript` explicitly
+  // so the doctor's corrections actually land in the final shots.
   const scriptAnalysis = scriptToCastingReport
   const extraction = await extractElementsFromScript(scriptAnalysis, artStyle)
 
@@ -232,8 +276,8 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   const sceneDesigns = JSON.stringify(augmentedExtraction.scenes, null, 2)
   const propDesigns = JSON.stringify(augmentedExtraction.props, null, 2)
 
-  // Step 6: 素材生成 (角色/场景图片)
-  setStep(state, 0, 5, 'running'); onUpdate(state)
+  // Step 7: 素材生成 (角色/场景图片)
+  setStep(state, 0, 6, 'running'); onUpdate(state)
   const inv = await ensureElements(
     (msg) => { /* silent — progress shown via pipeline UI */ },
     { scriptText: scriptAnalysis, stylePreset: artDir.stylePreset, customStyle: artDir.customStyle, extraction: augmentedExtraction },
@@ -244,6 +288,7 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   //   - character → 人物小传 + 外貌 (from character-design)
   //   - scene     → 场景描述 (location / lighting / mood + image prompt)
   //   - prop      → 道具描述 (description + image prompt)
+  //   - global    → 全局美术风格 (auto-connected to every asset)
   // All non-fatal — pipeline survives even when one spawner trips.
   try {
     const { spawnCharacterBioCanvasNodes } = await import('@/lib/character-design')
@@ -262,14 +307,26 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
     // eslint-disable-next-line no-console
     console.warn('[director-assistant] spawning scene/prop description nodes failed:', (e as Error).message)
   }
+  // Global art style node: ensures one exists and wires edges to every visual
+  // asset/image node currently on the canvas. Idempotent — call after asset
+  // spawners so the new nodes get auto-connected. Prior to this hook the
+  // global-style node was only created via the manual ArtDirectionPanel
+  // button, so users running the optimize pipeline never saw it.
+  try {
+    const { connectStyleToAllAssets } = await import('@/lib/global-style-node')
+    connectStyleToAllAssets()
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn('[director-assistant] spawning global style node failed:', (e as Error).message)
+  }
   const elementCtx = buildElementContext(inv)
-  setStep(state, 0, 5, 'done', `${inv.characters.length} 角色, ${inv.scenes.length} 场景`); onUpdate(state)
+  setStep(state, 0, 6, 'done', `${inv.characters.length} 角色, ${inv.scenes.length} 场景`); onUpdate(state)
 
-  // Step 7-8: 视觉锚定提取 + 全局视觉策略 — routed through art-director-agent's
+  // Step 8-9: 视觉锚定提取 + 全局视觉策略 — routed through art-director-agent's
   // generateStyleBible verb. The pipeline still surfaces two steps to the UI
   // (anchor / strategy) for continuity, but they're both populated from the
   // single bible call.
-  setStep(state, 0, 6, 'running'); onUpdate(state)
+  setStep(state, 0, 7, 'running'); onUpdate(state)
   const styleBible = await runAgentWithChatBridge(
     'art-director-agent',
     generateStyleBible({
@@ -284,11 +341,11 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   )
   const visualAnchor = styleBible.anchor
   const visualStrategy = styleBible.strategy
-  setStep(state, 0, 6, 'done', visualAnchor); onUpdate(state)
-  setStep(state, 0, 7, 'done', visualStrategy); onUpdate(state)
+  setStep(state, 0, 7, 'done', visualAnchor); onUpdate(state)
+  setStep(state, 0, 8, 'done', visualStrategy); onUpdate(state)
 
-  // Step 9: 镜头分配计划 — director-agent.allocateShots
-  setStep(state, 0, 8, 'running'); onUpdate(state)
+  // Step 10: 镜头分配计划 — director-agent.allocateShots
+  setStep(state, 0, 9, 'running'); onUpdate(state)
   const shotAllocation = await runAgentWithChatBridge(
     'director-agent',
     directorAllocateShots(
@@ -297,19 +354,28 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
     ),
     { verb: 'allocate-shots' },
   )
-  setStep(state, 0, 8, 'done', shotAllocation); onUpdate(state)
+  setStep(state, 0, 9, 'done', shotAllocation); onUpdate(state)
 
-  // Step 10: 镜头构图设计 — director-agent.composeShots
-  setStep(state, 0, 9, 'running'); onUpdate(state)
+  // Step 11: 镜头构图设计 — director-agent.composeShots
+  setStep(state, 0, 10, 'running'); onUpdate(state)
   const shotComposition = await runAgentWithChatBridge(
     'director-agent',
     directorComposeShots({ shotAllocation, visualAnchor }, agentCtx),
     { verb: 'compose-shots' },
   )
-  setStep(state, 0, 9, 'done', shotComposition); onUpdate(state)
+  setStep(state, 0, 10, 'done', shotComposition); onUpdate(state)
 
-  // Step 11: 生成分镜表 JSON — director-agent.generateStoryboardTable
-  setStep(state, 0, 10, 'running'); onUpdate(state)
+  // Step 12: 分镜设计 — director-agent.generateStoryboardTable. The actual
+  // storyboard table is generated here; the next step ("优化结果") is just
+  // the "everything done" marker so the UI shows a clean handoff to the
+  // self-check stage.
+  //
+  // Wipe any stale rows BEFORE the LLM call so that a parse failure leaves
+  // the table empty (visible error state) rather than mixing a previous
+  // session's shots with the new project. The replaceAll downstream in
+  // ScriptInputDialog / chat-intent will populate fresh rows on success.
+  useStoryboardStore.getState().clear()
+  setStep(state, 0, 11, 'running'); onUpdate(state)
   const storyboardJson = await runAgentWithChatBridge(
     'director-agent',
     directorGenerateStoryboardTable(
@@ -323,6 +389,7 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
         shotComposition,
         visualStrategy,
         elementContext: elementCtx,
+        revisedScript,
       },
       agentCtx,
     ),
@@ -331,7 +398,11 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   for (const issue of collectDurationIssues(storyboardJson, totalDurationSeconds)) {
     state.issues.push(issue)
   }
-  setStep(state, 0, 10, 'done', storyboardJson); onUpdate(state)
+  setStep(state, 0, 11, 'done', storyboardJson); onUpdate(state)
+
+  // Step 13: 优化结果 — final marker. No new work; just signals optimize
+  // is done so the UI can advance to self-check.
+  setStep(state, 0, 12, 'done', '优化结果已生成，等待自检'); onUpdate(state)
 
   return storyboardJson
 }
@@ -387,13 +458,37 @@ export function collectDurationIssues(storyboardJson: string, expectedTotal: num
 // ─── Stage 2: 自检 ──────────────────────────────────────────────────
 
 async function runSelfCheck(state: PipelineState, storyboardJson: string, onUpdate: OnUpdate): Promise<string[]> {
+  const { useProjectDB } = await import('@/stores/project-db')
+  const db = useProjectDB.getState()
+  const artStyle = (db.artDirection.customStyle?.trim() || db.artDirection.stylePreset || '').trim()
+  const characterNames = (db.script.castingCards ?? [])
+    .map((c) => c.name)
+    .filter((n): n is string => typeof n === 'string' && n.trim().length > 0)
+  const totalDurationSeconds = db.script.totalDurationSeconds || 0
+  // Pick the upper bound (every row at ~12s sustainable pacing) as the
+  // recommended row count; the LLM uses it as a sanity-check anchor rather
+  // than a hard constraint, since beat density may justify ±50%.
+  const targetRowCount = Math.max(
+    1,
+    Math.ceil((totalDurationSeconds || 1) / 12),
+  )
+
   const agentCtx = createMemoryContext({ llm: createCapabilityLLM() })
 
   // Timeline / continuity check — director-agent.critiqueTimeline
   setStep(state, 1, 0, 'running'); onUpdate(state)
   const timelineIssues = await runAgentWithChatBridge(
     'director-agent',
-    directorCritiqueTimeline({ storyboardJson }, agentCtx),
+    directorCritiqueTimeline(
+      {
+        storyboardJson,
+        artStyle,
+        characterNames,
+        targetRowCount,
+        totalDurationSeconds,
+      },
+      agentCtx,
+    ),
     { verb: 'critique-timeline' },
   )
   setStep(state, 1, 0, 'done', JSON.stringify(timelineIssues, null, 2)); onUpdate(state)
