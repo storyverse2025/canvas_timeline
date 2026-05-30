@@ -179,6 +179,13 @@ export interface Script {
 // ─── State shape ─────────────────────────────────────────────────────
 
 interface ProjectDBState {
+  /** Stable per-project identifier. Used by the server-side session
+   *  snapshot store (vite-session-snapshot-plugin) as the filename
+   *  basis — sha256(projectId)[:16] — so the same IP can hold multiple
+   *  distinct sessions (one per project) without overwriting each other.
+   *  Generated once on store init; preserved across clearAll; regenerated
+   *  only by newProject(). */
+  projectId: string
   elements: Record<string, Element>
   canvasNodes: Record<string, CanvasNode>
   canvasEdges: Record<string, CanvasEdge>
@@ -239,6 +246,12 @@ interface ProjectDBActions {
 
   // Bulk
   clearAll: () => void
+  /** Reset every store entity AND generate a fresh projectId. This is
+   *  the "new project" action: triggers the server-side snapshot to
+   *  start writing to a brand-new file instead of overwriting the
+   *  current session. clearAll preserves the projectId; newProject
+   *  rotates it. */
+  newProject: () => void
 }
 
 // ─── Default values ──────────────────────────────────────────────────
@@ -266,6 +279,10 @@ const DEFAULT_SCRIPT: Script = {
 export const useProjectDB = create<ProjectDBState & ProjectDBActions>()(
   persist(
     immer((set, get) => ({
+      // Lazy: a fresh store gets a fresh id. On reload, persist's
+      // migrate hook backfills this for legacy state that didn't have
+      // it (see migrate v3→v4 below).
+      projectId: uuid(),
       elements: {},
       canvasNodes: {},
       canvasEdges: {},
@@ -491,20 +508,36 @@ export const useProjectDB = create<ProjectDBState & ProjectDBActions>()(
       // ─── Bulk ──────────────────────────────────────────────────
 
       clearAll: () => {
-        set({
-          elements: {},
-          canvasNodes: {},
-          canvasEdges: {},
-          storyboardRows: {},
-          generationHistory: {},
-          artDirection: { ...DEFAULT_ART_DIRECTION },
-          script: { ...DEFAULT_SCRIPT },
+        // Preserve projectId — clearAll wipes content but stays in the
+        // same "session slot" server-side. Use newProject() to also
+        // rotate the id and start a new session.
+        set((s) => {
+          s.elements = {}
+          s.canvasNodes = {}
+          s.canvasEdges = {}
+          s.storyboardRows = {}
+          s.generationHistory = {}
+          s.artDirection = { ...DEFAULT_ART_DIRECTION }
+          s.script = { ...DEFAULT_SCRIPT }
+        })
+      },
+
+      newProject: () => {
+        set((s) => {
+          s.projectId = uuid()
+          s.elements = {}
+          s.canvasNodes = {}
+          s.canvasEdges = {}
+          s.storyboardRows = {}
+          s.generationHistory = {}
+          s.artDirection = { ...DEFAULT_ART_DIRECTION }
+          s.script = { ...DEFAULT_SCRIPT }
         })
       },
     })),
     {
       name: 'project-db',
-      version: 3,
+      version: 4,
       storage: createJSONStorage(() => createIdbStorage('project-db')),
       migrate: (state, fromVersion) => {
         if (fromVersion < 2 && state && typeof state === 'object') {
@@ -527,6 +560,15 @@ export const useProjectDB = create<ProjectDBState & ProjectDBActions>()(
             const i = rename(s.artDirection.defaultImageModel)
             if (i) s.artDirection.defaultImageModel = i
           }
+        }
+        // v4: introduce projectId. Legacy state was keyed solely by IP
+        // server-side, which meant the same machine could only ever have
+        // one session — switching projects overwrote the previous one.
+        // Now session files are keyed by sha256(projectId). Generate one
+        // here so the next snapshot push lands in a project-scoped file.
+        if (fromVersion < 4 && state && typeof state === 'object') {
+          const s = state as { projectId?: string }
+          if (!s.projectId) s.projectId = uuid()
         }
         return state as ProjectDBState & ProjectDBActions
       },

@@ -65,6 +65,10 @@ function mountReact(): void {
       </QueryClientProvider>
     </StrictMode>,
   )
+  // Open the WebSocket bridge to canvas-mcp-server.mjs (if running).
+  // Idempotent + non-blocking — failures fall back to exponential
+  // backoff reconnect. Disable with ?canvasMcp=0 or VITE_CANVAS_MCP=0.
+  void import('@/lib/mcp-bridge').then(({ startMcpBridge }) => startMcpBridge())
 }
 
 async function bootstrap() {

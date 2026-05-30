@@ -4,6 +4,7 @@ import { runCapability } from '@/lib/capabilities/client'
 import {
   allocateShots,
   applyTimelineFixes,
+  buildBridgePromptText,
   buildKeyframePrompt,
   composeShots,
   critiqueTimeline,
@@ -13,6 +14,7 @@ import {
   generateStoryboardTable,
   KEYFRAME_MODEL,
   KEYFRAME_PROVIDER,
+  proposeBridgeRow,
 } from '@/lib/agents/director-agent'
 import { createMemoryContext } from '@/lib/agents/_shared/context/memory'
 import { driveAuto } from '@/lib/agents/_shared/runtime/runner'
@@ -32,7 +34,7 @@ function llmReturning(...responses: string[]): { llm: LLM; spy: ReturnType<typeo
 }
 
 describe('director-agent: meta', () => {
-  it('exposes the 7 verbs on the module export', () => {
+  it('exposes the verbs on the module export', () => {
     expect(directorAgent.allocateShots).toBe(allocateShots)
     expect(directorAgent.composeShots).toBe(composeShots)
     expect(directorAgent.generateStoryboardTable).toBe(generateStoryboardTable)
@@ -40,6 +42,7 @@ describe('director-agent: meta', () => {
     expect(directorAgent.applyTimelineFixes).toBe(applyTimelineFixes)
     expect(directorAgent.generateKeyframe).toBe(generateKeyframe)
     expect(directorAgent.critiqueVideoConsistency).toBe(critiqueVideoConsistency)
+    expect(directorAgent.proposeBridgeRow).toBe(proposeBridgeRow)
     expect(directorAgent.meta.name).toBe('director-agent')
   })
 
@@ -546,5 +549,144 @@ describe('critiqueVideoConsistency', () => {
       ),
     )
     expect(issues).toEqual([])
+  })
+})
+
+describe('proposeBridgeRow', () => {
+  beforeEach(() => mockedRunCapability.mockReset())
+
+  const baseReq = {
+    prevRow: {
+      shot_number: 'S3',
+      duration: 4,
+      visual_description: '阿莉躲进巷子，背靠墙急促喘息',
+      character_actions: '靠墙喘息',
+      emotion_mood: '紧张',
+      character1_name: 'Alice',
+      scene_name: '雨夜后巷',
+    },
+    nextRow: {
+      shot_number: 'S4',
+      duration: 5,
+      visual_description: '阿莉坐在咖啡馆窗边，雨已停',
+      character_actions: '搅咖啡',
+      emotion_mood: '怅然',
+      character1_name: 'Alice',
+      scene_name: '咖啡馆',
+    },
+    projectType: '短剧单集',
+    projectTone: '悬疑救赎',
+    knownCharacterNames: ['Alice', 'Bob'],
+    knownSceneNames: ['雨夜后巷', '咖啡馆', '过道'],
+    knownPropNames: [],
+  }
+
+  it('builds a prompt with the JSON shape + judgement criteria + known assets', () => {
+    const text = buildBridgePromptText(baseReq)
+    expect(text).toContain('PREV（前一镜）')
+    expect(text).toContain('NEXT（后一镜）')
+    expect(text).toContain('阿莉躲进巷子')
+    expect(text).toContain('阿莉坐在咖啡馆')
+    expect(text).toContain('"needed": true/false')
+    expect(text).toContain('"duration": 2-6')
+    expect(text).toContain('"character1_name"')
+    expect(text).toContain('Alice')
+    expect(text).toContain('咖啡馆')
+    expect(text).not.toContain('image1 =')
+  })
+
+  it('lists supplied frames in the image legend', () => {
+    const text = buildBridgePromptText({
+      ...baseReq,
+      prevLastFrameUrl: 'data:image/jpeg;base64,xxxx',
+      nextFirstFrameUrl: 'https://cdn/next.jpg',
+    })
+    expect(text).toContain('image1 = 前一镜的最后一帧')
+    expect(text).toContain('image2 = 后一镜的第一帧')
+  })
+
+  it('routes to bridge-row-judge capability with text + (only the supplied) images', async () => {
+    mockedRunCapability.mockResolvedValue({
+      outputs: [{
+        kind: 'text',
+        text: JSON.stringify({
+          needed: true,
+          reason: '空间从巷子瞬移到咖啡馆，缺过渡',
+          bridge: {
+            shot_number: 'S3.5',
+            duration: 3,
+            visual_description: '阿莉沿湿漉漉的街道走向远处灯光',
+            shot_size: '中景',
+            character_actions: '步行',
+            emotion_mood: '过渡',
+            emotion_atmosphere: '雨停，街灯反光',
+            lighting_atmosphere: '冷色街灯',
+            storyboard_prompts: '中景，阿莉步行穿过湿街',
+            motion_prompts: '镜头缓慢跟随',
+            sound_effects: '远处雨声渐弱',
+            dialogue: '',
+            visual_anchor: '湿街反光',
+            character1_name: 'Alice',
+            character2_name: '',
+            scene_name: '过道',
+            prop1_name: '',
+            prop2_name: '',
+          },
+        }),
+      }],
+    })
+    const ctx = createMemoryContext({ llm: { complete: async () => '' } })
+    const judge = await driveAuto(
+      proposeBridgeRow(
+        { ...baseReq, prevLastFrameUrl: 'data:image/jpeg;base64,aaaa' },
+        ctx,
+      ),
+    )
+    expect(judge.needed).toBe(true)
+    expect(judge.bridge?.shot_number).toBe('S3.5')
+    expect(judge.bridge?.duration).toBe(3)
+    expect(judge.bridge?.character1_name).toBe('Alice')
+    expect(judge.bridge?.scene_name).toBe('过道')
+
+    const call = mockedRunCapability.mock.calls[0]![0]
+    expect(call.capability).toBe('bridge-row-judge')
+    expect(call.inputs.length).toBe(2)
+    expect(call.inputs[0]!.kind).toBe('text')
+    expect(call.inputs[1]).toEqual({ kind: 'image', url: 'data:image/jpeg;base64,aaaa' })
+  })
+
+  it('returns needed=false when the model says clean', async () => {
+    mockedRunCapability.mockResolvedValue({
+      outputs: [{ kind: 'text', text: '{"needed": false, "reason": "hard cut 合理"}' }],
+    })
+    const ctx = createMemoryContext({ llm: { complete: async () => '' } })
+    const judge = await driveAuto(proposeBridgeRow(baseReq, ctx))
+    expect(judge.needed).toBe(false)
+    expect(judge.reason).toContain('hard cut')
+    expect(judge.bridge).toBeUndefined()
+  })
+
+  it('parses fenced ```json blocks', async () => {
+    mockedRunCapability.mockResolvedValue({
+      outputs: [{
+        kind: 'text',
+        text: '```json\n{"needed": true, "reason": "x", "bridge": {"shot_number": "S3.5", "duration": 3, "visual_description": "v"}}\n```',
+      }],
+    })
+    const ctx = createMemoryContext({ llm: { complete: async () => '' } })
+    const judge = await driveAuto(proposeBridgeRow(baseReq, ctx))
+    expect(judge.needed).toBe(true)
+    expect(judge.bridge?.duration).toBe(3)
+    expect(judge.bridge?.visual_description).toBe('v')
+  })
+
+  it('degrades to needed=false when the response is unparseable', async () => {
+    mockedRunCapability.mockResolvedValue({
+      outputs: [{ kind: 'text', text: 'not json at all' }],
+    })
+    const ctx = createMemoryContext({ llm: { complete: async () => '' } })
+    const judge = await driveAuto(proposeBridgeRow(baseReq, ctx))
+    expect(judge.needed).toBe(false)
+    expect(judge.reason).toContain('无法解析')
   })
 })

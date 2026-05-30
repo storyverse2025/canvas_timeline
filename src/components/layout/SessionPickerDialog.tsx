@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { X, History, Loader2, AlertTriangle } from 'lucide-react'
+import { X, History, Loader2, AlertTriangle, Copy, Check, PlusSquare } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   getLocalSnapshotBytes,
@@ -8,6 +8,7 @@ import {
   setPushesPaused,
   type SessionListItem,
 } from '@/lib/session-backup'
+import { useProjectDB } from '@/stores/project-db'
 
 interface Props {
   onClose: () => void
@@ -42,6 +43,34 @@ export function SessionPickerDialog({ onClose }: Props) {
   const [localBytes, setLocalBytes] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loadingId, setLoadingId] = useState<string | null>(null)
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+  // Read once on mount; if `useProjectDB(...)` were used reactively the
+  // newProject() handler would re-render the dialog mid-action and
+  // confuse the loading state. The id only matters for read-only
+  // "is this row me?" highlighting.
+  const currentProjectId = useProjectDB.getState().projectId
+
+  const handleCopyId = async (id: string) => {
+    try {
+      await navigator.clipboard.writeText(id)
+      setCopiedId(id)
+      setTimeout(() => setCopiedId((c) => (c === id ? null : c)), 1500)
+    } catch {
+      toast.error('复制失败 — 浏览器拒绝了 clipboard 访问')
+    }
+  }
+
+  const handleNewProject = () => {
+    const ok = window.confirm(
+      `新建项目会清空当前所有 canvas / 表格 / 项目状态 (无法撤销)，并生成一个新的 session id。\n\n` +
+        `老 session 会在下次保存时停止接收新数据，但已存的快照仍保留在服务器上 (可从本列表加载回来)。\n\n` +
+        `继续吗？`,
+    )
+    if (!ok) return
+    useProjectDB.getState().newProject()
+    toast.success('已新建项目 · 重载页面以让其他 store 同步重置…')
+    setTimeout(() => window.location.reload(), 800)
+  }
 
   useEffect(() => {
     void (async () => {
@@ -158,6 +187,7 @@ export function SessionPickerDialog({ onClose }: Props) {
             <table className="w-full text-xs">
               <thead className="text-[10px] uppercase text-muted-foreground bg-muted/30 sticky top-0">
                 <tr>
+                  <th className="text-left px-3 py-2 font-medium">Session ID</th>
                   <th className="text-left px-3 py-2 font-medium">来源 IP</th>
                   <th className="text-left px-3 py-2 font-medium">标题预览</th>
                   <th className="text-left px-3 py-2 font-medium">保存时间</th>
@@ -166,38 +196,74 @@ export function SessionPickerDialog({ onClose }: Props) {
                 </tr>
               </thead>
               <tbody>
-                {sessions.map((s) => (
-                  <tr key={s.id} className="border-t border-border/40 hover:bg-accent/30">
-                    <td className="px-3 py-2 font-mono text-foreground/70 whitespace-nowrap">{s.ip}</td>
-                    <td className="px-3 py-2 truncate max-w-[220px]" title={s.previewTitle}>
-                      {s.previewTitle}
-                    </td>
-                    <td className="px-3 py-2 text-muted-foreground whitespace-nowrap" title={s.savedAt}>
-                      {fmtRelative(s.savedAt)}
-                    </td>
-                    <td className="px-3 py-2 text-right text-muted-foreground">{fmtSize(s.sizeBytes)}</td>
-                    <td className="px-3 py-2 text-right">
-                      <button
-                        className="px-2 py-1 text-[10px] rounded bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-40 inline-flex items-center gap-1 whitespace-nowrap"
-                        disabled={loadingId !== null}
-                        onClick={() => handleLoad(s)}
-                      >
-                        {loadingId === s.id ? (
-                          <>
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                            下载 {fmtSize(s.sizeBytes)}…
-                          </>
-                        ) : '加载并刷新'}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {sessions.map((s) => {
+                  const isCurrent = !!s.projectId && s.projectId === currentProjectId
+                  return (
+                    <tr
+                      key={s.id}
+                      className={`border-t border-border/40 hover:bg-accent/30 ${isCurrent ? 'bg-primary/5' : ''}`}
+                      title={isCurrent ? '当前正在使用的 session' : undefined}
+                    >
+                      <td className="px-3 py-2 font-mono text-[10px] text-foreground/80 whitespace-nowrap">
+                        <button
+                          onClick={() => handleCopyId(s.id)}
+                          className="inline-flex items-center gap-1 hover:text-primary group"
+                          title={`点击复制完整 id\n${s.id}${s.projectId ? `\nprojectId: ${s.projectId}` : '\n(legacy: ip-derived id, no projectId yet)'}`}
+                        >
+                          <span>{s.id}</span>
+                          {copiedId === s.id ? (
+                            <Check className="w-3 h-3 text-emerald-500" />
+                          ) : (
+                            <Copy className="w-3 h-3 opacity-30 group-hover:opacity-100" />
+                          )}
+                        </button>
+                        {isCurrent && (
+                          <span className="ml-1.5 text-[9px] px-1 py-px rounded bg-primary/15 text-primary uppercase tracking-wide">
+                            当前
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 font-mono text-foreground/70 whitespace-nowrap">{s.ip}</td>
+                      <td className="px-3 py-2 truncate max-w-[220px]" title={s.previewTitle}>
+                        {s.previewTitle}
+                      </td>
+                      <td className="px-3 py-2 text-muted-foreground whitespace-nowrap" title={s.savedAt}>
+                        {fmtRelative(s.savedAt)}
+                      </td>
+                      <td className="px-3 py-2 text-right text-muted-foreground">{fmtSize(s.sizeBytes)}</td>
+                      <td className="px-3 py-2 text-right">
+                        <button
+                          className="px-2 py-1 text-[10px] rounded bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-40 inline-flex items-center gap-1 whitespace-nowrap"
+                          disabled={loadingId !== null || isCurrent}
+                          onClick={() => handleLoad(s)}
+                          title={isCurrent ? '已是当前 session — 无需加载' : undefined}
+                        >
+                          {loadingId === s.id ? (
+                            <>
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              下载 {fmtSize(s.sizeBytes)}…
+                            </>
+                          ) : isCurrent ? '当前' : '加载并刷新'}
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           )}
         </div>
 
-        <div className="flex justify-end gap-2 px-4 py-3 border-t border-border">
+        <div className="flex justify-between items-center gap-2 px-4 py-3 border-t border-border">
+          <button
+            className="px-3 py-1.5 text-xs rounded border border-border hover:bg-accent inline-flex items-center gap-1.5"
+            onClick={handleNewProject}
+            disabled={loadingId !== null}
+            title="清空所有状态并生成新的 session id (会重载页面)"
+          >
+            <PlusSquare className="w-3.5 h-3.5" />
+            新建项目
+          </button>
           <button className="px-3 py-1.5 text-xs rounded border border-border hover:bg-accent" onClick={onClose}>
             关闭
           </button>

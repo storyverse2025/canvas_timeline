@@ -65,6 +65,15 @@ export const CAPABILITIES: CapabilitySpec[] = [
     outputKind: 'text',
     nodeTypes: ['image', 'text'],
   },
+  {
+    id: 'bridge-row-judge',
+    category: 'agent',
+    label: '补全缺失分镜判断',
+    description: '看相邻两镜的前后画面 + 文本，判断是否需要插入桥接分镜，并产出桥接行的文本字段',
+    inputKinds: ['image', 'text'],
+    outputKind: 'text',
+    nodeTypes: ['image', 'text'],
+  },
 
   // ─── 图片能力 ──────────────────────────────────────────────────────
   {

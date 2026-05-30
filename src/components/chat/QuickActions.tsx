@@ -34,7 +34,7 @@ const quickActions = [
     id: 'add-missing-storyboard-rows' as const,
     label: '添加缺失的分镜行',
     icon: ListPlus,
-    title: '检测剧本中尚未被分镜表覆盖的 beat，新增对应行 (本版占位 — 改重跑导演助手)',
+    title: '扫描每对相邻分镜，看跳得突不突兀；需要桥接的位置插入新行，并用 gpt-image-2 自动生成桥接 keyframe (视频留给你点 ✨)',
   },
   {
     id: 'generate-missing-videos' as const,
