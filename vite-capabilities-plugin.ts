@@ -97,12 +97,18 @@ function normalizeApimartImageModel(model: string): string {
   return model
 }
 
-async function apimartChat(systemPrompt: string, userText: string, imageUrl?: string, temperature?: number): Promise<string> {
-  const key = process.env.APIMART_API_KEY
-  if (!key) throw new Error('APIMART_API_KEY not set')
-  const baseUrl = (process.env.APIMART_BASE_URL || APIMART_BASE_URL).replace(/\/$/, '')
-  const userContent: Array<Record<string, unknown>> = [{ type: 'text', text: userText }]
-  if (imageUrl) userContent.push({ type: 'image_url', image_url: { url: imageUrl } })
+/**
+ * Single attempt at /chat/completions. Pulled out of apimartChat so the
+ * retry loop only re-runs the network call, not the env lookup / payload
+ * construction (idempotent but pointless to repeat).
+ */
+async function apimartChatOnce(
+  key: string,
+  baseUrl: string,
+  systemPrompt: string,
+  userContent: Array<Record<string, unknown>>,
+  temperature: number | undefined,
+): Promise<string> {
   const res = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
@@ -115,16 +121,62 @@ async function apimartChat(systemPrompt: string, userText: string, imageUrl?: st
       ...(temperature != null ? { temperature } : {}),
     }),
   })
+  // `await res.text()` is where Apimart's mid-stream connection drops surface
+  // as `TypeError: terminated`. Treat 5xx + empty body as transient too.
   const raw = await res.text()
   if (!res.ok) throw new Error(`Apimart chat ${res.status}: ${raw.slice(0, 500)}`)
-  // Apimart's gemini-3-flash-preview route started returning SSE without
-  // `stream: true` being requested (observed 2026-05-30 across element-
-  // extraction / script-rewrite / consistency-check / etc.). parseOpenAIChatResponse
-  // sniffs the body and accumulates `delta.content` so callers work
-  // regardless of which format comes back.
   const text = parseOpenAIChatResponse(raw).trim()
   if (!text) throw new Error('Apimart: empty response')
   return text
+}
+
+/**
+ * Identify failures that are worth retrying. Network terminations and 5xx
+ * upstream errors are recoverable on a new attempt; auth / payload / 4xx
+ * problems are deterministic and shouldn't burn retry budget. `empty
+ * response` also retries — Apimart occasionally returns 200 with no choices
+ * during heavy load.
+ */
+function isTransientApimartError(err: unknown): boolean {
+  const msg = (err as Error)?.message ?? String(err)
+  return (
+    /terminated/i.test(msg) ||
+    /fetch failed/i.test(msg) ||
+    /ECONNRESET|ETIMEDOUT|EPIPE|ECONNREFUSED/i.test(msg) ||
+    /Apimart chat 5\d\d/i.test(msg) ||
+    /empty response/i.test(msg)
+  )
+}
+
+const APIMART_CHAT_MAX_ATTEMPTS = 3
+const APIMART_CHAT_BACKOFF_MS = [0, 600, 1800]
+
+async function apimartChat(systemPrompt: string, userText: string, imageUrl?: string, temperature?: number): Promise<string> {
+  const key = process.env.APIMART_API_KEY
+  if (!key) throw new Error('APIMART_API_KEY not set')
+  const baseUrl = (process.env.APIMART_BASE_URL || APIMART_BASE_URL).replace(/\/$/, '')
+  const userContent: Array<Record<string, unknown>> = [{ type: 'text', text: userText }]
+  if (imageUrl) userContent.push({ type: 'image_url', image_url: { url: imageUrl } })
+
+  let lastErr: unknown
+  for (let attempt = 0; attempt < APIMART_CHAT_MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, APIMART_CHAT_BACKOFF_MS[attempt] ?? 0))
+    }
+    try {
+      return await apimartChatOnce(key, baseUrl, systemPrompt, userContent, temperature)
+    } catch (e) {
+      lastErr = e
+      if (attempt < APIMART_CHAT_MAX_ATTEMPTS - 1 && isTransientApimartError(e)) {
+        const why = String((e as Error)?.message ?? e).slice(0, 120)
+        // eslint-disable-next-line no-console
+        console.warn(`[apimartChat] attempt ${attempt + 1} failed (${why}); retrying after ${APIMART_CHAT_BACKOFF_MS[attempt + 1]}ms`)
+        continue
+      }
+      throw e
+    }
+  }
+  throw lastErr ?? new Error('apimartChat: exhausted retries with no captured error')
 }
 
 /**
@@ -405,23 +457,32 @@ async function bridgeRowJudge(req: CapReq): Promise<CapRes> {
     console.warn(`[bridge-row-judge] dropped ${droppedCount}/${images.length} unresolvable image(s); falling back to text-only judgement for this pair`)
   }
 
-  const res = await fetch(`${baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: process.env.APIMART_TEXT_MODEL || APIMART_TEXT_MODEL,
-      messages: [
-        { role: 'system', content: '你是分镜导演。严格按用户给出的 JSON 格式输出，不要加 markdown 围栏，不要多余的解释。' },
-        { role: 'user', content: userContent },
-      ],
-      temperature: 0.4,
-    }),
-  })
-  const raw = await res.text()
-  if (!res.ok) throw new Error(`bridge-row-judge: Apimart ${res.status}: ${raw.slice(0, 500)}`)
-  const out = parseOpenAIChatResponse(raw).trim()
-  if (!out) throw new Error('bridge-row-judge: empty response from Apimart')
-  return { outputs: [{ kind: 'text', text: out }] }
+  // Share apimartChatOnce + same retry policy as apimartChat so a flaky
+  // upstream during long judgement responses recovers instead of failing
+  // the whole pair. Multi-image content goes through apimartChatOnce
+  // unchanged — the helper accepts an arbitrary userContent[] shape.
+  const systemPrompt = '你是分镜导演。严格按用户给出的 JSON 格式输出，不要加 markdown 围栏，不要多余的解释。'
+  let lastErr: unknown
+  for (let attempt = 0; attempt < APIMART_CHAT_MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, APIMART_CHAT_BACKOFF_MS[attempt] ?? 0))
+    }
+    try {
+      const out = await apimartChatOnce(key, baseUrl, systemPrompt, userContent, 0.4)
+      return { outputs: [{ kind: 'text', text: out }] }
+    } catch (e) {
+      lastErr = e
+      if (attempt < APIMART_CHAT_MAX_ATTEMPTS - 1 && isTransientApimartError(e)) {
+        const why = String((e as Error)?.message ?? e).slice(0, 120)
+        console.warn(`[bridge-row-judge] attempt ${attempt + 1} failed (${why}); retrying`)
+        continue
+      }
+      throw e instanceof Error && /^Apimart chat /.test(e.message)
+        ? new Error(`bridge-row-judge: ${e.message}`)
+        : e
+    }
+  }
+  throw lastErr ?? new Error('bridge-row-judge: exhausted retries')
 }
 
 // ─── Image capabilities ─────────────────────────────────────────────
