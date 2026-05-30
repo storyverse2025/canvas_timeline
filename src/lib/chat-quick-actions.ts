@@ -30,11 +30,19 @@ import {
   summarizeGaps,
 } from '@/lib/gap-finder'
 import { runBridgePipeline } from '@/lib/storyboard-bridge'
+import { runWithConcurrency } from '@/lib/concurrency'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { useStoryboardStore } from '@/stores/storyboard-store'
 import { styleFragmentFor } from '@/lib/style-library'
 import { useProjectDB } from '@/stores/project-db'
 import type { StoryboardRow } from '@/types/storyboard'
+
+/**
+ * Max parallel generations for the "生成缺失 …" quick-actions. Matches
+ * `useBatchGenerate.MAX_CONCURRENT` so all bulk paths share one ceiling —
+ * keep them in sync if either changes.
+ */
+const QUICK_ACTION_CONCURRENCY = 5
 
 export interface QuickActionDeps {
   /** ChatPanel feeds a curried `addMessage('system', ...)` so handlers
@@ -51,8 +59,8 @@ export interface QuickActionDeps {
 
 /**
  * Find every canvas image item tagged `character` / `scene` / `prop`
- * with empty content and re-run art-director.generateOneImage for each
- * in parallel (Promise.allSettled).
+ * with empty content and re-run art-director.generateOneImage in
+ * 5-way bounded parallel.
  */
 export async function quickGenerateMissingAssets(deps: QuickActionDeps): Promise<void> {
   const missing = findMissingAssets()
@@ -61,7 +69,7 @@ export async function quickGenerateMissingAssets(deps: QuickActionDeps): Promise
     return
   }
 
-  deps.log(`正在补 ${missing.length} 个缺失素材图 (并行)…`)
+  deps.log(`正在补 ${missing.length} 个缺失素材图 (并行 ≤${QUICK_ACTION_CONCURRENCY})…`)
   const db = useProjectDB.getState()
   const artStyle = (db.artDirection.customStyle || '').trim() ||
     styleFragmentFor(db.artDirection.stylePreset)
@@ -70,7 +78,7 @@ export async function quickGenerateMissingAssets(deps: QuickActionDeps): Promise
     log: (m) => deps.log(m),
   })
 
-  await Promise.allSettled(missing.map(async (m) => {
+  await runWithConcurrency(missing, QUICK_ACTION_CONCURRENCY, async (m) => {
     const imgCtx =
       m.kind === 'character' ? characterImageContext(artStyle)
         : m.kind === 'scene' ? sceneImageContext(artStyle)
@@ -95,7 +103,7 @@ export async function quickGenerateMissingAssets(deps: QuickActionDeps): Promise
     } catch (e) {
       deps.log(`✗ ${m.kind} ${m.name} 失败 — ${(e as Error).message}`)
     }
-  }))
+  })
 }
 
 // ─── 2. 生成缺失 keyframe ───────────────────────────────────────
@@ -111,16 +119,18 @@ export async function quickGenerateMissingKeyframes(
     return
   }
 
-  deps.log(`正在补 ${rows.length} 个缺失 keyframe (顺序，避免拥塞)…`)
-  // generateKeyframe writes to canvas + storyboard stores per row;
-  // running them in parallel would race on node placement. Sequential.
-  for (const row of rows) {
+  deps.log(`正在补 ${rows.length} 个缺失 keyframe (并行 ≤${QUICK_ACTION_CONCURRENCY})…`)
+  // 5-way bounded parallel — matches useBatchGenerate. generateKeyframe
+  // does interleaved canvas/storyboard store writes, but those mutations
+  // are synchronous at each await point, so 5 concurrent runs don't
+  // corrupt each other (the batch path has been running this way).
+  await runWithConcurrency(rows, QUICK_ACTION_CONCURRENCY, async (row) => {
     try {
       await deps.generateKeyframe(row)
     } catch (e) {
       deps.log(`✗ 镜头 ${row.shot_number} keyframe 失败 — ${(e as Error).message}`)
     }
-  }
+  })
 }
 
 // ─── 3. 添加缺失的分镜行 ──────────────────────────────────────
@@ -181,14 +191,14 @@ export async function quickGenerateMissingVideos(
     return
   }
 
-  deps.log(`正在补 ${rows.length} 个缺失 beat video (顺序，避免 Seedance 队列拥塞)…`)
-  for (const row of rows) {
+  deps.log(`正在补 ${rows.length} 个缺失 beat video (并行 ≤${QUICK_ACTION_CONCURRENCY})…`)
+  await runWithConcurrency(rows, QUICK_ACTION_CONCURRENCY, async (row) => {
     try {
       await deps.generateBeatVideo(row)
     } catch (e) {
       deps.log(`✗ 镜头 ${row.shot_number} beat video 失败 — ${(e as Error).message}`)
     }
-  }
+  })
 }
 
 // ─── 5. update 下游视频 ────────────────────────────────────────
