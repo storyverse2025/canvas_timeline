@@ -1323,6 +1323,36 @@ function defaultSeedanceModel(): string {
   return process.env.SEEDANCE_MODEL || process.env.SEEDANCE_ENDPOINT || process.env.ARK_SEEDANCE_ENDPOINT || 'dreamina-seedance-2-0-fast-260128'
 }
 
+/**
+ * Map the universal Seedance model id the UI emits to the account-bound
+ * endpoint id BytePlus海外 actually accepts for video task creation. Without
+ * this, posting `model: 'dreamina-seedance-2-0-fast-260128'` to ark-* gets
+ * a 403 AccessDenied — the universal id isn't a real endpoint for any
+ * specific account. Resolution order:
+ *   1. Already an `ep-…` endpoint id → pass through.
+ *   2. Per-model env override `SEEDANCE_ENDPOINT_<MODEL_SLUG>` (uppercased,
+ *      non-alnum → '_'). Set this in env when the project pins a specific
+ *      universal id to a specific endpoint.
+ *   3. Static fallback table for the models we ship by default.
+ *   4. Generic `SEEDANCE_ENDPOINT` / `ARK_SEEDANCE_ENDPOINT` env override.
+ *   5. The original model id (so misconfig surfaces as the same 403 the
+ *      caller would have seen before this helper existed — no silent drop).
+ *
+ * Mirrors the resolver in vite-providers-plugin.ts. Kept duplicated to avoid
+ * coupling the two Vite plugin files (they run as independent middleware).
+ */
+function resolveSeedanceModel(model: string): string {
+  if (/^ep-/.test(model)) return model
+  const envSlug = `SEEDANCE_ENDPOINT_${model.replace(/[^a-z0-9]/gi, '_').toUpperCase()}`
+  const perModelEnv = process.env[envSlug]
+  if (perModelEnv) return perModelEnv
+  const table: Record<string, string> = {
+    'dreamina-seedance-2-0-fast-260128': 'ep-20260423151341-p2zm9',
+  }
+  if (table[model]) return table[model]!
+  return process.env.SEEDANCE_ENDPOINT || process.env.ARK_SEEDANCE_ENDPOINT || model
+}
+
 /** Shared Seedance task submission — handles content parts + polling. */
 async function submitSeedanceTaskOnce(opts: {
   contentParts: Array<Record<string, unknown>>
@@ -1348,7 +1378,7 @@ async function submitSeedanceTaskOnce(opts: {
   const content = await inlineLocalRefsInContentParts(opts.contentParts)
 
   const body: Record<string, unknown> = {
-    model: opts.model ?? defaultSeedanceModel(),
+    model: resolveSeedanceModel(opts.model ?? defaultSeedanceModel()),
     content,
     resolution: opts.resolution ?? '480p',
     ratio: opts.aspect ?? '16:9',
