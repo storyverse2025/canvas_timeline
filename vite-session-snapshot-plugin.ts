@@ -1,5 +1,5 @@
 /**
- * Per-IP server-side session snapshot — belt-and-braces backup for the
+ * Server-side session snapshot — belt-and-braces backup for the
  * IDB-persisted Zustand stores.
  *
  * Motivation: even after hardening the IDB adapter
@@ -11,26 +11,38 @@
  * to whatever the server has when IDB comes up empty.
  *
  * Endpoints
- *   GET  /local-session              → current caller's snapshot
+ *   GET  /local-session              → current caller's most-recent snapshot
  *                                       { snapshot|null, savedAt|null }
  *   POST /local-session              → save caller's snapshot
  *                                       (accepts gzip via Content-Encoding)
  *                                       returns { savedAt, bytesIn, bytesUncompressed }
  *   GET  /local-session/list         → all sessions on disk (for the picker UI)
- *                                       [{ id, ip, savedAt, sizeBytes, previewTitle }, …]
+ *                                       [{ id, projectId?, ip, savedAt, sizeBytes, previewTitle }, …]
  *   GET  /local-session/by-id/<id>   → snapshot for a specific session id
- *                                       (id = the hashed-IP filename prefix)
+ *                                       (id = the filename prefix)
  *
- * Storage: public/sessions/<sha256(ip).slice(0,16)>.json
- *   File content also embeds the raw IP + a derived preview title so
- *   the picker UI can show which session is which without forcing the
- *   user to read a 16-char hex blob. Acceptable for a local dev tool;
- *   production deployments should swap to a cookie-based session token.
+ * Storage: public/sessions/<sha256(projectId).slice(0,16)>.json
+ *   The store is keyed by a per-project UUID stored in
+ *   project-db.state.projectId (see src/stores/project-db.ts). This
+ *   means one machine can hold multiple distinct sessions — switching
+ *   projects no longer overwrites the previous snapshot.
+ *
+ *   If a snapshot arrives without a projectId (legacy clients before
+ *   the v5 store migration, or empty-state probes), we fall back to
+ *   sha256(ip)[:16] so nothing dies. On server startup we one-shot
+ *   migrate any sha256(ip)-named files whose embedded snapshot does
+ *   contain a projectId, renaming them to the projectId-derived path.
+ *
+ *   File content also embeds the raw IP + a derived preview title +
+ *   the projectId so the picker UI can show which session is which
+ *   without forcing the user to read a 16-char hex blob. Acceptable
+ *   for a local dev tool; production deployments should swap to a
+ *   cookie-based session token.
  */
 
 import type { Plugin } from 'vite'
 import type { IncomingMessage, ServerResponse } from 'http'
-import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync, existsSync } from 'fs'
+import { mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync, existsSync } from 'fs'
 import { join } from 'path'
 import { createHash } from 'crypto'
 
@@ -54,8 +66,37 @@ function idForIp(ip: string): string {
   return createHash('sha256').update(ip).digest('hex').slice(0, 16)
 }
 
-function sessionFilePath(req: IncomingMessage): string {
+function idForProjectId(projectId: string): string {
+  return createHash('sha256').update(projectId).digest('hex').slice(0, 16)
+}
+
+/** Legacy path: returns the per-IP file. Kept for the fallback case
+ *  where the incoming snapshot has no projectId (very early state or a
+ *  client predating the v5 store migration). New flow uses the
+ *  projectId-derived path via sessionFilePathForId. */
+function sessionFilePathLegacy(req: IncomingMessage): string {
   return join(sessionsDir(), `${idForIp(clientIp(req))}.json`)
+}
+
+function sessionFilePathForId(id: string): string {
+  return join(sessionsDir(), `${id}.json`)
+}
+
+/** Pull the projectId out of a snapshot blob. The snapshot is the same
+ *  shape Zustand persist writes: { state: {...}, version: number }
+ *  serialized as a JSON string under key 'project-db'. Returns null if
+ *  the snapshot is malformed, missing project-db, or the field hasn't
+ *  been written yet (legacy < v5). */
+function extractProjectId(snapshot: Record<string, string>): string | null {
+  try {
+    const proj = snapshot['project-db']
+    if (!proj) return null
+    const parsed = JSON.parse(proj) as { state?: { projectId?: string } }
+    const id = parsed.state?.projectId
+    return typeof id === 'string' && id.length > 0 ? id : null
+  } catch {
+    return null
+  }
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -72,14 +113,24 @@ async function readBody(req: IncomingMessage): Promise<Buffer> {
 
 const MAX_SNAPSHOT_BYTES = 100 * 1024 * 1024 // 100 MB hard ceiling per session
 
-/** Best-effort title for the picker — peeks at project-db's script.text
- *  or the first canvas item name. Pure string operations on the stored
- *  snapshot, so we don't have to keep a separate index. */
+/** Best-effort title for the picker. Resolution order:
+ *  1. project-db.script.sessionTitle — LLM-generated 6-12 字 Chinese title
+ *     produced at director-assistant start. Most informative for
+ *     cross-machine session loading.
+ *  2. project-db.script.text first 60 chars — falls back to the raw script
+ *     when no LLM title exists yet (e.g., a session that never ran
+ *     director-assistant).
+ *  3. First canvas-item-store entry name — when the project has assets but
+ *     no script (asset-first canvases).
+ *  Pure string operations on the stored snapshot, so we don't have to keep
+ *  a separate index. */
 function derivePreviewTitle(snapshot: Record<string, string>): string {
   try {
     const proj = snapshot['project-db']
     if (proj) {
-      const parsed = JSON.parse(proj) as { state?: { script?: { text?: string } } }
+      const parsed = JSON.parse(proj) as { state?: { script?: { sessionTitle?: string; text?: string } } }
+      const title = parsed.state?.script?.sessionTitle?.trim()
+      if (title) return title
       const text = parsed.state?.script?.text?.replace(/\s+/g, ' ').trim()
       if (text) return text.slice(0, 60) + (text.length > 60 ? '…' : '')
     }
@@ -100,6 +151,10 @@ interface SessionFileShape {
   savedAt: string
   ip?: string
   previewTitle?: string
+  /** Stable per-project id pulled from project-db.state.projectId at
+   *  POST time. Older snapshots written before the v5 store migration
+   *  may not have this; back-fill happens on first list/migrate. */
+  projectId?: string
 }
 
 interface SessionListItem {
@@ -108,6 +163,11 @@ interface SessionListItem {
   savedAt: string
   sizeBytes: number
   previewTitle: string
+  /** Stable per-project id (UUID). Identical across saves for the same
+   *  project so the picker UI can highlight "this is the same session
+   *  you were on yesterday" reliably. Optional — legacy ip-named files
+   *  that haven't been migrated yet may still lack one. */
+  projectId?: string
 }
 
 function readSessionFile(file: string): SessionFileShape | null {
@@ -176,12 +236,118 @@ function listAllSessions(): SessionListItem[] {
       savedAt: data.savedAt ?? stat.mtime.toISOString(),
       sizeBytes: stat.size,
       previewTitle: data.previewTitle ?? derivePreviewTitle(data.snapshot),
+      projectId: data.projectId ?? extractProjectId(data.snapshot) ?? undefined,
     }
     writeSidecarMeta(full, item)
     out.push(item)
   }
   out.sort((a, b) => b.savedAt.localeCompare(a.savedAt))
   return out
+}
+
+/**
+ * Pick the file that GET /local-session should return for this caller.
+ *
+ * Previously this was a hard `sha256(ip)` lookup — one slot per IP. Now
+ * that multiple projects coexist per IP (each in its own
+ * sha256(projectId) file), we resolve via the sidecar index instead:
+ * scan every sidecar, take the newest where `ip == requestingIp`. The
+ * sidecars are tiny so this is fast even with many sessions.
+ *
+ * Falls back to the legacy `sha256(ip)` path when no sidecar matches —
+ * covers fresh installs and the small window right after a server-side
+ * file-rename migration before the sidecar gets re-emitted.
+ */
+function pickDefaultFileForIp(ip: string): string | null {
+  let best: { file: string; savedAt: string } | null = null
+  const dir = sessionsDir()
+  if (existsSync(dir)) {
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith('.meta.json')) continue
+      const metaPath = join(dir, name)
+      let meta: SessionListItem | null = null
+      try { meta = JSON.parse(readFileSync(metaPath, 'utf8')) as SessionListItem } catch { continue }
+      if (!meta || meta.ip !== ip) continue
+      const snapshot = metaPath.replace(/\.meta\.json$/, '.json')
+      if (!existsSync(snapshot)) continue
+      if (!best || meta.savedAt > best.savedAt) {
+        best = { file: snapshot, savedAt: meta.savedAt }
+      }
+    }
+  }
+  if (best) return best.file
+  const legacy = join(sessionsDir(), `${idForIp(ip)}.json`)
+  return existsSync(legacy) ? legacy : null
+}
+
+/**
+ * One-shot migration on server boot: rename every legacy `sha256(ip)`-
+ * named file whose embedded snapshot exposes a projectId to the new
+ * `sha256(projectId)`-named path. Sidecar is rewritten. Files without
+ * an extractable projectId are left alone — they'll keep working via
+ * the legacy fallback in pickDefaultFileForIp until the client posts
+ * a v5+ snapshot.
+ */
+function migrateIpNamedFiles(): void {
+  const dir = sessionsDir()
+  if (!existsSync(dir)) return
+  let migrated = 0
+  let skipped = 0
+  for (const name of readdirSync(dir)) {
+    if (!name.endsWith('.json') || name.endsWith('.meta.json')) continue
+    // We only migrate "looks like an ip hash" files: 16 hex chars
+    // exactly. New projectId-derived files have the same shape, so we
+    // can't tell them apart by name alone — but they'd parse to a
+    // matching projectId-derived target and the rename becomes a no-op.
+    if (!/^[a-f0-9]{16}\.json$/i.test(name)) continue
+    const full = join(dir, name)
+    const data = readSessionFile(full)
+    if (!data || !data.snapshot) { skipped++; continue }
+    const projectId = extractProjectId(data.snapshot)
+    if (!projectId) { skipped++; continue }
+    const newId = idForProjectId(projectId)
+    const oldId = name.replace(/\.json$/, '')
+    if (newId === oldId) { skipped++; continue } // already correctly named
+    const newPath = join(dir, `${newId}.json`)
+    if (existsSync(newPath)) {
+      // Conflict: another snapshot already lives at the projectId
+      // slot. The newer one wins; this can happen if the user wrote
+      // post-migration on a different machine. Leave the legacy file
+      // alone — pickDefaultFileForIp's savedAt sort handles which is
+      // "current" for the IP.
+      skipped++
+      continue
+    }
+    try {
+      // Stamp projectId into the file body so future reads don't have
+      // to dig it out of the snapshot every time.
+      data.projectId = projectId
+      writeFileSync(newPath, JSON.stringify(data), 'utf8')
+      // Move the sidecar too.
+      const stat = statSync(newPath)
+      writeSidecarMeta(newPath, {
+        id: newId,
+        ip: data.ip ?? '(unknown)',
+        savedAt: data.savedAt,
+        previewTitle: data.previewTitle ?? derivePreviewTitle(data.snapshot),
+        sizeBytes: stat.size,
+        projectId,
+      })
+      // Drop the old file + old sidecar last so we never lose data
+      // mid-migration (server crash between rename steps would leave
+      // both copies on disk, which the list handler dedupes by id).
+      unlinkSync(full)
+      const oldMeta = metaFilePath(full)
+      if (existsSync(oldMeta)) unlinkSync(oldMeta)
+      migrated++
+    } catch (e) {
+      console.warn(`[session] migration failed for ${name}: ${(e as Error).message}`)
+      skipped++
+    }
+  }
+  if (migrated > 0 || skipped > 0) {
+    console.log(`[session] migration: renamed ${migrated} ip-named file(s) to projectId-derived names (${skipped} skipped)`)
+  }
 }
 
 export function sessionSnapshotPlugin(): Plugin {
@@ -191,6 +357,10 @@ export function sessionSnapshotPlugin(): Plugin {
       // Make sure the sessions dir exists once at startup so we never
       // have to mkdir mid-request.
       try { mkdirSync(sessionsDir(), { recursive: true }) } catch { /* best-effort */ }
+
+      // One-shot rename of legacy sha256(ip) files. Idempotent —
+      // safe to run on every dev-server restart.
+      try { migrateIpNamedFiles() } catch (e) { console.warn(`[session] migration scan failed: ${(e as Error).message}`) }
 
       server.middlewares.use('/local-session', async (req, res) => {
         // Sub-routes off /local-session — order matters: /list before /by-id
@@ -217,27 +387,23 @@ export function sessionSnapshotPlugin(): Plugin {
           return
         }
 
-        const file = sessionFilePath(req)
-
         if (req.method === 'GET') {
-          if (!existsSync(file)) {
-            console.log(`[session] GET miss (no file) ip=${clientIp(req)}`)
+          const ip = clientIp(req)
+          const file = pickDefaultFileForIp(ip)
+          if (!file) {
+            console.log(`[session] GET miss (no file for ip=${ip})`)
             sendJson(res, 200, { snapshot: null, savedAt: null })
             return
           }
           const stat = statSync(file)
           const data = readSessionFile(file)
           if (!data) { sendJson(res, 500, { error: 'session unreadable' }); return }
-          // Per-store size breakdown so we can spot the bloated one in
-          // the dev console. Inline data URLs in canvas-item-store have
-          // been the single biggest source of memory pressure on the
-          // client (4K base64 images stayed in the snapshot forever).
           const sizes: string[] = []
           for (const [k, v] of Object.entries(data.snapshot ?? {})) {
             const len = typeof v === 'string' ? v.length : JSON.stringify(v).length
             sizes.push(`${k}=${(len/1024).toFixed(0)}KB`)
           }
-          console.log(`[session] GET serving ${(stat.size/1024).toFixed(0)}KB savedAt=${data.savedAt} :: ${sizes.join(' ')}`)
+          console.log(`[session] GET serving ${(stat.size/1024).toFixed(0)}KB savedAt=${data.savedAt} file=${file.split('/').pop()} :: ${sizes.join(' ')}`)
           sendJson(res, 200, { snapshot: data.snapshot, savedAt: data.savedAt })
           return
         }
@@ -266,6 +432,15 @@ export function sessionSnapshotPlugin(): Plugin {
               return
             }
 
+            // Resolve target file: sha256(projectId) when the snapshot
+            // carries one (v5+ clients), otherwise sha256(ip) as a
+            // backward-compat fallback. The projectId path is what
+            // lets one IP hold multiple distinct sessions.
+            const projectId = extractProjectId(json.snapshot)
+            const file = projectId
+              ? sessionFilePathForId(idForProjectId(projectId))
+              : sessionFilePathLegacy(req)
+
             // Per-store size breakdown + inline-data-URL guard. If any
             // canvas-item-store payload still contains `data:image/...`
             // base64 content, log a loud warning — those were the
@@ -290,7 +465,7 @@ export function sessionSnapshotPlugin(): Plugin {
                 }
               }
             }
-            console.log(`[session] POST ${(rawJson.length/1024).toFixed(0)}KB :: ${sizes.join(' ')}`)
+            console.log(`[session] POST ${(rawJson.length/1024).toFixed(0)}KB → ${file.split('/').pop()} (projectId=${projectId ? projectId.slice(0,8) : '∅'}) :: ${sizes.join(' ')}`)
             if (inlineCount > 0) {
               console.warn(`[session] ⚠️  ${inlineCount} inline data: URL(s) in store payload (~${(inlineBytes/1024/1024).toFixed(1)}MB) — these blow up client heap on next rehydrate. Migration to /uploads/ should run on next load.`)
             }
@@ -323,6 +498,7 @@ export function sessionSnapshotPlugin(): Plugin {
               savedAt: new Date().toISOString(),
               ip,
               previewTitle: derivePreviewTitle(json.snapshot),
+              projectId: projectId ?? undefined,
             }
             writeFileSync(file, JSON.stringify(out), 'utf8')
             // Sidecar for the picker's /list — avoids re-parsing the
@@ -332,6 +508,7 @@ export function sessionSnapshotPlugin(): Plugin {
               id: file.split('/').pop()!.replace(/\.json$/, ''),
               ip, savedAt: out.savedAt, previewTitle: out.previewTitle ?? '',
               sizeBytes: stat.size,
+              projectId: projectId ?? undefined,
             })
             sendJson(res, 200, { savedAt: out.savedAt, bytesIn: buf.length, bytesUncompressed: rawJson.length })
           } catch (e) {

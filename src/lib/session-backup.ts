@@ -133,6 +133,10 @@ export interface SessionListItem {
   savedAt: string
   sizeBytes: number
   previewTitle: string
+  /** Stable per-project UUID. Always present for sessions written by
+   *  v5+ clients; older sessions that never went through the server-side
+   *  migration may still come back without one. */
+  projectId?: string
 }
 
 /**
