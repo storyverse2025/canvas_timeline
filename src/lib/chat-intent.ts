@@ -75,7 +75,16 @@ export async function executeIntent(intent: Intent, projectId: string, userInput
       useStoryboardStore.getState().replaceAll(result.rows)
       chatStore.addMessage('system', `✓ 分镜表已更新：${result.rows.length} 行`)
     } else {
-      chatStore.addMessage('system', `分镜 JSON 解析失败：${(result.errors ?? []).slice(0, 3).join('; ')}`)
+      // Include a peek at the raw response so the user can diagnose whether
+      // the LLM returned prose, partial JSON, or junk. Without this, when
+      // every agent verb shows "完成" but the table is still empty the user
+      // has no way to know what actually went wrong.
+      const errMsg = (result.errors ?? []).slice(0, 3).join('; ')
+      const preview = json.slice(0, 200).replace(/\s+/g, ' ').trim()
+      chatStore.addMessage(
+        'system',
+        `✗ 分镜 JSON 解析失败：${errMsg}\n模型原始响应前 200 字：${preview}${json.length > 200 ? '…' : ''}`,
+      )
     }
   }
 

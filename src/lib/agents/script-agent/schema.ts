@@ -22,6 +22,20 @@ export const ExpandedScriptBaselineSchema = z.object({
   beat_summary: z.array(z.string()).default([]),
 })
 
+/**
+ * Post-doctor-roundtable revision of the expanded script. The roundtable
+ * identifies must-fix issues; this field carries the script *after* those
+ * fixes are applied, so downstream stages (storyboard generation, casting,
+ * keyframe) consume a single canonical baseline that already incorporates
+ * the doctor's corrections. The user sees this on the canvas as the
+ * "最终扩写剧本" text node, and it's also persisted to
+ * `useProjectDB.script.optimizedText`.
+ */
+export const PostDoctorRevisedScriptSchema = z.object({
+  script_text: z.string().default(''),
+  revision_notes: z.array(z.string()).default([]),
+})
+
 export const DoctorRoundtableSummarySchema = z.object({
   must_fix: z.array(z.string()).default([]),
   keep: z.array(z.string()).default([]),
@@ -64,6 +78,10 @@ export const ScriptDossierSchema = z.object({
   framework_calibration: FrameworkCalibrationSchema,
   expanded_script_baseline: ExpandedScriptBaselineSchema,
   doctor_roundtable_summary: DoctorRoundtableSummarySchema,
+  post_doctor_revised_script: PostDoctorRevisedScriptSchema.default({
+    script_text: '',
+    revision_notes: [],
+  }),
   dialogue_diagnosis_summary: DialogueDiagnosisSummarySchema,
   casting_cards: z.array(CastingCardSchema).default([]),
   scene_cards: z.array(SceneCardSchema).default([]),
@@ -167,6 +185,16 @@ export const TabooSchema = z.enum([
 ])
 export type Taboo = z.infer<typeof TabooSchema>
 
+/**
+ * A single script-derived clarification: the LLM-generated question + the
+ * user's chosen answer text. Threaded into the expand-script prompt so the
+ * dossier reflects what the user said about their own script.
+ */
+export interface ScriptClarification {
+  q: string
+  answer: string
+}
+
 export interface ScriptInterviewAnswers {
   projectType: ProjectType
   platformAudience: PlatformAudience
@@ -176,29 +204,29 @@ export interface ScriptInterviewAnswers {
   taboos: Taboo[]
   inputShape: ScriptInputShape
   subAgent: ScriptSubAgent
+  clarifications: ScriptClarification[]
 }
 
 /**
- * Facts the caller already knows from the canvas / dialog context. The
- * script-agent uses these to skip interview questions whose answers are
- * already locked in — so the director-assistant flow doesn't re-ask for
- * the duration the user already typed, or the visual style they already
- * picked. Each populated field replaces a question with an inferred
- * answer + a recap line.
+ * Facts the caller already knows from the canvas / dialog context. Every
+ * hard constraint is auto-inferred by the script-agent now (the interview is
+ * 3-5 LLM-generated script-specific questions, not a fixed form), but these
+ * fields still tighten that inference: a known duration anchors the project
+ * type, a known visual style is recorded in the recap, and a known aspect
+ * ratio surfaces in the recap.
  */
 export interface ScriptKnownContext {
-  /** Total duration the final storyboard must sum to (seconds). When set,
-   *  Q1 (项目类型) is skipped — the project type is inferred from this
-   *  duration plus keyword hints in the script. */
+  /** Total duration the final storyboard must sum to (seconds). Anchors the
+   *  inferred project type — duration beats keyword guessing for generic
+   *  types (short-video / drama / feature), but specific genres detected
+   *  in the script (MV, commercial, educational, comic) still win. */
   totalDurationSeconds?: number
   /** Human-readable global visual style from the canvas (artDirection
-   *  customStyle / stylePreset). When set, Q3 (视觉风格) is skipped —
-   *  the agent uses 'follow-canvas-style' so the prompt template's
+   *  customStyle / stylePreset). Recorded in the recap; expand-script's
    *  {{artStyle}} variable carries the actual look through. */
   visualStyle?: string
-  /** Default aspect ratio from the canvas (e.g., '16:9'). Reserved for
-   *  future skip rules — currently not part of the 8-question interview
-   *  but recorded for the recap. */
+  /** Default aspect ratio from the canvas (e.g., '16:9'). Recorded in the
+   *  recap so the user can sanity-check it before the dossier is built. */
   aspectRatio?: string
 }
 

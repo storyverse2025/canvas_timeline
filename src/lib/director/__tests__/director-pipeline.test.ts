@@ -122,13 +122,16 @@ describe('Director Pipeline — PipelineState Structure', () => {
           storyboard_directives: ['以旧车票作为动机锚点'],
         }) }] }
       }
-      if (prompt.includes('角色提取')) return { outputs: [{ kind: 'text', text: '[]' }] }
-      if (prompt.includes('场景提取')) return { outputs: [{ kind: 'text', text: '[]' }] }
-      if (prompt.includes('道具提取')) return { outputs: [{ kind: 'text', text: '[]' }] }
-      if (prompt.includes('输出最终的分镜表 JSON')) {
+      // Specific predicates first — the storyboard generate prompt references
+      // "角色提取步骤" / "场景提取步骤" in its body, so a naive 角色提取 match
+      // would catch the storyboard prompt too. Match by agent verb instead.
+      if (prompt.includes('director-agent / generate-storyboard-table')) {
         storyboardPrompts.push(prompt)
         return { outputs: [{ kind: 'text', text: storyboard }] }
       }
+      if (prompt.includes('art-director-agent / extract-characters')) return { outputs: [{ kind: 'text', text: '[]' }] }
+      if (prompt.includes('art-director-agent / extract-scenes')) return { outputs: [{ kind: 'text', text: '[]' }] }
+      if (prompt.includes('art-director-agent / extract-props')) return { outputs: [{ kind: 'text', text: '[]' }] }
       return { outputs: [{ kind: 'text', text: 'ok' }] }
     })
 
@@ -204,19 +207,23 @@ describe('Director Pipeline — PipelineState Structure', () => {
           storyboard_directives: ['小夏红伞、阿澈灰雨衣、晨雾码头必须跨镜一致'],
         }) }] }
       }
-      if (prompt.includes('角色提取')) return { outputs: [{ kind: 'text', text: '[{"name":"小夏","gender":"female","appearance":"red umbrella blue coat","clothing":"blue coat","expression":"alert","image_prompt":"Xiao Xia red umbrella blue coat"},{"name":"阿澈","gender":"male","appearance":"grey rain jacket","clothing":"grey rain jacket","expression":"tense","image_prompt":"A Che grey rain jacket"}]' }] }
-      if (prompt.includes('场景提取')) return { outputs: [{ kind: 'text', text: '[{"name":"晨雾码头","location":"dock","lighting":"blue-orange mist","mood":"tense","image_prompt":"misty dock"}]' }] }
-      if (prompt.includes('道具提取')) return { outputs: [{ kind: 'text', text: '[{"name":"红伞","description":"red umbrella","image_prompt":"red umbrella prop"}]' }] }
-      if (request.capability === 'text-to-image') return { outputs: [{ kind: 'image', url: 'https://assets.test/ref.png' }] }
-      if (prompt.includes('输出最终的分镜表 JSON')) return { outputs: [{ kind: 'text', text: badStoryboard }] }
-      if (prompt.includes('导演助手生成前自检')) {
-        selfCheckPrompts.push(prompt)
-        return { outputs: [{ kind: 'text', text: '[{"shot":"ALL","issue":"18 rows of 1s shots, style alternates photoreal/anime, character refs drift from Xiao Xia/A Che","fix":"merge into 2 multi-panel rows and enforce Final Fantasy CG + canonical character refs"}]' }] }
-      }
+      // Specific predicates first — multiple downstream prompts reference
+      // "角色提取步骤" / "场景提取步骤" etc. in their bodies, so a naive
+      // 角色提取 match would incorrectly catch later stages. Match by agent
+      // verb instead.
       if (prompt.includes('根据自检发现的问题修复分镜表')) {
         fixPrompts.push(prompt)
         return { outputs: [{ kind: 'text', text: fixedStoryboard }] }
       }
+      if (prompt.includes('导演助手生成前自检')) {
+        selfCheckPrompts.push(prompt)
+        return { outputs: [{ kind: 'text', text: '[{"shot":"ALL","issue":"18 rows of 1s shots, style alternates photoreal/anime, character refs drift from Xiao Xia/A Che","fix":"merge into 2 multi-panel rows and enforce Final Fantasy CG + canonical character refs"}]' }] }
+      }
+      if (prompt.includes('director-agent / generate-storyboard-table')) return { outputs: [{ kind: 'text', text: badStoryboard }] }
+      if (prompt.includes('art-director-agent / extract-characters')) return { outputs: [{ kind: 'text', text: '[{"name":"小夏","gender":"female","appearance":"red umbrella blue coat","clothing":"blue coat","expression":"alert","image_prompt":"Xiao Xia red umbrella blue coat"},{"name":"阿澈","gender":"male","appearance":"grey rain jacket","clothing":"grey rain jacket","expression":"tense","image_prompt":"A Che grey rain jacket"}]' }] }
+      if (prompt.includes('art-director-agent / extract-scenes')) return { outputs: [{ kind: 'text', text: '[{"name":"晨雾码头","location":"dock","lighting":"blue-orange mist","mood":"tense","image_prompt":"misty dock"}]' }] }
+      if (prompt.includes('art-director-agent / extract-props')) return { outputs: [{ kind: 'text', text: '[{"name":"红伞","description":"red umbrella","image_prompt":"red umbrella prop"}]' }] }
+      if (request.capability === 'text-to-image') return { outputs: [{ kind: 'image', url: 'https://assets.test/ref.png' }] }
       return { outputs: [{ kind: 'text', text: '[]' }] }
     })
 

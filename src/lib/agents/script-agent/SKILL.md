@@ -27,45 +27,40 @@ actor, editor, sound) can consume without ambiguity.
 
 ## Interview rules
 
-Before doing any creative work, interview the requester one question at a time
-with a recommended answer. Walk down each branch of the design tree, resolving
-dependencies one-by-one. Ask the questions one at a time.
+The script-agent does **not** use a fixed interview form. Instead:
 
-**Skip-when-known.** If the answer to a question is already locked from the
-canvas context or the director-assistant dialog, do not ask — infer the
-answer, inject it into the dossier, and add a line to the recap so the user
-can spot any wrong inference. The caller passes these via
-`ScriptRequest.knownContext`:
-- `totalDurationSeconds` → skip Q1 (项目类型); derive from duration + keyword hints.
-- `visualStyle` → skip Q3 (视觉风格); lock to `follow-canvas-style` so the
-  canvas's global art style threads through via `{{artStyle}}`.
-- `aspectRatio` → no Q to skip today (not part of the 8-question set); just
-  recorded in the recap.
+1. **Hard constraints are auto-inferred.** Project type, total duration,
+   audience platform, visual style, story goal, character count, input shape,
+   and sub-agent flow are derived from `scriptText` + `knownContext` via
+   keyword/length heuristics. `platformAudience` is locked to `cinema` (adult
+   theatrical) per product spec.
+2. **The ask phase is LLM-driven and script-specific.** Before the
+   expand-script call, the agent issues a separate LLM call (using the
+   `ask-script-questions` prompt) that reads the user's script + canvas
+   context and returns 3-5 multiple-choice questions targeting *this
+   specific script's* ambiguities — main character motive, ending direction,
+   antagonist identity, key prop function, etc. Each generated question
+   carries 3-5 script-derived options + a recommended pick.
+3. **Clarifications thread into expand-script.** The user's answer to each
+   generated question (option label + any free-text) is captured as a
+   `ScriptClarification` and rendered into the expand-script prompt under
+   `{{scriptClarifications}}`, with a hard constraint that the dossier must
+   respect them.
 
-The recap separates "auto-skipped from canvas" from "collected via interview"
-so the user sees the full lock state without having to remember which
-questions actually popped up.
+**Skip-when-known.** If `knownContext.totalDurationSeconds` is supplied, the
+project type is inferred from duration + keyword hints; `knownContext.visualStyle`
+keeps `follow-canvas-style` locked so `{{artStyle}}` carries the actual look;
+`knownContext.aspectRatio` is recorded in the recap. None of these surface as
+questions to the user.
 
-The minimum interview surface for this agent is:
+**Graceful degradation.** If the ask-LLM call fails or returns invalid JSON,
+the agent emits a progress note and proceeds directly to expand-script with
+no clarifications — better than blocking the user on a transient model
+failure.
 
-1. **Input shape** — what is the user bringing in?
-   - rough idea (one-line concept)  
-   - partial script (some beats, missing structure)  
-   - complete draft (needs critique / cleanup)  
-   - specific scene (focused expansion)
-2. **Target output** — what do they want back?
-   - full Script→Casting contract (default; runs the expand-script flow)  
-   - framework discovery only (delegate to framework-qa sub-agent)  
-   - full screenplay expansion (delegate to writing-expansion sub-agent)  
-   - critique only, no rewrite (delegate to doctor-roundtable sub-agent)  
-   - line-by-line dialogue rewrite (delegate to dialogue-doctor sub-agent)
-3. **Tone / genre** — drama / comedy / horror / thriller / documentary /
-   slice-of-life / mixed — defaults to whatever the canvas global style implies.
-
-For each question you ask, always include your recommended answer based on
-what you can infer from the current canvas context and the user's input. The
-requester (human OR another agent) can accept the recommendation by pressing
-Enter or override it.
+The recap (a `progress` turn before the expand call) lists every auto-inferred
+fact + every clarification Q/A so the user can spot any wrong inference
+before the dossier is generated.
 
 ## Default flow (no sub-agent)
 

@@ -182,6 +182,7 @@ export async function* generateStoryboardTable(
           shotComposition: req.shotComposition.slice(0, 600),
           visualStrategy: req.visualStrategy.slice(0, 400),
           elementContext: req.elementContext,
+          revisedScript: req.revisedScript,
         }),
       },
     ],
@@ -208,6 +209,10 @@ export async function* critiqueTimeline(
         role: 'user',
         content: fillTemplate(TPL.critiqueTimeline, {
           storyboardJson: req.storyboardJson,
+          artStyle: req.artStyle,
+          characterNames: req.characterNames.join(' / ') || '（未提供主要角色名）',
+          targetRowCount: String(req.targetRowCount),
+          totalDurationSeconds: String(req.totalDurationSeconds),
         }),
       },
     ],

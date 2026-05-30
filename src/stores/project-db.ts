@@ -164,6 +164,11 @@ export interface Script {
   /** Total duration (seconds) the storyboard rows must sum to. Required by
    *  the director-assistant pipeline; the LLM treats it as a hard constraint. */
   totalDurationSeconds: number
+  /** LLM-generated short title (6-12 中文字符) for this session, computed
+   *  from the user's script at director-assistant start. Surfaces in the
+   *  session picker so cross-machine load shows meaningful labels instead
+   *  of the first 60 chars of raw script text. */
+  sessionTitle?: string
   /** Distilled facts from the most recent script-agent run. */
   creativeBrief?: CreativeBrief
   /** Casting cards from the most recent script-agent dossier. Consumed by

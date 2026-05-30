@@ -42,6 +42,10 @@ output: ScriptDossier (JSON only)
 
 {{scriptText}}
 
+═══ 用户对该剧本的关键澄清（采访官 ask 阶段收集）═══
+
+{{scriptClarifications}}
+
 ═══ 画布上下文 ═══
 
 {{canvasContext}}
@@ -69,6 +73,10 @@ output: ScriptDossier (JSON only)
     "must_fix": ["结构/人物/节奏必改问题"],
     "keep": ["不要乱动的亮点"],
     "open_questions": ["重要分歧或待确认问题"]
+  },
+  "post_doctor_revised_script": {
+    "script_text": "应用 doctor_roundtable_summary.must_fix 后的完整剧本基准；这是下游分镜/选角/视觉的唯一权威剧本版本",
+    "revision_notes": ["针对每条 must_fix 给出对应的修改要点，便于审稿"]
   },
   "dialogue_diagnosis_summary": {
     "voice_print_risks": ["角色语言辨识度风险（按 {{platformAudience}} 受众语感校准）"],
@@ -122,5 +130,7 @@ output: ScriptDossier (JSON only)
   - complete-draft 时多保留原文，做轻量清洁；
   - specific-scene 时只动这一场。
 - 必须遵守内容禁忌：{{taboos}}。如有冲突，在 main_risk 中说明并给出兼容方案。
+- 必须严格采纳"用户对该剧本的关键澄清"中所有 Q/A，相关字段（logline、casting_cards、scene_cards、storyboard_directives 等）必须与用户的选择保持一致，不要按你自己的偏好覆盖用户的回答。
+- `post_doctor_revised_script.script_text` 必须是把 `doctor_roundtable_summary.must_fix` 全部应用后的版本：保留 `keep` 的亮点不动，针对每条 `must_fix` 给出实际改写，而不是改写计划。每条 `must_fix` 在 `revision_notes` 里有一条对应说明。下游 (storyboard / casting / keyframe) 只读 `post_doctor_revised_script.script_text`，不再读 `expanded_script_baseline.script_text`，所以这一版必须是完整可用的剧本。
 - 视觉相关字段（appearance_for_image, visual_requirements）必须与 {{visualStyle}} 保持一致。
 - 只输出 JSON。

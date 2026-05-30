@@ -46,10 +46,31 @@ export interface GenerateStoryboardTableRequest {
   shotComposition: string
   visualStrategy: string
   elementContext: string
+  /**
+   * The post-doctor revised script. The prompt now grounds storyboard
+   * generation in the actual revised script text (not just the
+   * derived analysis), so the doctor's must-fix corrections actually
+   * land in each shot's visual_description / character_motivation. The
+   * caller passes the same text it persisted to script.optimizedText.
+   */
+  revisedScript: string
 }
 
 export interface CritiqueTimelineRequest {
   storyboardJson: string
+  /** Project art style — surfaces in the self-check so the LLM flags
+   *  rows that drift away from the locked visual language. */
+  artStyle: string
+  /** Canonical character names from the dossier's casting cards. Lets
+   *  the self-check spot rows that reference unrelated/extras like
+   *  "blonde stranger" instead of the protagonists. */
+  characterNames: string[]
+  /** Suggested reasonable row count for the storyboard given the total
+   *  duration. Computed as `ceil(totalDurationSeconds / 12)` ± wiggle.
+   *  Surfaces in the prompt as the "合理镜头/row 数" guidance. */
+  targetRowCount: number
+  /** Total duration in seconds; sums of row durations must equal this. */
+  totalDurationSeconds: number
 }
 
 export interface ApplyTimelineFixesRequest {

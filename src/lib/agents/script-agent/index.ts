@@ -1,11 +1,16 @@
 /**
  * script-agent — the script-domain orchestrator.
  *
- * Interview-before-work protocol follows .claude/skills/ai-script-creation-skill/SKILL.md:
- * eight clarification questions covering 项目类型, 平台/受众, 风格, 故事目标,
- * 角色数量, 禁忌内容, 输入形态, and sub-agent flow. Each question pre-selects a
- * recommended answer inferred from the script text + canvas context so a
- * detailed input still flows through in a few clicks.
+ * Interview-before-work protocol (v2):
+ *  - Hard constraints (项目类型 / 总时长 / 平台-受众 / 视觉风格 / 故事目标 /
+ *    角色数量 / 输入形态 / 子工作流) are auto-inferred from the script text +
+ *    canvas context. 平台/受众 is locked to "成人 / 院线" per product spec.
+ *  - The actual interview consists of 3-5 LLM-generated questions that point
+ *    at this specific script's ambiguities — main character motive, ending
+ *    direction, antagonist identity, key prop function, etc. The LLM produces
+ *    the question list, the user answers each via the standard Question/Answer
+ *    runtime protocol, and the answers are threaded into expand-script as
+ *    `scriptClarifications`.
  *
  * After the interview, emits a recap as a progress turn (so the user sees what
  * settings the LLM is about to receive), then either delegates to a sub-agent
@@ -19,6 +24,8 @@ import type {
   AgentGenerator,
   AgentModule,
   Answer,
+  Question,
+  QuestionOption,
 } from '@/lib/agents/_shared/runtime/types'
 import type { ProjectContext } from '@/lib/agents/_shared/context/types'
 import {
@@ -30,6 +37,7 @@ import {
   type CharacterCount,
   type PlatformAudience,
   type ProjectType,
+  type ScriptClarification,
   type ScriptDossier,
   type ScriptInputShape,
   type ScriptInterviewAnswers,
@@ -38,20 +46,29 @@ import {
   type StoryGoal,
   type Taboo,
   type VisualStyle,
-  ScriptDossierSchema,
+  ProjectTypeSchema,
+  StoryGoalSchema,
+  CharacterCountSchema,
   ScriptInputShapeSchema,
-  ScriptSubAgentSchema,
+  ScriptDossierSchema,
 } from './schema'
 
 import skillSource from './SKILL.md?raw'
 import expandScriptSource from './prompts/expand-script.md?raw'
+import askScriptQuestionsSource from './prompts/ask-script-questions.md?raw'
 
 const { body: SCRIPT_AGENT_SYSTEM } = parseFrontmatter(skillSource)
 const { body: EXPAND_SCRIPT_TEMPLATE } = parseFrontmatter(expandScriptSource)
+const { body: ASK_SCRIPT_QUESTIONS_TEMPLATE } = parseFrontmatter(askScriptQuestionsSource)
 
-// ─── Interview options ──────────────────────────────────────────────
+// ─── Label tables ──────────────────────────────────────────────
+// These no longer drive user-facing options (we don't ask static questions
+// anymore); they exist purely so the expand-script prompt receives the same
+// human-readable label strings that were used before this refactor. Keep them
+// in sync with the schema enums so labelOf() never falls through to the raw
+// kebab-case value.
 
-const PROJECT_TYPE_OPTIONS: Array<{ value: ProjectType; label: string }> = [
+const PROJECT_TYPE_LABELS: Array<{ value: ProjectType; label: string }> = [
   { value: 'short-video-30s', label: '短视频 (15-30秒)' },
   { value: 'short-video-60s', label: '短视频 (30-60秒)' },
   { value: 'ai-comic-series', label: 'AI 漫剧 (单集 10-30 分钟)' },
@@ -63,17 +80,17 @@ const PROJECT_TYPE_OPTIONS: Array<{ value: ProjectType; label: string }> = [
   { value: 'other', label: '其他 / 未定' },
 ]
 
-const PLATFORM_AUDIENCE_OPTIONS: Array<{ value: PlatformAudience; label: string; description: string }> = [
-  { value: 'douyin-kuaishou-vertical', label: '抖音/快手', description: '竖屏 9:16，青年受众，节奏快' },
-  { value: 'bilibili', label: 'B 站', description: '横屏 16:9，青少年-青年，二次元/动漫深度内容' },
-  { value: 'youtube', label: 'YouTube', description: '横屏 16:9，全球/全年龄' },
-  { value: 'wechat-video', label: '微信视频号', description: '熟人社交场域，中年商务向' },
-  { value: 'cinema', label: '院线', description: '成年观众，长片，2.35:1 / 1.85:1' },
-  { value: 'tv', label: '电视', description: '家庭/全年龄' },
-  { value: 'cross-platform', label: '跨平台 / 未定', description: '保留多种比例与节奏可能' },
+const PLATFORM_AUDIENCE_LABELS: Array<{ value: PlatformAudience; label: string }> = [
+  { value: 'douyin-kuaishou-vertical', label: '抖音/快手' },
+  { value: 'bilibili', label: 'B 站' },
+  { value: 'youtube', label: 'YouTube' },
+  { value: 'wechat-video', label: '微信视频号' },
+  { value: 'cinema', label: '院线（成人受众）' },
+  { value: 'tv', label: '电视' },
+  { value: 'cross-platform', label: '跨平台 / 未定' },
 ]
 
-const VISUAL_STYLE_OPTIONS: Array<{ value: VisualStyle; label: string }> = [
+const VISUAL_STYLE_LABELS: Array<{ value: VisualStyle; label: string }> = [
   { value: 'follow-canvas-style', label: '跟随画布美术风格' },
   { value: 'anime-2d', label: '二次元 / 动漫' },
   { value: 'liveaction-film', label: '真人 / 电影' },
@@ -83,7 +100,7 @@ const VISUAL_STYLE_OPTIONS: Array<{ value: VisualStyle; label: string }> = [
   { value: 'other', label: '其他 / 自定义' },
 ]
 
-const STORY_GOAL_OPTIONS: Array<{ value: StoryGoal; label: string }> = [
+const STORY_GOAL_LABELS: Array<{ value: StoryGoal; label: string }> = [
   { value: 'move-audience', label: '感动观众' },
   { value: 'comedy-relief', label: '搞笑解压' },
   { value: 'suspense-thriller', label: '紧张悬疑' },
@@ -94,14 +111,14 @@ const STORY_GOAL_OPTIONS: Array<{ value: StoryGoal; label: string }> = [
   { value: 'spark-discussion', label: '引发讨论' },
 ]
 
-const CHARACTER_COUNT_OPTIONS: Array<{ value: CharacterCount; label: string }> = [
+const CHARACTER_COUNT_LABELS: Array<{ value: CharacterCount; label: string }> = [
   { value: 'solo', label: '1 人独白' },
   { value: 'duo', label: '2 人对话' },
   { value: 'small-ensemble', label: '3-5 人群像' },
   { value: 'large-ensemble', label: '6+ 人群像' },
 ]
 
-const TABOO_OPTIONS: Array<{ value: Taboo; label: string }> = [
+const TABOO_LABELS: Array<{ value: Taboo; label: string }> = [
   { value: 'avoid-violence', label: '避免暴力' },
   { value: 'avoid-sexual', label: '避免性内容' },
   { value: 'avoid-political', label: '避免政治敏感' },
@@ -109,19 +126,19 @@ const TABOO_OPTIONS: Array<{ value: Taboo; label: string }> = [
   { value: 'brand-safe', label: '品牌不可碰话题' },
 ]
 
-const INPUT_SHAPE_OPTIONS: Array<{ value: ScriptInputShape; label: string; description: string }> = [
-  { value: 'rough-idea', label: '一句话想法', description: '需要从零搭结构和节拍' },
-  { value: 'partial-script', label: '局部大纲 / 部分剧本', description: '已有几条线，需要补齐' },
-  { value: 'complete-draft', label: '完整剧本草稿', description: '主要需要诊断与清洁，不要重写' },
-  { value: 'specific-scene', label: '单场戏', description: '只扩这一场，前后不动' },
+const INPUT_SHAPE_LABELS: Array<{ value: ScriptInputShape; label: string }> = [
+  { value: 'rough-idea', label: '一句话想法' },
+  { value: 'partial-script', label: '局部大纲 / 部分剧本' },
+  { value: 'complete-draft', label: '完整剧本草稿' },
+  { value: 'specific-scene', label: '单场戏' },
 ]
 
-const SUB_AGENT_OPTIONS: Array<{ value: ScriptSubAgent; label: string; description: string }> = [
-  { value: 'default', label: '完整 Script → Casting 契约 (默认)', description: 'expand-script：框架+扩写+诊断+选角卡+视觉指令' },
-  { value: 'framework-qa', label: '七层框架问答', description: '只走 framework-qa 子代理生成项目档案' },
-  { value: 'writing-expansion', label: '完整剧本扩写', description: '走 writing-expansion 子代理（前提是档案已就绪）' },
-  { value: 'doctor-roundtable', label: '圆桌会诊（只诊断）', description: '走 doctor-roundtable 子代理' },
-  { value: 'dialogue-doctor', label: '台词医生（逐句诊断）', description: '走 dialogue-doctor 子代理' },
+const SUB_AGENT_LABELS: Array<{ value: ScriptSubAgent; label: string }> = [
+  { value: 'default', label: '完整 Script → Casting 契约 (默认)' },
+  { value: 'framework-qa', label: '七层框架问答' },
+  { value: 'writing-expansion', label: '完整剧本扩写' },
+  { value: 'doctor-roundtable', label: '圆桌会诊（只诊断）' },
+  { value: 'dialogue-doctor', label: '台词医生（逐句诊断）' },
 ]
 
 // ─── Heuristic recommendations ──────────────────────────────────────
@@ -168,15 +185,6 @@ function inferProjectTypeFromKnown(
   return 'feature-film'
 }
 
-function recommendPlatformAudience(projectType: ProjectType): PlatformAudience {
-  if (projectType === 'feature-film') return 'cinema'
-  if (projectType === 'educational') return 'youtube'
-  if (projectType === 'commercial') return 'cross-platform'
-  if (projectType === 'mv') return 'bilibili'
-  if (projectType === 'short-video-30s' || projectType === 'short-video-60s') return 'douyin-kuaishou-vertical'
-  return 'douyin-kuaishou-vertical'
-}
-
 function recommendStoryGoal(text: string): StoryGoal {
   if (/搞笑|笑点|喜剧|逗|滑稽/i.test(text)) return 'comedy-relief'
   if (/感动|催泪|泪|心碎|思念/i.test(text)) return 'move-audience'
@@ -204,12 +212,24 @@ function recommendCharacterCount(text: string): CharacterCount {
   return 'large-ensemble'
 }
 
-function recommendTaboos(text: string): Taboo[] {
-  const out: Taboo[] = []
-  if (/儿童|kids?|child/i.test(text)) out.push('child-safe')
-  if (/品牌|brand|TVC/i.test(text)) out.push('brand-safe')
-  return out
-}
+// ─── LLM-generated questions schema ────────────────────────────────
+
+const GeneratedQuestionOptionSchema = z.object({
+  value: z.string().min(1),
+  label: z.string().min(1),
+  description: z.string().optional(),
+})
+const GeneratedQuestionSchema = z.object({
+  q: z.string().min(1),
+  header: z.string().min(1).optional(),
+  options: z.array(GeneratedQuestionOptionSchema).min(2).max(6),
+  recommended: z.string().optional(),
+})
+const AskScriptQuestionsResponseSchema = z.object({
+  questions: z.array(GeneratedQuestionSchema).min(1).max(6),
+})
+
+type GeneratedQuestion = z.infer<typeof GeneratedQuestionSchema>
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -223,19 +243,7 @@ interface SubAgentRunner {
 export interface ScriptAgentDeps {
   subAgents?: Partial<Record<Exclude<ScriptSubAgent, 'default'>, SubAgentRunner>>
   expandScriptPrompt?: string
-}
-
-function pickFirst<T extends string>(answer: Answer | undefined, fallback: T): T {
-  if (!answer) return fallback
-  const choice = answer.selected[0] ?? answer.text?.trim() ?? ''
-  return (choice as T) || fallback
-}
-
-function pickMulti<T extends string>(answer: Answer | undefined, fallback: T[]): T[] {
-  if (!answer) return fallback
-  if (answer.selected.length > 0) return answer.selected as T[]
-  if (answer.text?.trim()) return [answer.text.trim() as T]
-  return fallback
+  askScriptQuestionsPrompt?: string
 }
 
 function labelOf<T extends string>(value: T, options: Array<{ value: T; label: string }>): string {
@@ -302,6 +310,13 @@ function parseDossierStrict(json: unknown): ScriptDossier {
   return parsed.data
 }
 
+function formatClarificationsBlock(items: ScriptClarification[]): string {
+  if (items.length === 0) return '（采访官未提出额外问题，按已锁定设定进行扩写。）'
+  return items
+    .map((c, i) => `Q${i + 1}: ${c.q}\nA${i + 1}: ${c.answer}`)
+    .join('\n\n')
+}
+
 // ─── Agent factory ──────────────────────────────────────────────────
 
 export function createScriptAgent(deps: ScriptAgentDeps = {}): AgentModule<
@@ -310,6 +325,8 @@ export function createScriptAgent(deps: ScriptAgentDeps = {}): AgentModule<
   ScriptDossier
 > {
   const expandScriptTemplate = deps.expandScriptPrompt ?? EXPAND_SCRIPT_TEMPLATE
+  const askScriptQuestionsTemplate =
+    deps.askScriptQuestionsPrompt ?? ASK_SCRIPT_QUESTIONS_TEMPLATE
 
   async function* run(
     request: ScriptRequest,
@@ -325,160 +342,196 @@ export function createScriptAgent(deps: ScriptAgentDeps = {}): AgentModule<
       totalDurationSeconds:
         request.totalDurationSeconds ?? request.knownContext?.totalDurationSeconds,
     }
-    const skippedFromContext: string[] = []
 
-    // Q1: 项目类型 (题材 + 时长)
-    // Skip when totalDurationSeconds is already known — derive the project
-    // type from the duration + keyword hints so the contract is locked.
+    // ── 1. Auto-infer the hard constraints ─────────────────────────
+    // platformAudience is fixed by product spec (院线成人) and visualStyle is
+    // locked by the canvas. The rest — projectType / storyGoal / characterCount
+    // / inputShape — are NOT decided here: keyword/length regex on the raw
+    // script misfires (a script that *mentions* 公益广告 is not itself a 广告;
+    // "每一滴眼泪" in a dystopian PSA is not a tear-jerker goal; a 1500-char
+    // cutoff mislabels a complete short-film script as a 部分剧本; background
+    // 群众 inflate the character count). The interview LLM in step 2 already
+    // reads the whole script, so it classifies all four semantically. The
+    // heuristics below are kept only as a fallback for when that call fails.
+
     const recProjectType = recommendProjectType(request.scriptText)
-    let projectType: ProjectType
-    if (knownContext.totalDurationSeconds && knownContext.totalDurationSeconds > 0) {
-      projectType = inferProjectTypeFromKnown(
-        knownContext.totalDurationSeconds,
-        recProjectType,
-      )
-      skippedFromContext.push(
-        `项目类型: ${labelOf(projectType, PROJECT_TYPE_OPTIONS)} (从总时长 ${knownContext.totalDurationSeconds}s 推断)`,
-      )
-    } else {
-      const projectTypeAns = (yield {
-        type: 'question',
-        question: {
-          q: '项目类型？(题材 + 时长)',
-          header: '项目类型',
-          options: PROJECT_TYPE_OPTIONS,
-          recommended: recProjectType,
-        },
-      }) as Answer | undefined
-      projectType = pickFirst<ProjectType>(projectTypeAns, recProjectType)
-    }
+    const fallbackProjectType: ProjectType =
+      knownContext.totalDurationSeconds && knownContext.totalDurationSeconds > 0
+        ? inferProjectTypeFromKnown(knownContext.totalDurationSeconds, recProjectType)
+        : recProjectType
+    const fallbackStoryGoal: StoryGoal = recommendStoryGoal(request.scriptText)
+    const fallbackCharacterCount: CharacterCount = recommendCharacterCount(request.scriptText)
+    const fallbackInputShape: ScriptInputShape = recommendInputShape(request.scriptText)
 
-    // Q2: 平台 + 受众
-    const recPlatform = recommendPlatformAudience(projectType)
-    const platformAns = (yield {
-      type: 'question',
-      question: {
-        q: '目标平台 / 受众？',
-        header: '平台/受众',
-        options: PLATFORM_AUDIENCE_OPTIONS.map((o) => ({
-          value: o.value, label: o.label, description: o.description,
-        })),
-        recommended: recPlatform,
-      },
-    }) as Answer | undefined
-    const platformAudience = pickFirst<PlatformAudience>(platformAns, recPlatform)
+    // Locked: every script-agent run targets adult cinema audiences. The
+    // canvas does not (yet) expose a platform picker, and the product
+    // direction is 院线 across the board.
+    const platformAudience: PlatformAudience = 'cinema'
 
-    // Q3: 视觉风格
-    // Skip when the canvas already carries a global visual style — the
-    // expand-script prompt receives that style verbatim via {{artStyle}},
-    // so we just lock visualStyle to 'follow-canvas-style'.
-    let visualStyle: VisualStyle
-    if (knownContext.visualStyle && knownContext.visualStyle.trim().length > 0) {
-      visualStyle = 'follow-canvas-style'
-      skippedFromContext.push(`视觉风格: 跟随画布美术 (${knownContext.visualStyle})`)
-    } else {
-      const visualStyleAns = (yield {
-        type: 'question',
-        question: {
-          q: '视觉风格？(默认跟随画布的全局美术风格)',
-          header: '视觉风格',
-          options: VISUAL_STYLE_OPTIONS,
-          recommended: 'follow-canvas-style',
-        },
-      }) as Answer | undefined
-      visualStyle = pickFirst<VisualStyle>(visualStyleAns, 'follow-canvas-style')
-    }
+    // If the canvas carries a global visual style, expand-script picks it up
+    // via {{artStyle}}; we lock visualStyle to 'follow-canvas-style' so the
+    // dossier explicitly defers to the canvas.
+    const visualStyle: VisualStyle = 'follow-canvas-style'
 
-    // Aspect ratio isn't part of the 8-question interview today, but if the
-    // canvas has one set, record it for the recap so the user sees it.
-    if (knownContext.aspectRatio) {
-      skippedFromContext.push(`画面比例: ${knownContext.aspectRatio} (沿用画布设置)`)
-    }
-
-    // Q4: 故事目标 / 核心情绪
-    const recStoryGoal = recommendStoryGoal(request.scriptText)
-    const storyGoalAns = (yield {
-      type: 'question',
-      question: {
-        q: '故事目标 / 核心情绪？(你希望观众看完后是什么状态？)',
-        header: '故事目标',
-        options: STORY_GOAL_OPTIONS,
-        recommended: recStoryGoal,
-      },
-    }) as Answer | undefined
-    const storyGoal = pickFirst<StoryGoal>(storyGoalAns, recStoryGoal)
-
-    // Q5: 角色数量
-    const recCharCount = recommendCharacterCount(request.scriptText)
-    const charCountAns = (yield {
-      type: 'question',
-      question: {
-        q: '角色数量？',
-        header: '角色数量',
-        options: CHARACTER_COUNT_OPTIONS,
-        recommended: recCharCount,
-      },
-    }) as Answer | undefined
-    const characterCount = pickFirst<CharacterCount>(charCountAns, recCharCount)
-
-    // Q6 (内容禁忌) intentionally removed per user request — the question
-    // was friction in the interview flow and rarely mattered for the kind
-    // of stories users are bringing. The downstream expand-script prompt
-    // still references {{taboos}}, so we always pass "无" and keep the
-    // schema field for backwards compat with persisted answers.
+    // Cast through the schema type so TS doesn't literal-narrow `subAgent`
+    // to 'default' and prove the sub-agent dispatch branch unreachable.
+    // When sub-agents are wired up this initializer will be replaced with
+    // the LLM-selected variant.
+    const subAgent = 'default' as ScriptSubAgent
     const taboos: Taboo[] = []
 
-    // Q7: 输入形态
-    const recInputShape = recommendInputShape(request.scriptText)
-    const inputShapeAns = (yield {
-      type: 'question',
-      question: {
-        q: '你带来的是什么形态的输入？',
-        header: '输入形态',
-        options: INPUT_SHAPE_OPTIONS,
-        recommended: recInputShape,
-      },
-    }) as Answer | undefined
-    const inputShape = ScriptInputShapeSchema.parse(pickFirst(inputShapeAns, recInputShape))
+    const totalDurationText =
+      knownContext.totalDurationSeconds && knownContext.totalDurationSeconds > 0
+        ? `${knownContext.totalDurationSeconds} 秒（最终分镜表每行时长之和必须等于此总时长）`
+        : '未指定（由项目类型推断）'
 
-    // Q8: 子工作流
-    const subAgentAns = (yield {
-      type: 'question',
-      question: {
-        q: '本轮跑哪一条剧本工作流？',
-        header: '工作流',
-        options: SUB_AGENT_OPTIONS,
-        recommended: 'default',
-      },
-    }) as Answer | undefined
-    const subAgent = ScriptSubAgentSchema.parse(pickFirst(subAgentAns, 'default'))
+    // ── 2. LLM-generated clarifying questions + semantic classification ─
+    // The interview LLM reads the whole script, so it both writes the
+    // script-specific questions AND classifies projectType / storyGoal /
+    // characterCount / inputShape (ignoring in-world words, counting only
+    // dramatic characters, judging completeness not raw length). We do NOT
+    // pre-feed the regex guesses — that would just bias the classifier back
+    // toward their mistakes.
+    yield { type: 'progress', message: 'script-agent: 让采访官读剧本、生成针对性问题并语义判定体裁/情绪目标/角色数量/输入形态' }
+
+    const askPrompt = fillTemplate(askScriptQuestionsTemplate, {
+      scriptText: request.scriptText,
+      canvasContext: request.canvasContext ?? '',
+      artStyle: ctx.project.style.get().promptText || ctx.project.style.get().presetId,
+      totalDuration: totalDurationText,
+    })
+
+    let generatedQuestions: GeneratedQuestion[] = []
+    // Filled from the classifier; left undefined so we fall back to the
+    // keyword heuristics when the call fails or returns an invalid enum.
+    let llmProjectType: ProjectType | undefined
+    let llmStoryGoal: StoryGoal | undefined
+    let llmCharacterCount: CharacterCount | undefined
+    let llmInputShape: ScriptInputShape | undefined
+    try {
+      const askResponse = await ctx.llm.complete(
+        [{ role: 'user', content: askPrompt }],
+        { system: SCRIPT_AGENT_SYSTEM, signal: ctx.abort },
+      )
+      const rawAsk = extractFirstJsonObject(askResponse)
+      const parsed = AskScriptQuestionsResponseSchema.parse(rawAsk)
+      generatedQuestions = parsed.questions
+      // Read the classifier fields loosely: a bad enum must never nuke the
+      // questions we just parsed, so we safeParse them off the raw object.
+      const rawObj = (rawAsk ?? {}) as Record<string, unknown>
+      const ptParse = ProjectTypeSchema.safeParse(rawObj.inferred_project_type)
+      if (ptParse.success) llmProjectType = ptParse.data
+      const sgParse = StoryGoalSchema.safeParse(rawObj.inferred_story_goal)
+      if (sgParse.success) llmStoryGoal = sgParse.data
+      const ccParse = CharacterCountSchema.safeParse(rawObj.inferred_character_count)
+      if (ccParse.success) llmCharacterCount = ccParse.data
+      const isParse = ScriptInputShapeSchema.safeParse(rawObj.inferred_input_shape)
+      if (isParse.success) llmInputShape = isParse.data
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err)
+      yield {
+        type: 'progress',
+        message: `script-agent: 采访官生成问题失败 (${detail})，跳过澄清直接进入扩写`,
+      }
+    }
+
+    // Reconcile the semantic classification with the known duration and the
+    // keyword fallback. Duration still bounds the length-based buckets via
+    // inferProjectTypeFromKnown (so a 120s piece never becomes a feature
+    // film), but a genuine genre call from the LLM (commercial / mv / …)
+    // wins over the regex — and the regex no longer mislabels a dystopian
+    // narrative as 广告 just because it mentions a PSA.
+    const projectType: ProjectType =
+      knownContext.totalDurationSeconds && knownContext.totalDurationSeconds > 0
+        ? inferProjectTypeFromKnown(
+            knownContext.totalDurationSeconds,
+            llmProjectType ?? recProjectType,
+          )
+        : (llmProjectType ?? fallbackProjectType)
+    const storyGoal: StoryGoal = llmStoryGoal ?? fallbackStoryGoal
+    const characterCount: CharacterCount = llmCharacterCount ?? fallbackCharacterCount
+    const inputShape: ScriptInputShape = llmInputShape ?? fallbackInputShape
+    const projectTypeSource = llmProjectType ? '语义判定' : '关键词回退'
+    const storyGoalSource = llmStoryGoal ? '语义判定' : '关键词回退'
+    const characterCountSource = llmCharacterCount ? '语义判定' : '关键词回退'
+    const inputShapeSource = llmInputShape ? '语义判定' : '长度回退'
+
+    // ── 3. Yield each generated question, collect answer ───────────
+    const clarifications: ScriptClarification[] = []
+    for (const gen of generatedQuestions) {
+      const options: QuestionOption[] = gen.options.map((o) => ({
+        value: o.value,
+        label: o.label,
+        ...(o.description ? { description: o.description } : {}),
+      }))
+      const recommended =
+        gen.recommended && options.some((o) => o.value === gen.recommended)
+          ? gen.recommended
+          : options[0]?.value ?? null
+      const question: Question = {
+        q: gen.q,
+        ...(gen.header ? { header: gen.header } : {}),
+        options,
+        recommended,
+      }
+      const ans = (yield { type: 'question', question }) as Answer | undefined
+
+      // Resolve the user's answer to a human-readable label so the
+      // expand-script prompt reads naturally.
+      const freeText = ans?.text?.trim()
+      const selected = ans?.selected[0]
+      const chosenValue = selected ?? recommended ?? options[0]?.value ?? ''
+      const chosenLabel =
+        options.find((o) => o.value === chosenValue)?.label ?? chosenValue
+      const answerText = freeText
+        ? `${chosenLabel}（用户补充：${freeText}）`
+        : chosenLabel
+      clarifications.push({ q: gen.q, answer: answerText })
+    }
 
     const answers: ScriptInterviewAnswers = {
-      projectType, platformAudience, visualStyle, storyGoal,
-      characterCount, taboos, inputShape, subAgent,
+      projectType,
+      platformAudience,
+      visualStyle,
+      storyGoal,
+      characterCount,
+      taboos,
+      inputShape,
+      subAgent,
+      clarifications,
     }
 
-    // Recap (per SKILL: "生成长稿前，要求模型复述关键设定并等待确认").
-    // The recap surfaces in chat as a system message via the chat bridge so
-    // the user can see what's locked in before the LLM call. We separate the
-    // facts auto-skipped from canvas context (so the user can spot any
-    // inferred-wrong) from the answers they typed in interview cards.
-    const recapLines: string[] = ['关键设定已锁定 (按 SKILL 八步清单):']
-    if (skippedFromContext.length > 0) {
-      recapLines.push('  · 已从画布上下文推断 (未弹问题):')
-      for (const skip of skippedFromContext) recapLines.push(`    - ${skip}`)
-      recapLines.push('  · 通过 interview 收集:')
+    // ── 4. Recap ───────────────────────────────────────────────────
+    // Surface every locked-in fact + every clarification before the LLM
+    // call, so the user can spot any inferred-wrong setting and the new
+    // script-derived Q&A is auditable.
+    const recapLines: string[] = ['关键设定已锁定:']
+    recapLines.push('  · 自动推断 (无需提问):')
+    recapLines.push(`    - 项目类型: ${labelOf(projectType, PROJECT_TYPE_LABELS)}（${projectTypeSource}）`)
+    recapLines.push(`    - 总时长: ${totalDurationText}`)
+    recapLines.push(`    - 平台/受众: ${labelOf(platformAudience, PLATFORM_AUDIENCE_LABELS)}（固定）`)
+    recapLines.push(`    - 视觉风格: ${labelOf(visualStyle, VISUAL_STYLE_LABELS)}`)
+    if (knownContext.aspectRatio) {
+      recapLines.push(`    - 画面比例: ${knownContext.aspectRatio} (沿用画布设置)`)
     }
-    recapLines.push(`    - 项目类型: ${labelOf(projectType, PROJECT_TYPE_OPTIONS)}`)
-    recapLines.push(`    - 平台/受众: ${labelOf(platformAudience, PLATFORM_AUDIENCE_OPTIONS)}`)
-    recapLines.push(`    - 视觉风格: ${labelOf(visualStyle, VISUAL_STYLE_OPTIONS)}`)
-    recapLines.push(`    - 故事目标: ${labelOf(storyGoal, STORY_GOAL_OPTIONS)}`)
-    recapLines.push(`    - 角色数量: ${labelOf(characterCount, CHARACTER_COUNT_OPTIONS)}`)
-    // 禁忌 line dropped along with the question.
-    recapLines.push(`    - 输入形态: ${labelOf(inputShape, INPUT_SHAPE_OPTIONS)}`)
-    recapLines.push(`    - 工作流: ${labelOf(subAgent, SUB_AGENT_OPTIONS)}`)
+    if (knownContext.visualStyle) {
+      recapLines.push(`    - 画布美术: ${knownContext.visualStyle}`)
+    }
+    recapLines.push(`    - 故事目标: ${labelOf(storyGoal, STORY_GOAL_LABELS)}（${storyGoalSource}）`)
+    recapLines.push(`    - 角色数量: ${labelOf(characterCount, CHARACTER_COUNT_LABELS)}（${characterCountSource}）`)
+    recapLines.push(`    - 输入形态: ${labelOf(inputShape, INPUT_SHAPE_LABELS)}（${inputShapeSource}）`)
+    recapLines.push(`    - 工作流: ${labelOf(subAgent, SUB_AGENT_LABELS)}`)
+    if (clarifications.length > 0) {
+      recapLines.push('  · 采访官针对该剧本提问的澄清:')
+      for (const c of clarifications) {
+        recapLines.push(`    - ${c.q} → ${c.answer}`)
+      }
+    } else {
+      recapLines.push('  · 采访官未提出额外澄清问题')
+    }
     yield { type: 'progress', message: recapLines.join('\n') }
 
+    // ── 5. Sub-agent dispatch or default expand-script ─────────────
     if (subAgent !== 'default') {
       const runner = deps.subAgents?.[subAgent]
       if (!runner) {
@@ -499,26 +552,22 @@ export function createScriptAgent(deps: ScriptAgentDeps = {}): AgentModule<
 
     const taboosText = taboos.length === 0
       ? '无'
-      : taboos.map((t) => labelOf(t, TABOO_OPTIONS)).join('；')
-
-    const totalDurationText =
-      request.totalDurationSeconds && request.totalDurationSeconds > 0
-        ? `${request.totalDurationSeconds} 秒（最终分镜表每行时长之和必须等于此总时长）`
-        : '未指定（由项目类型推断）'
+      : taboos.map((t) => labelOf(t, TABOO_LABELS)).join('；')
 
     const filled = fillTemplate(expandScriptTemplate, {
       scriptText: request.scriptText,
       artStyle: ctx.project.style.get().promptText || ctx.project.style.get().presetId,
       canvasContext: request.canvasContext ?? '',
       existingStoryboard: request.existingStoryboard ?? '',
-      projectType: labelOf(projectType, PROJECT_TYPE_OPTIONS),
-      platformAudience: labelOf(platformAudience, PLATFORM_AUDIENCE_OPTIONS),
-      visualStyle: labelOf(visualStyle, VISUAL_STYLE_OPTIONS),
-      storyGoal: labelOf(storyGoal, STORY_GOAL_OPTIONS),
-      characterCount: labelOf(characterCount, CHARACTER_COUNT_OPTIONS),
+      projectType: labelOf(projectType, PROJECT_TYPE_LABELS),
+      platformAudience: labelOf(platformAudience, PLATFORM_AUDIENCE_LABELS),
+      visualStyle: labelOf(visualStyle, VISUAL_STYLE_LABELS),
+      storyGoal: labelOf(storyGoal, STORY_GOAL_LABELS),
+      characterCount: labelOf(characterCount, CHARACTER_COUNT_LABELS),
       taboos: taboosText,
-      inputShape: labelOf(inputShape, INPUT_SHAPE_OPTIONS),
+      inputShape: labelOf(inputShape, INPUT_SHAPE_LABELS),
       totalDuration: totalDurationText,
+      scriptClarifications: formatClarificationsBlock(clarifications),
     })
 
     const llmResponse = await ctx.llm.complete(
@@ -545,4 +594,9 @@ export function createScriptAgent(deps: ScriptAgentDeps = {}): AgentModule<
 
 export const scriptAgent = createScriptAgent()
 
-export type { ScriptDossier, ScriptRequest, ScriptInterviewAnswers } from './schema'
+export type {
+  ScriptClarification,
+  ScriptDossier,
+  ScriptRequest,
+  ScriptInterviewAnswers,
+} from './schema'

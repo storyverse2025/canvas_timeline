@@ -2,12 +2,23 @@
 id: critique-timeline
 inputs:
   storyboardJson: string
+  artStyle: string
+  characterNames: string
+  targetRowCount: number
+  totalDurationSeconds: number
 output: TimelineIssue[] (JSON array, [] when clean)
 ---
 
-director-agent / critique-timeline
+director-agent / critique-timeline ─ 导演助手生成前自检
 
-你是连续性审查员。检查以下分镜表的时间轴和空间逻辑：
+你是导演助手生成前自检的连续性审查员，本任务是在最终分镜表交付之前找出会拖死整段视频的问题。
+
+【锁定的视觉与人物坐标】
+- 总时长 = {{totalDurationSeconds}} 秒，合理镜头/row 数 ≈ {{targetRowCount}}（基于每行 2-15s 的硬约束推得；显著偏离这个数值就要在 issues 中明确指出）。
+- 视觉风格锁定：{{artStyle}}。任何镜头如果在 visual_description / storyboard_prompts 中漂离这个风格（例如冒出 photoreal documentary still、anime sketch 这种与项目风格冲突的描述），都要点出。
+- 主要角色：{{characterNames}}。出现这些名字之外的"陌生人 / 路人 / blonde stranger"且承载主线戏份，要在 issues 中要求换回正确的主角。
+
+检查以下分镜表的时间轴和空间逻辑：
 - 时间是否连贯（白天→夜晚是否合理？）
 - 空间是否一致（角色不能瞬移）
 - 因果关系是否成立
