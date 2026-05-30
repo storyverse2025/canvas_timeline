@@ -58,7 +58,7 @@ describe('allocateShots', () => {
     const ctx = createMemoryContext({ llm })
     const out = await driveAuto(
       allocateShots(
-        { scriptAnalysis: 'SCRIPT', visualStrategy: 'STRAT', totalDurationSeconds: 45 },
+        { scriptAnalysis: 'SCRIPT', visualStrategy: 'STRAT', totalDurationSeconds: 45, revisedScript: 'REV' },
         ctx,
       ),
     )

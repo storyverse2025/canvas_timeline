@@ -132,5 +132,11 @@ output: ScriptDossier (JSON only)
 - 必须遵守内容禁忌：{{taboos}}。如有冲突，在 main_risk 中说明并给出兼容方案。
 - 必须严格采纳"用户对该剧本的关键澄清"中所有 Q/A，相关字段（logline、casting_cards、scene_cards、storyboard_directives 等）必须与用户的选择保持一致，不要按你自己的偏好覆盖用户的回答。
 - `post_doctor_revised_script.script_text` 必须是把 `doctor_roundtable_summary.must_fix` 全部应用后的版本：保留 `keep` 的亮点不动，针对每条 `must_fix` 给出实际改写，而不是改写计划。每条 `must_fix` 在 `revision_notes` 里有一条对应说明。下游 (storyboard / casting / keyframe) 只读 `post_doctor_revised_script.script_text`，不再读 `expanded_script_baseline.script_text`，所以这一版必须是完整可用的剧本。
+- **【最高优先级 / 反摘要硬约束】** `post_doctor_revised_script.script_text` 必须是用户原 `{{scriptText}}` 的「外科手术修订版」，不是改写、不是摘要、不是浓缩：
+  - **逐条保留**用户剧本里的所有场景标题（"场景 1 / Scene 1 / EXT. / INT. / 第一幕 / ACT I"）、镜头标记（"镜头 A/B/C"、"SERIES OF SHOTS"、"RAPID CUTS"、"FLASH IMAGES"、"SHOT N"、"CLOSEUP / WIDE / MEDIUM"）、特定运镜描述（"摄像机拉远"、"推进"、"横摇"、"跟拍"、"慢动作"、"闪回"）、视觉细节（角色服装颜色、关键道具、光影氛围描述）。文字可以微调但**信息密度只能增加、不能减少**。
+  - **严格禁止**把用户原剧本压缩成"【0-20s】... 【20-40s】..."这种时间码摘要、或者按时长切的高层概述。时间分配是 director-agent 的工作，不是 script-agent 的工作。
+  - **长度硬约束**：`post_doctor_revised_script.script_text` 的字符数 ≥ 用户原 scriptText 字符数 × 0.7。如果低于这个门槛，整张表无效。如果必须裁剪某段，必须在 `revision_notes` 里点名说明依据（"重复内容"、"违反 must_fix"、"内容禁忌"），且这种砍除应极少见。
+  - doctor 的 must_fix 修订是**手术式**：定点改写有问题的句段，保留其余原文不动。不是借机重写整个剧本。
+  - 如果 `{{inputShape}} == complete-draft`，更要**最大化保留原文**，本字段几乎就是用户原文按 must_fix 做的微调版。
 - 视觉相关字段（appearance_for_image, visual_requirements）必须与 {{visualStyle}} 保持一致。
 - 只输出 JSON。

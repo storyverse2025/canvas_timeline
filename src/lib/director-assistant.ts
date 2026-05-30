@@ -349,7 +349,7 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   const shotAllocation = await runAgentWithChatBridge(
     'director-agent',
     directorAllocateShots(
-      { scriptAnalysis, visualStrategy, totalDurationSeconds },
+      { scriptAnalysis, visualStrategy, totalDurationSeconds, revisedScript },
       agentCtx,
     ),
     { verb: 'allocate-shots' },
@@ -360,7 +360,7 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   setStep(state, 0, 10, 'running'); onUpdate(state)
   const shotComposition = await runAgentWithChatBridge(
     'director-agent',
-    directorComposeShots({ shotAllocation, visualAnchor }, agentCtx),
+    directorComposeShots({ shotAllocation, visualAnchor, revisedScript }, agentCtx),
     { verb: 'compose-shots' },
   )
   setStep(state, 0, 10, 'done', shotComposition); onUpdate(state)
