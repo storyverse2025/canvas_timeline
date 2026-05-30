@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useTimelineStore } from '@/stores/timeline-store'
 import { formatTime } from '@/lib/time-utils'
+import { TimelineExportButton } from './TimelineExportButton'
 
 export function TimelineControls() {
   const isPlaying = useTimelineStore((s) => s.isPlaying)
@@ -106,6 +107,10 @@ export function TimelineControls() {
           </TooltipTrigger>
           <TooltipContent>Zoom In</TooltipContent>
         </Tooltip>
+
+        <div className="w-px h-4 bg-border mx-1" />
+
+        <TimelineExportButton />
       </div>
     </TooltipProvider>
   )
