@@ -215,3 +215,93 @@ export interface SearchAndRewriteResult {
    *  which shots need user attention. */
   results: SearchAndRewriteNodeResult[]
 }
+
+// ─── proposeBridgeRow ─────────────────────────────────────────────
+//
+// Look at two adjacent storyboard rows and decide whether a bridging row
+// should be inserted between them to repair a jarring cut. The verb does
+// NOT generate keyframes or videos — it only proposes the row's text
+// content + element slots. The user clicks ✨ later.
+
+/**
+ * Minimum shape the bridge-row proposal carries back. Mirrors the
+ * required-ish columns of a storyboard row; anything missing falls back
+ * to sensible defaults during insertion. Aligned with
+ * src/types/storyboard.ts so the orchestrator can pass it straight to
+ * insertRowAfter() without lossy mapping.
+ *
+ * Element slot suggestions (character1Name, scene_suggestion, …) are kept
+ * separate from the actual ElementSlot shape because the agent only sees
+ * names — the orchestrator resolves those to image URLs + nodeIds against
+ * the asset store before insertion.
+ */
+export const BridgeRowProposalSchema = z.object({
+  shot_number: z.string().default(''),
+  duration: z.number().min(2).max(6).default(3),
+  visual_description: z.string().default(''),
+  shot_size: z.string().default(''),
+  character_actions: z.string().default(''),
+  emotion_mood: z.string().default(''),
+  emotion_atmosphere: z.string().default(''),
+  lighting_atmosphere: z.string().default(''),
+  storyboard_prompts: z.string().default(''),
+  motion_prompts: z.string().default(''),
+  sound_effects: z.string().default(''),
+  dialogue: z.string().default(''),
+  visual_anchor: z.string().default(''),
+  /** Names the agent picked for the bridge — orchestrator resolves to slot URLs. */
+  character1_name: z.string().default(''),
+  character2_name: z.string().default(''),
+  scene_name: z.string().default(''),
+  prop1_name: z.string().default(''),
+  prop2_name: z.string().default(''),
+})
+export type BridgeRowProposal = z.infer<typeof BridgeRowProposalSchema>
+
+export const BridgeJudgeSchema = z.object({
+  needed: z.boolean(),
+  /** Free-form reason rendered in the toast / chat log. */
+  reason: z.string().default(''),
+  /** Populated only when needed===true. */
+  bridge: BridgeRowProposalSchema.optional(),
+})
+export type BridgeJudge = z.infer<typeof BridgeJudgeSchema>
+
+/** Inputs the verb needs to make a single judgement on one (prev, next) pair. */
+export interface ProposeBridgeRowRequest {
+  /** Required text context for the previous row. */
+  prevRow: KeyframeRow & {
+    shot_number?: string
+    duration?: number
+    character_actions?: string
+    dialogue?: string
+    character1_name?: string
+    character2_name?: string
+    scene_name?: string
+  }
+  /** Required text context for the next row. */
+  nextRow: KeyframeRow & {
+    shot_number?: string
+    duration?: number
+    character_actions?: string
+    dialogue?: string
+    character1_name?: string
+    character2_name?: string
+    scene_name?: string
+  }
+  /**
+   * Image URL of the last visible frame of the prev clip — prefer the
+   * actual last frame extracted from prev.beatVideoUrl, fall back to
+   * prev.keyframeUrl, omit entirely when neither exists.
+   */
+  prevLastFrameUrl?: string
+  /** Same idea, but the first frame of the next clip. */
+  nextFirstFrameUrl?: string
+  /** Project metadata kept short for the prompt header. */
+  projectType?: string
+  projectTone?: string
+  /** Names of all known characters / scenes / props so the agent picks valid slot fillers. */
+  knownCharacterNames?: string[]
+  knownSceneNames?: string[]
+  knownPropNames?: string[]
+}

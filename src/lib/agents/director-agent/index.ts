@@ -35,16 +35,20 @@ import applyTimelineFixesSource from './prompts/apply-timeline-fixes.md?raw'
 import rewritePromptSource from './prompts/rewrite-prompt.md?raw'
 
 import {
+  BridgeJudgeSchema,
   TimelineIssueSchema,
   VideoConsistencyIssueSchema,
   type AllocateShotsRequest,
   type ApplyTimelineFixesRequest,
+  type BridgeJudge,
+  type BridgeRowProposal,
   type ComposeShotsRequest,
   type CritiqueTimelineRequest,
   type CritiqueVideoConsistencyRequest,
   type GenerateKeyframeRequest,
   type GenerateStoryboardTableRequest,
   type KeyframeResult,
+  type ProposeBridgeRowRequest,
   type SearchAndRewriteNodeResult,
   type SearchAndRewriteRequest,
   type SearchAndRewriteResult,
@@ -91,6 +95,25 @@ function extractFirstJsonArray(text: string): unknown[] {
     }
   }
   return []
+}
+
+function extractFirstJsonObject(text: string): Record<string, unknown> | null {
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)
+  const candidates = [fence?.[1], text].filter((c): c is string => typeof c === 'string')
+  for (const c of candidates) {
+    const start = c.indexOf('{')
+    const end = c.lastIndexOf('}')
+    if (start < 0 || end < 0 || end <= start) continue
+    try {
+      const parsed = JSON.parse(c.slice(start, end + 1))
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>
+      }
+    } catch {
+      // try next
+    }
+  }
+  return null
 }
 
 // ─── Verb: allocateShots ───────────────────────────────────────────
@@ -704,6 +727,138 @@ export async function* searchAndRewrite(
   yield { type: 'result', payload: { matchCount: matches.length, results } }
 }
 
+// ─── Verb: proposeBridgeRow ────────────────────────────────────────
+//
+// Look at one adjacent pair (prev, next) and decide if a bridging row
+// would make the cut feel less jarring. Returns the row's METADATA only —
+// no keyframe / no video. The orchestrator (storyboard-bridge.ts) drives
+// this verb across every adjacent pair in the table and inserts proposals
+// via storyboard-store.insertRowAfter.
+//
+// Image inputs are passed through 'bridge-row-judge' capability so the
+// vision model sees prev-last-frame + next-first-frame side by side. Frames
+// are optional: when neither exists for a pair, the verb degrades to a
+// text-only judgement (still useful — the row text already describes what
+// the frame should show).
+
+export function buildBridgePromptText(req: ProposeBridgeRowRequest): string {
+  const r1 = req.prevRow
+  const r2 = req.nextRow
+  const fmtRow = (r: ProposeBridgeRowRequest['prevRow'], tag: string) => [
+    `### ${tag}（${r.shot_number ?? '?'}, ${r.duration ?? '?'}s）`,
+    r.visual_description ? `画面：${r.visual_description}` : '',
+    r.character_actions ? `角色动作：${r.character_actions}` : '',
+    r.character1_name ? `角色1：${r.character1_name}` : '',
+    r.character2_name ? `角色2：${r.character2_name}` : '',
+    r.scene_name ? `场景：${r.scene_name}` : '',
+    r.shot_size ? `景别：${r.shot_size}` : '',
+    r.emotion_mood ? `情绪：${r.emotion_mood}` : '',
+    r.lighting_atmosphere ? `光影：${r.lighting_atmosphere}` : '',
+    r.dialogue ? `对白：${r.dialogue}` : '',
+  ].filter(Boolean).join('\n')
+
+  const knownLines: string[] = []
+  if (req.knownCharacterNames?.length) knownLines.push(`已存在角色：${req.knownCharacterNames.join(' / ')}`)
+  if (req.knownSceneNames?.length) knownLines.push(`已存在场景：${req.knownSceneNames.join(' / ')}`)
+  if (req.knownPropNames?.length) knownLines.push(`已存在道具：${req.knownPropNames.join(' / ')}`)
+
+  const imageLegend: string[] = []
+  if (req.prevLastFrameUrl) imageLegend.push('image1 = 前一镜的最后一帧（视觉真实）')
+  if (req.nextFirstFrameUrl) imageLegend.push(`image${req.prevLastFrameUrl ? 2 : 1} = 后一镜的第一帧（视觉真实）`)
+
+  return [
+    '# 任务：判断这两镜之间是否需要插入一个桥接分镜',
+    '',
+    req.projectType ? `项目类型：${req.projectType}` : '',
+    req.projectTone ? `项目情绪：${req.projectTone}` : '',
+    '',
+    fmtRow(r1, 'PREV（前一镜）'),
+    '',
+    fmtRow(r2, 'NEXT（后一镜）'),
+    '',
+    knownLines.length ? '## 可复用资产' : '',
+    ...knownLines,
+    '',
+    imageLegend.length ? '## 提供的画面' : '',
+    ...imageLegend,
+    '',
+    '## 输出（严格 JSON，无 markdown 围栏）',
+    '{',
+    '  "needed": true/false,            // 仅当观感确有割裂时为 true',
+    '  "reason": "…一句话理由，方便日志展示…",',
+    '  "bridge": {                       // needed === true 才输出该字段，否则省略',
+    '    "shot_number": "…例如 S3.5 / 介于前后镜号之间的临时编号…",',
+    '    "duration": 2-6,               // 桥接镜头时长（秒），范围 [2, 6]',
+    '    "visual_description": "…只描述过渡那一点信息，不要重复前后镜已经发生的内容…",',
+    '    "shot_size": "…景别…",',
+    '    "character_actions": "…",',
+    '    "emotion_mood": "…",',
+    '    "emotion_atmosphere": "…",',
+    '    "lighting_atmosphere": "…",',
+    '    "storyboard_prompts": "…用于后续生成 keyframe 的视觉描述…",',
+    '    "motion_prompts": "…用于后续生成视频的运动描述…",',
+    '    "sound_effects": "…",',
+    '    "dialogue": "",',
+    '    "visual_anchor": "…与前后镜对齐的视觉锚点…",',
+    '    "character1_name": "…必须从【可复用资产】里挑名字，没有则留空…",',
+    '    "character2_name": "",',
+    '    "scene_name": "…必须从【可复用资产】里挑名字，没有合适的则留空…",',
+    '    "prop1_name": "",',
+    '    "prop2_name": ""',
+    '  }',
+    '}',
+    '',
+    '判断要点：',
+    '- 空间是否突变（前后镜不在同一个地方且没有合理跳跃）→ 需要',
+    '- 角色位置/朝向瞬移、动作链断裂、关键道具凭空出现/消失 → 需要',
+    '- 情绪节奏跳脱：前镜激烈、后镜静态、且没有任何过渡 → 需要',
+    '- 两镜本来就是 hard cut / 蒙太奇 / 合理的时间跳跃 → 不需要',
+    '- 若 needed = false，bridge 字段必须省略；不要返回空对象。',
+  ].filter((line) => line !== '').join('\n')
+}
+
+export async function* proposeBridgeRow(
+  req: ProposeBridgeRowRequest,
+  ctx: ProjectContext,
+): AgentGenerator<BridgeJudge> {
+  yield {
+    type: 'progress',
+    message: `director: judging bridge between ${req.prevRow.shot_number ?? '?'} → ${req.nextRow.shot_number ?? '?'}`,
+  }
+  const text = buildBridgePromptText(req)
+  const images = [req.prevLastFrameUrl, req.nextFirstFrameUrl].filter(
+    (u): u is string => typeof u === 'string' && u.length > 0,
+  )
+  const r = await runCapability({
+    capability: 'bridge-row-judge',
+    inputs: [
+      { kind: 'text', text },
+      ...images.map((url) => ({ kind: 'image' as const, url })),
+    ],
+  })
+  void ctx
+  const raw = r.outputs[0]?.text ?? ''
+  const obj = extractFirstJsonObject(raw)
+  if (!obj) {
+    yield { type: 'result', payload: { needed: false, reason: 'judge: 无法解析模型输出' } }
+    return
+  }
+  // bridge can come back as null / undefined / partial — Zod softly defaults
+  // missing string fields. If the model said needed=true but produced no
+  // bridge object, treat it as a non-actionable refusal.
+  const parsed = BridgeJudgeSchema.safeParse(obj)
+  if (!parsed.success) {
+    yield { type: 'result', payload: { needed: false, reason: `judge: schema 校验失败 — ${parsed.error.issues[0]?.message ?? '?'}` } }
+    return
+  }
+  const j = parsed.data
+  if (j.needed && !j.bridge) {
+    yield { type: 'result', payload: { needed: false, reason: j.reason || 'judge: needed=true 但未给出 bridge 字段' } }
+    return
+  }
+  yield { type: 'result', payload: j }
+}
+
 /**
  * Strip markdown code fences and conversational lead-ins ("Here is the
  * rewritten prompt:") that small LLMs sometimes add despite the prompt
@@ -723,7 +878,7 @@ function stripFencesAndLabels(text: string): string {
 export const directorAgent = {
   meta: {
     name: 'director-agent',
-    description: 'All storyboard logic + keyframe + video consistency critique',
+    description: 'All storyboard logic + keyframe + video consistency critique + bridge-row proposals',
     model: 'claude-sonnet-4-5',
   },
   systemPrompt: SYSTEM,
@@ -735,6 +890,7 @@ export const directorAgent = {
   generateKeyframe,
   critiqueVideoConsistency,
   searchAndRewrite,
+  proposeBridgeRow,
 } as const
 
 export type {
@@ -756,4 +912,7 @@ export type {
   SearchAndRewriteRequest,
   SearchAndRewriteResult,
   SearchAndRewriteNodeResult,
+  ProposeBridgeRowRequest,
+  BridgeJudge,
+  BridgeRowProposal,
 } from './schema'

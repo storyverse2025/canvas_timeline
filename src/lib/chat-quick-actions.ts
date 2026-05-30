@@ -29,7 +29,9 @@ import {
   findRowsWithBothKeyframeAndVideo,
   summarizeGaps,
 } from '@/lib/gap-finder'
+import { runBridgePipeline } from '@/lib/storyboard-bridge'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
+import { useStoryboardStore } from '@/stores/storyboard-store'
 import { styleFragmentFor } from '@/lib/style-library'
 import { useProjectDB } from '@/stores/project-db'
 import type { StoryboardRow } from '@/types/storyboard'
@@ -121,23 +123,49 @@ export async function quickGenerateMissingKeyframes(
   }
 }
 
-// ─── 3. 添加缺失的分镜行 (stub for this PR) ────────────────────
-
-/**
- * Detecting "missing rows" needs LLM intelligence (diff the script's
- * beat list against the existing storyboard, propose new rows). That's
- * a real director-agent verb that doesn't exist yet. For now this just
- * surfaces a chat message routing the user back to 导演助手 for a
- * full re-run. Wiring point stays so we can swap in the real verb
- * without touching ChatPanel.
- */
+// ─── 3. 添加缺失的分镜行 ──────────────────────────────────────
+//
+// Walks every adjacent storyboard row pair, asks director-agent to look
+// at the prev clip's last frame + next clip's first frame (falling back
+// to keyframe images when a video isn't generated yet), and inserts a
+// bridging row whenever the cut would feel jarring. Keyframe + beat
+// video are intentionally left empty on the new row — the user clicks
+// ✨ in the storyboard table to actually generate them.
 export async function quickAddMissingStoryboardRows(deps: QuickActionDeps): Promise<void> {
-  const totalRows = summarizeGaps().rowsMissingKeyframe.length +
-    summarizeGaps().rowsMissingBeatVideo.length
-  deps.log(
-    `「添加缺失的分镜行」当前还是占位 (director-agent.allocateMissingShots 未实现)。` +
-      `现有 ${totalRows} 行待补 keyframe/视频；要新增行请重跑 导演助手 (会从 script 重排)。`,
-  )
+  const rowCount = useStoryboardStore.getState().rows.length
+  if (rowCount < 2) {
+    deps.log('分镜表少于 2 行，没有相邻对可以扫描 — 先用导演助手生成基础分镜')
+    return
+  }
+
+  deps.log(`正在扫描 ${rowCount - 1} 对相邻分镜，看哪里需要补桥接行…`)
+  try {
+    const result = await runBridgePipeline((p) => {
+      const verdict = p.judge.needed ? '✓ 补行' : '✗ 跳过'
+      const kfNote = p.inserted?.keyframeUrl
+        ? ' · KF ✓'
+        : p.inserted?.keyframeError
+          ? ` · KF ✗ (${p.inserted.keyframeError.slice(0, 40)})`
+          : ''
+      deps.log(
+        `[${p.pairIndex + 1}/${p.totalPairs}] ${p.prevShot} → ${p.nextShot} · ${verdict}${kfNote}` +
+          (p.judge.reason ? ` (${p.judge.reason.slice(0, 80)})` : ''),
+      )
+    })
+    if (result.inserted.length === 0) {
+      deps.log(`✓ 扫了 ${result.pairsExamined} 对，没有需要桥接的位置`)
+    } else {
+      const withKf = result.inserted.filter((i) => i.keyframeUrl).length
+      const failedKf = result.inserted.length - withKf
+      deps.log(
+        `✓ 已插入 ${result.inserted.length} 个桥接分镜（KF 成功 ${withKf}` +
+          (failedKf ? `、失败 ${failedKf}（点表格 ✨ 重试）` : '') +
+          `，共扫描 ${result.pairsExamined} 对）。视频留给你在表格里点 ✨ 触发。`,
+      )
+    }
+  } catch (e) {
+    deps.log(`✗ 补行失败 — ${(e as Error).message}`)
+  }
 }
 
 // ─── 4. 生成缺失视频 ───────────────────────────────────────────

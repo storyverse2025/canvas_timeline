@@ -122,6 +122,34 @@ async function apimartChat(systemPrompt: string, userText: string, imageUrl?: st
   return text
 }
 
+/**
+ * Parse an OpenAI-compatible /chat/completions response that may be either
+ * a single JSON envelope or an SSE stream (`data: {chunk}\n\n…data: [DONE]`).
+ *
+ * Apimart sometimes returns SSE without `stream:true` being requested;
+ * sniffing the body and accumulating `delta.content` keeps callers working
+ * regardless of which format comes back.
+ */
+function parseOpenAIChatResponse(raw: string): string {
+  const trimmed = raw.trimStart()
+  if (!trimmed.startsWith('data:')) {
+    const data = JSON.parse(raw) as { choices?: Array<{ message?: { content?: string } }> }
+    return data.choices?.[0]?.message?.content ?? ''
+  }
+  let out = ''
+  for (const line of raw.split('\n')) {
+    if (!line.startsWith('data:')) continue
+    const payload = line.slice(5).trim()
+    if (!payload || payload === '[DONE]') continue
+    let event: { choices?: Array<{ delta?: { content?: string }; message?: { content?: string } }> }
+    try { event = JSON.parse(payload) } catch { continue }
+    const choice = event.choices?.[0]
+    const piece = choice?.delta?.content ?? choice?.message?.content
+    if (piece) out += piece
+  }
+  return out
+}
+
 async function geminiText(systemPrompt: string, userText: string): Promise<string> {
   return apimartChat(systemPrompt, userText, undefined, 0.7)
 }
@@ -249,6 +277,137 @@ async function storyboardQC(req: CapReq): Promise<CapRes> {
     results.push(`【第${i + 1}帧】\n${r}`)
   }
   return { outputs: [{ kind: 'text', text: results.join('\n\n---\n\n') }] }
+}
+
+/**
+ * Make an image URL safe to pass to Apimart's chat/completions image_url
+ * field. Apimart fetches the URL server-side; that fetch fails for two
+ * common reasons:
+ *
+ *   1. URLs pointing back at our own dev server (`/uploads/...`,
+ *      `http://localhost:8080/...`, `http://35.x.x.x/uploads/...`) are
+ *      unreachable from Apimart's network — comes back as
+ *      `error getting file base64 from url: failed to download file,
+ *      status code: 404`.
+ *   2. Signed remote URLs (BytePlus TOS, Apimart's own gpt-image-2
+ *      outputs) expire ~24h after issue. Storyboard rows persist for
+ *      days/weeks across sessions, so by the time the user clicks 补全
+ *      缺失分镜 most keyframeUrls are dead links.
+ *
+ * Solution: download every URL server-side ourselves and inline as
+ * data: URI. Our node fetch has no CORS issues, can hit most hosts, and
+ * if the URL is dead we KNOW it (404 / timeout) so we can drop just
+ * that one image rather than the whole judgement call. Apimart receives
+ * raw bytes, never has to fetch anything.
+ *
+ * Returns the safe URL on success, undefined on failure.
+ */
+const APIMART_IMAGE_FETCH_TIMEOUT_MS = 10_000
+
+async function urlToApimartImage(url: string): Promise<string | undefined> {
+  if (!url) return undefined
+  if (url.startsWith('data:')) return url
+
+  // Local: read off disk (skips both the local network round-trip and
+  // any nginx 403 on server-to-server /uploads/ requests).
+  const local = maybeLocalPathFor(url)
+  if (local) {
+    try {
+      const { buf, mime } = await readLocalRefBuffer(local)
+      return `data:${mime};base64,${buf.toString('base64')}`
+    } catch (e) {
+      console.warn(`[urlToApimartImage] local read failed for ${local}: ${(e as Error).message}`)
+      return undefined
+    }
+  }
+
+  // Remote: fetch ourselves, inline as data URI. Apimart sees bytes,
+  // not a URL — sidesteps both signed-URL expiry and reachability.
+  try {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), APIMART_IMAGE_FETCH_TIMEOUT_MS)
+    const res = await fetch(url, { signal: ctrl.signal })
+    clearTimeout(timer)
+    if (!res.ok) {
+      console.warn(`[urlToApimartImage] remote fetch ${res.status} for ${url.slice(0, 100)}`)
+      return undefined
+    }
+    const mime = (res.headers.get('content-type') || 'image/jpeg').split(';')[0]!.trim()
+    if (!mime.startsWith('image/')) {
+      console.warn(`[urlToApimartImage] remote URL returned non-image content-type ${mime} for ${url.slice(0, 100)}`)
+      return undefined
+    }
+    const ab = await res.arrayBuffer()
+    return `data:${mime};base64,${Buffer.from(ab).toString('base64')}`
+  } catch (e) {
+    const why = (e as Error).name === 'AbortError'
+      ? `timeout after ${APIMART_IMAGE_FETCH_TIMEOUT_MS}ms`
+      : (e as Error).message
+    console.warn(`[urlToApimartImage] remote fetch failed (${why}) for ${url.slice(0, 100)}`)
+    return undefined
+  }
+}
+
+/**
+ * bridge-row-judge: see two adjacent storyboard rows + their prev-last /
+ * next-first frames, decide if a bridging row is needed, and (when yes)
+ * return the proposed row's text fields.
+ *
+ * The director-agent client builds the full Chinese judgement prompt — we
+ * just forward it verbatim as the user message and attach 0-2 image_url
+ * parts. The model's raw text comes back unchanged so the client's
+ * BridgeJudgeSchema can parse it.
+ *
+ * Multi-image is required (prev-last + next-first), which the single-image
+ * geminiVision helper doesn't cover — so we inline a small OpenAI-format
+ * multi-image chat call here rather than over-generalize that helper.
+ *
+ * Image inputs that can't be resolved (local file gone, remote 404) are
+ * dropped from the request rather than failing the call. The judgement
+ * verb degrades gracefully to text-only — the row text already describes
+ * the frames, so a missing image just means the model can't sanity-check
+ * the description against pixels.
+ */
+async function bridgeRowJudge(req: CapReq): Promise<CapRes> {
+  const text = getText(req.inputs)
+  const images = getImages(req.inputs)
+  if (!text) throw new Error('bridge-row-judge: empty text input — client must send the built prompt')
+
+  const key = process.env.APIMART_API_KEY
+  if (!key) throw new Error('APIMART_API_KEY not set')
+  const baseUrl = (process.env.APIMART_BASE_URL || APIMART_BASE_URL).replace(/\/$/, '')
+
+  const userContent: Array<Record<string, unknown>> = [{ type: 'text', text }]
+  let droppedCount = 0
+  for (const url of images) {
+    const safe = await urlToApimartImage(url)
+    if (safe) {
+      userContent.push({ type: 'image_url', image_url: { url: safe } })
+    } else {
+      droppedCount++
+    }
+  }
+  if (droppedCount > 0) {
+    console.warn(`[bridge-row-judge] dropped ${droppedCount}/${images.length} unresolvable image(s); falling back to text-only judgement for this pair`)
+  }
+
+  const res = await fetch(`${baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: process.env.APIMART_TEXT_MODEL || APIMART_TEXT_MODEL,
+      messages: [
+        { role: 'system', content: '你是分镜导演。严格按用户给出的 JSON 格式输出，不要加 markdown 围栏，不要多余的解释。' },
+        { role: 'user', content: userContent },
+      ],
+      temperature: 0.4,
+    }),
+  })
+  const raw = await res.text()
+  if (!res.ok) throw new Error(`bridge-row-judge: Apimart ${res.status}: ${raw.slice(0, 500)}`)
+  const out = parseOpenAIChatResponse(raw).trim()
+  if (!out) throw new Error('bridge-row-judge: empty response from Apimart')
+  return { outputs: [{ kind: 'text', text: out }] }
 }
 
 // ─── Image capabilities ─────────────────────────────────────────────
@@ -1573,6 +1732,7 @@ const handlers: Record<string, (req: CapReq) => Promise<CapRes>> = {
   'shot-extraction': shotExtraction,
   'consistency-check': consistencyCheck,
   'storyboard-qc': storyboardQC,
+  'bridge-row-judge': bridgeRowJudge,
   'text-to-image': textToImage,
   'batch-image': batchImage,
   'smart-edit': smartEdit,
