@@ -115,9 +115,14 @@ async function apimartChat(systemPrompt: string, userText: string, imageUrl?: st
       ...(temperature != null ? { temperature } : {}),
     }),
   })
-  if (!res.ok) throw new Error(`Apimart chat ${res.status}: ${await res.text()}`)
-  const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
-  const text = data.choices?.[0]?.message?.content?.trim()
+  const raw = await res.text()
+  if (!res.ok) throw new Error(`Apimart chat ${res.status}: ${raw.slice(0, 500)}`)
+  // Apimart's gemini-3-flash-preview route started returning SSE without
+  // `stream: true` being requested (observed 2026-05-30 across element-
+  // extraction / script-rewrite / consistency-check / etc.). parseOpenAIChatResponse
+  // sniffs the body and accumulates `delta.content` so callers work
+  // regardless of which format comes back.
+  const text = parseOpenAIChatResponse(raw).trim()
   if (!text) throw new Error('Apimart: empty response')
   return text
 }
