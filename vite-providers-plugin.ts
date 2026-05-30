@@ -122,6 +122,24 @@ function bytePlusBaseUrl(): string {
   return raw.replace(/\/+$/, '')
 }
 
+/**
+ * Map the universal Seedance model id passed by the UI to the account-specific
+ * endpoint id BytePlus海外 requires for video task creation. Mirror of the
+ * resolver in vite-capabilities-plugin.ts — kept duplicated to avoid coupling
+ * the two Vite plugin files (they run as independent middleware modules).
+ */
+function resolveSeedanceModel(model: string): string {
+  if (/^ep-/.test(model)) return model
+  const envSlug = `SEEDANCE_ENDPOINT_${model.replace(/[^a-z0-9]/gi, '_').toUpperCase()}`
+  const perModelEnv = process.env[envSlug]
+  if (perModelEnv) return perModelEnv
+  const table: Record<string, string> = {
+    'dreamina-seedance-2-0-fast-260128': 'ep-20260423151341-p2zm9',
+  }
+  if (table[model]) return table[model]!
+  return process.env.SEEDANCE_ENDPOINT || process.env.ARK_SEEDANCE_ENDPOINT || model
+}
+
 async function runBytePlusImage(req: Req): Promise<{ url: string; kind: 'image' }> {
   const key = bytePlusApiKey()
   // Seedream 5.0+ requires ≥ 3,686,400 pixels (2K). Older models accept 1K.
@@ -181,7 +199,7 @@ async function runBytePlusVideo(req: Req): Promise<{ url: string; kind: 'video' 
   }
 
   const body: Record<string, unknown> = {
-    model: req.model,
+    model: resolveSeedanceModel(req.model),
     content: contentParts,
     resolution: req.resolution ?? '480p',
     ratio: req.aspect ?? '16:9',
