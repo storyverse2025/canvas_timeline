@@ -45,9 +45,12 @@ const TPL = {
 // retained as a stable internal identifier so persisted IndexedDB state from
 // older builds still resolves; all calls hit ark.ap-southeast.bytepluses.com.
 export const SHOOT_PROVIDER = 'doubao'
-// Default to the Dreamina Seedance 2.0 Fast endpoint — what BytePlus海外
-// actually resolves the doubao-seedance-2-0-* aliases to.
-export const SHOOT_MODEL = 'dreamina-seedance-2-0-fast-260128'
+// Default to Dreamina Seedance 2.0 (full) — matches projectDB.artDirection
+// default. The 'Fast' variant caps at 720p / 12s and trades quality for
+// throughput; full opens 1080p + 15s and matches the look user pinned in
+// art direction. Operators that explicitly want Fast pass the Fast id via
+// runShootBeatVideos's `model` param.
+export const SHOOT_MODEL = 'dreamina-seedance-2-0-260128'
 export const SHOOT_RESOLUTION_DEFAULT: '480p' | '720p' | '1080p' = '480p'
 const MIN_DURATION = 5
 const MAX_DURATION = 15

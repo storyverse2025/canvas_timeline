@@ -33,10 +33,10 @@ describe('generation API routing', () => {
     expect(code).toContain('ark.ap-southeast.bytepluses.com')
     expect(code).toContain('/contents/generations/tasks')
     expect(code).not.toContain('ark.cn-beijing.volces.com')
-    // Default model is the BytePlus Dreamina Seedance 2.0 Fast id; an
-    // operator can override via SEEDANCE_MODEL (e.g. an account-specific
-    // endpoint id like `ep-...`).
-    expect(code).toContain('dreamina-seedance-2-0-fast-260128')
+    // Default model is the BytePlus Dreamina Seedance 2.0 id (non-Fast,
+    // matching projectDB); an operator can override via SEEDANCE_MODEL
+    // (e.g. an account-specific endpoint id like `ep-...`).
+    expect(code).toContain('dreamina-seedance-2-0-260128')
     expect(code).toContain('SEEDANCE_MODEL')
     expect(code).toContain('submitSeedanceTask')
   })

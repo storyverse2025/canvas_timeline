@@ -265,7 +265,7 @@ const DEFAULT_ART_DIRECTION: ArtDirection = {
   stylePreset: 'anime_psych_thriller_motion_comic',
   customStyle: '',
   defaultImageModel: 'openai/gpt-5.4-image-2',
-  defaultVideoModel: 'dreamina-seedance-2-0-fast-260128',
+  defaultVideoModel: 'dreamina-seedance-2-0-260128',
   defaultAspectRatio: '16:9',
   updatedAt: 0,
 }
@@ -542,7 +542,7 @@ export const useProjectDB = create<ProjectDBState & ProjectDBActions>()(
     })),
     {
       name: 'project-db',
-      version: 4,
+      version: 5,
       storage: createJSONStorage(() => createIdbStorage('project-db')),
       migrate: (state, fromVersion) => {
         if (fromVersion < 2 && state && typeof state === 'object') {
@@ -574,6 +574,20 @@ export const useProjectDB = create<ProjectDBState & ProjectDBActions>()(
         if (fromVersion < 4 && state && typeof state === 'object') {
           const s = state as { projectId?: string }
           if (!s.projectId) s.projectId = uuid()
+        }
+        // v5: bump default video model from Seedance 2.0 Fast → 2.0 (full).
+        // Only migrate if the user is still on the previous default — a
+        // project that explicitly picked Fast (480p / 12s cap) keeps it.
+        // Note: this only updates the model id stored in state; the
+        // operator still has to set the corresponding ep-* endpoint via
+        // SEEDANCE_ENDPOINT_DREAMINA_SEEDANCE_2_0_260128 (or generic
+        // SEEDANCE_ENDPOINT) for BytePlus to actually serve the non-fast
+        // model — see vite-capabilities-plugin.ts resolveSeedanceModel.
+        if (fromVersion < 5 && state && typeof state === 'object') {
+          const s = state as { artDirection?: ArtDirection }
+          if (s.artDirection?.defaultVideoModel === 'dreamina-seedance-2-0-fast-260128') {
+            s.artDirection.defaultVideoModel = 'dreamina-seedance-2-0-260128'
+          }
         }
         return state as ProjectDBState & ProjectDBActions
       },

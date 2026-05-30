@@ -1322,10 +1322,11 @@ function arkBaseUrl(): string {
  * Default Seedance model id. Prefers SEEDANCE_MODEL / SEEDANCE_ENDPOINT
  * because BytePlus海外 expects an account-specific endpoint id (e.g.
  * `ep-20260423151341-p2zm9`) rather than the universal model name; the
- * universal `dreamina-seedance-2-0-fast-260128` is kept as a sane fallback.
+ * universal `dreamina-seedance-2-0-260128` (the non-Fast variant) is
+ * kept as a sane fallback and matches projectDB's stored default.
  */
 function defaultSeedanceModel(): string {
-  return process.env.SEEDANCE_MODEL || process.env.SEEDANCE_ENDPOINT || process.env.ARK_SEEDANCE_ENDPOINT || 'dreamina-seedance-2-0-fast-260128'
+  return process.env.SEEDANCE_MODEL || process.env.SEEDANCE_ENDPOINT || process.env.ARK_SEEDANCE_ENDPOINT || 'dreamina-seedance-2-0-260128'
 }
 
 /**
