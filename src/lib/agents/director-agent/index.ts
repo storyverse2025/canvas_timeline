@@ -221,6 +221,12 @@ export async function* critiqueTimeline(
           characterNames: req.characterNames.join(' / ') || '（未提供主要角色名）',
           targetRowCount: String(req.targetRowCount),
           totalDurationSeconds: String(req.totalDurationSeconds),
+          // Both un-truncated: the critic compares the storyboard against the
+          // FULL user input + clarifications to catch contradictions the
+          // generator might have introduced. Truncating either anchor
+          // defeats the purpose.
+          userScript: req.userScript,
+          userClarifications: req.userClarifications || '（用户未回答 ask 阶段问题）',
         }),
       },
     ],

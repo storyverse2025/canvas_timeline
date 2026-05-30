@@ -178,6 +178,12 @@ export interface Script {
    *  Consumed by cinematographer prompt augmentation + by the canvas audio
    *  node spawner so every character has a paired voice asset on the canvas. */
   voiceBindings?: Record<string, string>
+  /** User's answers to the script-agent ask-phase clarification questions.
+   *  Captured per-run by director-assistant from dossier.clarifications and
+   *  consumed by self-check stages (critique-timeline) so they can verify
+   *  the generated storyboard doesn't contradict what the user explicitly
+   *  chose. Empty / missing = user didn't go through the ask phase. */
+  clarifications?: Array<{ q: string; answer: string }>
   updatedAt: number
 }
 

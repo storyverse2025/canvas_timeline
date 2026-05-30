@@ -543,6 +543,9 @@ export function createScriptAgent(deps: ScriptAgentDeps = {}): AgentModule<
       yield { type: 'progress', message: `delegating to ${subAgent} sub-agent` }
       const sub = runner.run({ scriptText: request.scriptText, answers }, ctx)
       const dossier = yield* delegate(sub)
+      // Same clarifications-stamp as the default path so downstream
+      // sees them regardless of which sub-agent produced the dossier.
+      dossier.clarifications = clarifications
       persistDossier(dossier, ctx)
       yield { type: 'result', payload: dossier }
       return
@@ -577,6 +580,11 @@ export function createScriptAgent(deps: ScriptAgentDeps = {}): AgentModule<
 
     const json = extractFirstJsonObject(llmResponse)
     const dossier = parseDossierStrict(json)
+    // Stamp the ask-phase clarifications onto the dossier so downstream
+    // stages (critique-timeline, art-director) can verify their output
+    // against what the user actually answered. The LLM doesn't see these
+    // in its output schema — they're collected by the runtime above.
+    dossier.clarifications = clarifications
     persistDossier(dossier, ctx)
     yield { type: 'result', payload: dossier }
   }
