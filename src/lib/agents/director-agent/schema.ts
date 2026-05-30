@@ -29,11 +29,27 @@ export interface AllocateShotsRequest {
   scriptAnalysis: string
   visualStrategy: string
   totalDurationSeconds: number
+  /**
+   * The post-doctor revised script (same value the caller passes to
+   * generateStoryboardTable). Lets the allocator count shots from the
+   * user's actual shot markers ("镜头 A/B/C", "RAPID CUTS", "FLASH
+   * IMAGES", "场景 N", etc.) rather than re-inventing them from the
+   * script analysis summary. When the user already wrote the shot
+   * breakdown, the allocator must honor it.
+   */
+  revisedScript: string
 }
 
 export interface ComposeShotsRequest {
   shotAllocation: string
   visualAnchor: string
+  /**
+   * Optional post-doctor revised script. Lets the composer reference
+   * the user's per-shot framing notes ("摄像机拉远", "慢动作", specific
+   * blocking) when designing composition, rather than working purely
+   * from the allocation summary.
+   */
+  revisedScript?: string
 }
 
 export interface GenerateStoryboardTableRequest {

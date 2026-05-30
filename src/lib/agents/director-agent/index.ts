@@ -131,6 +131,11 @@ export async function* allocateShots(
           scriptAnalysis: req.scriptAnalysis.slice(0, 500),
           visualStrategy: req.visualStrategy.slice(0, 500),
           totalDurationSeconds: String(req.totalDurationSeconds),
+          // IMPORTANT: do NOT truncate. The whole point of feeding revisedScript
+          // into allocate-shots is so the allocator can see the user's explicit
+          // shot markers ("镜头 A/B/C", "RAPID CUTS", etc.) and honor them
+          // 1:1. Slicing here defeats the purpose.
+          revisedScript: req.revisedScript,
         }),
       },
     ],
@@ -153,6 +158,9 @@ export async function* composeShots(
         content: fillTemplate(TPL.composeShots, {
           shotAllocation: req.shotAllocation.slice(0, 800),
           visualAnchor: req.visualAnchor.slice(0, 500),
+          // No truncate — composer needs to see per-shot visual cues from
+          // the user's script verbatim ("摄像机拉远", "低角度仰拍", etc.).
+          revisedScript: req.revisedScript ?? '',
         }),
       },
     ],
