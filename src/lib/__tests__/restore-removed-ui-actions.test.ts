@@ -10,9 +10,14 @@ describe('restored removed UI actions', () => {
   it('restores the Director voice casting panel entry point', () => {
     expect(exists('src/components/director/CastVoicePanel.tsx')).toBe(true)
     const scriptDialog = read('src/components/director/ScriptInputDialog.tsx')
+    const panel = read('src/components/director/CastVoicePanel.tsx')
 
     expect(scriptDialog).toContain("import { CastVoicePanel } from './CastVoicePanel'")
     expect(scriptDialog).toContain('<CastVoicePanel />')
+    expect(panel).toContain('const EMPTY_CARDS')
+    expect(panel).toContain('const EMPTY_BINDINGS')
+    expect(panel).not.toContain('useProjectDB((s) => s.script.castingCards ?? [])')
+    expect(panel).not.toContain('useProjectDB((s) => s.script.voiceBindings ?? {})')
   })
 
   it('keeps the chat AI quick action for adding missing storyboard rows wired', () => {
