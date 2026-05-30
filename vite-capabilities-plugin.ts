@@ -115,9 +115,14 @@ async function apimartChat(systemPrompt: string, userText: string, imageUrl?: st
       ...(temperature != null ? { temperature } : {}),
     }),
   })
-  if (!res.ok) throw new Error(`Apimart chat ${res.status}: ${await res.text()}`)
-  const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
-  const text = data.choices?.[0]?.message?.content?.trim()
+  const raw = await res.text()
+  if (!res.ok) throw new Error(`Apimart chat ${res.status}: ${raw.slice(0, 500)}`)
+  // Apimart's gemini-3-flash-preview route started returning SSE without
+  // `stream: true` being requested (observed 2026-05-30 across element-
+  // extraction / script-rewrite / consistency-check / etc.). parseOpenAIChatResponse
+  // sniffs the body and accumulates `delta.content` so callers work
+  // regardless of which format comes back.
+  const text = parseOpenAIChatResponse(raw).trim()
   if (!text) throw new Error('Apimart: empty response')
   return text
 }
@@ -1317,10 +1322,11 @@ function arkBaseUrl(): string {
  * Default Seedance model id. Prefers SEEDANCE_MODEL / SEEDANCE_ENDPOINT
  * because BytePlus海外 expects an account-specific endpoint id (e.g.
  * `ep-20260423151341-p2zm9`) rather than the universal model name; the
- * universal `dreamina-seedance-2-0-fast-260128` is kept as a sane fallback.
+ * universal `dreamina-seedance-2-0-260128` (the non-Fast variant) is
+ * kept as a sane fallback and matches projectDB's stored default.
  */
 function defaultSeedanceModel(): string {
-  return process.env.SEEDANCE_MODEL || process.env.SEEDANCE_ENDPOINT || process.env.ARK_SEEDANCE_ENDPOINT || 'dreamina-seedance-2-0-fast-260128'
+  return process.env.SEEDANCE_MODEL || process.env.SEEDANCE_ENDPOINT || process.env.ARK_SEEDANCE_ENDPOINT || 'dreamina-seedance-2-0-260128'
 }
 
 /**

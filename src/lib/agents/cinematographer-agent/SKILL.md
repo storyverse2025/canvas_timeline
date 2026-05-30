@@ -5,7 +5,7 @@ model: claude-sonnet-4-5
 tools:
   - capability: text-to-video
     provider: doubao
-    model: dreamina-seedance-2-0-fast-260128 @ 480p
+    model: dreamina-seedance-2-0-260128 @ 480p
 verbs:
   - shoot
   - revise
@@ -28,7 +28,7 @@ storyboard row is the shot list; the keyframe is the production still.
 
 | Verb | Purpose | Replaces |
 |---|---|---|
-| `shoot(req)` | Build a Seedance prompt from `row.motion_prompts` + `row.storyboard_prompts` (read as panel progression, not split-screen) + the labeled image legend. Calls `text-to-video` pinned to `dreamina-seedance-2-0-fast-260128 @ 480p` (BytePlus海外 / Dreamina). Duration clamped to [5, 15]. Returns `{ url, prompt, durationSeconds, refs }`. | `useStoryboardGenerate.generateBeatVideo`'s hand-rolled prompt construction |
+| `shoot(req)` | Build a Seedance prompt from `row.motion_prompts` + `row.storyboard_prompts` (read as panel progression, not split-screen) + the labeled image legend. Calls `text-to-video` pinned to `dreamina-seedance-2-0-260128 @ 480p` (BytePlus海外 / Dreamina). Duration clamped to [5, 15]. Returns `{ url, prompt, durationSeconds, refs }`. | `useStoryboardGenerate.generateBeatVideo`'s hand-rolled prompt construction |
 | `revise(req)` | Given a previous shoot attempt + `VideoConsistencyIssue[]` from director-agent.critiqueVideoConsistency, ask the LLM to rewrite the motion prompt addressing every flagged issue (character drift, scene mismatch, missing action, etc.), then re-shoot via Seedance. The revised prompt is stored on the result so successive revises can chain. | The current "regenerate the same prompt and hope" loop |
 
 ## No interview turns

@@ -26,7 +26,7 @@ describe('Director Pipeline — Art Direction Config', () => {
     expect(art.stylePreset).toBe('anime_psych_thriller_motion_comic')
     expect(art.defaultAspectRatio).toBe('16:9')
     expect(art.defaultImageModel).toBe('openai/gpt-5.4-image-2')
-    expect(art.defaultVideoModel).toBe('dreamina-seedance-2-0-fast-260128')
+    expect(art.defaultVideoModel).toBe('dreamina-seedance-2-0-260128')
   })
 
   it('updates style preset', () => {
@@ -42,7 +42,7 @@ describe('Director Pipeline — Art Direction Config', () => {
   it('updates models independently', () => {
     useProjectDB.getState().updateArtDirection({ defaultImageModel: 'gpt-image-1' })
     expect(useProjectDB.getState().artDirection.defaultImageModel).toBe('gpt-image-1')
-    expect(useProjectDB.getState().artDirection.defaultVideoModel).toBe('dreamina-seedance-2-0-fast-260128') // unchanged
+    expect(useProjectDB.getState().artDirection.defaultVideoModel).toBe('dreamina-seedance-2-0-260128') // unchanged
   })
 
   it('updates aspect ratio', () => {

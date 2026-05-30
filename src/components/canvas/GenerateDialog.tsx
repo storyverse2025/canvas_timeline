@@ -127,8 +127,8 @@ export function GenerateDialog({ initialPrompt = '', upstreamImages = [], defaul
     if (providerModels.some((m) => m.id === model)) return
     // Otherwise pick a preferred default
     const preferredIds = [
-      'openai/gpt-5.4-image-2',          // image default (gpt-image2 via Apimart)
-      'dreamina-seedance-2-0-fast-260128', // video default (BytePlus Dreamina Seedance 2.0 Fast; 480p)
+      'openai/gpt-5.4-image-2',     // image default (gpt-image2 via Apimart)
+      'dreamina-seedance-2-0-260128', // video default (BytePlus Dreamina Seedance 2.0; matches projectDB default)
     ]
     const preferred = providerModels.find((m) => preferredIds.includes(m.id))
       ?? providerModels.find((m) => /默认|default/i.test(m.label))
