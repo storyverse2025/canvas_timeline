@@ -205,13 +205,10 @@ async function callSeedance(opts: {
     .slice(0, 3) // Seedance universal-to-video accepts up to 3 audios
     .map((url) => ({ kind: 'audio' as const, url }))
 
-  // Seedance's generate_audio is a single hard switch — `false` kills BGM
-  // AND dialogue/SFX. Only flip it when the shot has no voice refs (silent
-  // shot). For dialogue shots we keep it on so the model can synthesize
-  // speech matching the 音色 reference, and rely on the prompt's AUDIO
-  // NEGATIVE block to suppress BGM.
-  const generateAudio = voiceInputs.length === 0 ? false : undefined
-
+  // BGM suppression is done in the prompt (see shoot.md AUDIO block),
+  // NOT via Seedance's generate_audio flag — that flag is a single hard
+  // switch that would also kill the 人物台词 we want to keep. Trust the
+  // prompt directive.
   const r = await runCapability({
     capability: 'text-to-video',
     inputs: [
@@ -228,7 +225,6 @@ async function callSeedance(opts: {
       // Hints to the capability plugin to use omni-reference mode if the
       // provider exposes it as a flag (Doubao Seedance 2.0 supports it).
       reference_mode: 'omni',
-      ...(generateAudio === false ? { generate_audio: false } : {}),
       // Privacy-block fallback: BytePlus digital-asset ids the caller
       // pre-registered. The capability plugin translates these to the
       // Seedance body's `invited_images` field.
