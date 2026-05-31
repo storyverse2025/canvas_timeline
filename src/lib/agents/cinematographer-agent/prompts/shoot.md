@@ -25,3 +25,6 @@ output: text (Seedance 2.0 video generation prompt)
 {{cinematographyBlock}}
 
 {{dialogueAndSfx}}
+
+【收尾 / ENDING ANCHOR】
+最后 ~1 秒：保持终态构图，完成台词最后一个音节，不再触发新的动作。Hold the final composition and let the dialogue tail finish — no new motion in the last beat.

@@ -7,6 +7,8 @@ import {
   buildMotionDescription,
   cinematographerAgent,
   clampDuration,
+  predictDialogueDurationSeconds,
+  resolveEffectiveDurationSeconds,
   revise,
   shoot,
   SHOOT_MODEL,
@@ -51,6 +53,45 @@ describe('pure helpers', () => {
     expect(clampDuration(60)).toBe(15)
     expect(clampDuration(7.4)).toBe(7) // rounded
     expect(clampDuration(7.6)).toBe(8)
+  })
+
+  it('predictDialogueDurationSeconds → 0 for empty / undefined', () => {
+    expect(predictDialogueDurationSeconds(undefined)).toBe(0)
+    expect(predictDialogueDurationSeconds('')).toBe(0)
+    expect(predictDialogueDurationSeconds('   ')).toBe(0)
+  })
+
+  it('predictDialogueDurationSeconds → counts Mandarin chars at ~3.5/sec (ignores punctuation)', () => {
+    // 8 Han chars in '我们必须现在离开' / 3.5 ≈ 2.286s. Trailing 。 is not Han.
+    expect(predictDialogueDurationSeconds('我们必须现在离开。')).toBeCloseTo(8 / 3.5, 5)
+  })
+
+  it('predictDialogueDurationSeconds → counts English words at ~2.5/sec', () => {
+    // 5 words / 2.5 = 2.0s
+    expect(predictDialogueDurationSeconds('we have to leave now')).toBeCloseTo(5 / 2.5, 5)
+  })
+
+  it('predictDialogueDurationSeconds → mixed Chinese + English adds', () => {
+    // 'Alice: 我们必须现在离开。' → 1 English word ('Alice') + 8 Han chars
+    const seconds = predictDialogueDurationSeconds('Alice: 我们必须现在离开。')
+    expect(seconds).toBeCloseTo(1 / 2.5 + 8 / 3.5, 5)
+  })
+
+  it('resolveEffectiveDurationSeconds → uses user request when dialogue is short', () => {
+    // No dialogue → floor is 0, user gets clamped value
+    expect(resolveEffectiveDurationSeconds({ userRequested: 8, dialogue: undefined })).toBe(8)
+    expect(resolveEffectiveDurationSeconds({ userRequested: 8, dialogue: '嗯。' })).toBe(8)
+  })
+
+  it('resolveEffectiveDurationSeconds → bumps duration to dialogue floor + 0.8s buffer', () => {
+    // 28 Han chars / 3.5 = 8.0s + 0.8 buffer = 8.8s → rounds to 9
+    const dialogue = '我'.repeat(28)
+    expect(resolveEffectiveDurationSeconds({ userRequested: 5, dialogue })).toBe(9)
+  })
+
+  it('resolveEffectiveDurationSeconds → respects MAX_DURATION clamp even for long dialogue', () => {
+    const huge = '我们必须现在离开'.repeat(20) // 160 Han chars ≈ 46s
+    expect(resolveEffectiveDurationSeconds({ userRequested: 5, dialogue: huge })).toBe(15)
   })
 
   it('buildMotionDescription keeps ONLY dialogue + SFX (motion_prompts, style/scene/mood are all stripped — keyframe carries the motion via its panel progression)', () => {
