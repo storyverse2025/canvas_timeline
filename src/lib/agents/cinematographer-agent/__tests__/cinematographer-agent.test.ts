@@ -146,7 +146,9 @@ describe('shoot', () => {
     expect(result.prompt).toContain('【全能参考 / Director Reference】')
     expect(result.prompt).not.toContain('push in')
 
-    const call = mockedRunCapability.mock.calls[0]![0]
+    // shoot() now fires cinematography-describe BEFORE the text-to-video
+    // call; find the Seedance call by capability name rather than index.
+    const call = mockedRunCapability.mock.calls.find((c) => c[0]!.capability === 'text-to-video')![0]!
     expect(call.capability).toBe('text-to-video')
     expect(call.params?.provider).toBe('doubao')
     expect(call.params?.model).toBe('dreamina-seedance-2-0-260128')
@@ -168,7 +170,8 @@ describe('shoot', () => {
       shoot({ row: { duration: 2, motion_prompts: 'p' }, keyframeUrl: 'https://k.png' }, ctx),
     )
     expect(r.durationSeconds).toBe(5)
-    expect(mockedRunCapability.mock.calls[0]![0].params?.duration).toBe('5')
+    const seedanceCall = mockedRunCapability.mock.calls.find((c) => c[0]!.capability === 'text-to-video')![0]!
+    expect(seedanceCall.params?.duration).toBe('5')
   })
 
   it('clamps long durations down to 15s', async () => {
@@ -195,7 +198,8 @@ describe('shoot', () => {
     await driveAuto(
       shoot({ row: { motion_prompts: 'p' }, keyframeUrl: 'https://k.png', aspect: '9:16' }, ctx),
     )
-    expect(mockedRunCapability.mock.calls[0]![0].params?.aspect).toBe('9:16')
+    const seedanceCall = mockedRunCapability.mock.calls.find((c) => c[0]!.capability === 'text-to-video')![0]!
+    expect(seedanceCall.params?.aspect).toBe('9:16')
   })
 
   it('threads caller-supplied resolution through to the capability call', async () => {
@@ -204,7 +208,8 @@ describe('shoot', () => {
     await driveAuto(
       shoot({ row: { motion_prompts: 'p' }, keyframeUrl: 'https://k.png', resolution: '1080p' }, ctx),
     )
-    expect(mockedRunCapability.mock.calls[0]![0].params?.resolution).toBe('1080p')
+    const seedanceCall = mockedRunCapability.mock.calls.find((c) => c[0]!.capability === 'text-to-video')![0]!
+    expect(seedanceCall.params?.resolution).toBe('1080p')
   })
 
   it('throws when keyframeUrl is missing (omni-reference needs the keyframe)', async () => {

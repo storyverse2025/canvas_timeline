@@ -485,6 +485,67 @@ async function bridgeRowJudge(req: CapReq): Promise<CapRes> {
   throw lastErr ?? new Error('bridge-row-judge: exhausted retries')
 }
 
+/**
+ * cinematography-describe: read a director-keyframe storyboard image and
+ * spit out a short Chinese cinematography paragraph (镜头 / 光线 / 动作)
+ * that downstream cinematographer-agent appends to the Seedance video
+ * prompt. The keyframe now contains storyboard panels + diagrams but no
+ * embedded "camera angle / lens / lighting" text labels (we stripped those
+ * intentionally so the keyframe stays visual). This handler is what puts
+ * the cinematography vocabulary back into the video prompt.
+ */
+async function cinematographyDescribe(req: CapReq): Promise<CapRes> {
+  const text = getText(req.inputs)
+  const images = getImages(req.inputs)
+  if (!images.length) throw new Error('cinematography-describe: keyframe image input required')
+  if (!text) throw new Error('cinematography-describe: row context text input required')
+
+  const key = process.env.APIMART_API_KEY
+  if (!key) throw new Error('APIMART_API_KEY not set')
+  const baseUrl = (process.env.APIMART_BASE_URL || APIMART_BASE_URL).replace(/\/$/, '')
+
+  const userContent: Array<Record<string, unknown>> = [{ type: 'text', text }]
+  let droppedCount = 0
+  for (const url of images) {
+    const safe = await urlToApimartImage(url)
+    if (safe) {
+      userContent.push({ type: 'image_url', image_url: { url: safe } })
+    } else {
+      droppedCount++
+    }
+  }
+  if (droppedCount > 0) {
+    console.warn(`[cinematography-describe] dropped ${droppedCount}/${images.length} unresolvable keyframe(s); falling back to text-only`)
+  }
+  if (userContent.length === 1) {
+    return { outputs: [{ kind: 'text', text: '' }] }
+  }
+
+  const systemPrompt = '你是电影摄影师。读图后用 4-8 行中文写出本镜头的镜头语言（机位/焦段/景别/运镜），光线（光源方向/色温/强度/反光），动作（角色或物体的运动主干、镜头开端到结束的画面演进）。每行一句、贴近可执行的视听语言、不要写"分镜板"、"宫格"等图板自指描述。不要 JSON、不要 markdown 标题、不要 emoji。只输出文字，不超过 8 行。'
+
+  let lastErr: unknown
+  for (let attempt = 0; attempt < APIMART_CHAT_MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, APIMART_CHAT_BACKOFF_MS[attempt] ?? 0))
+    }
+    try {
+      const out = await apimartChatOnce(key, baseUrl, systemPrompt, userContent, 0.5)
+      return { outputs: [{ kind: 'text', text: out }] }
+    } catch (e) {
+      lastErr = e
+      if (attempt < APIMART_CHAT_MAX_ATTEMPTS - 1 && isTransientApimartError(e)) {
+        const why = String((e as Error)?.message ?? e).slice(0, 120)
+        console.warn(`[cinematography-describe] attempt ${attempt + 1} failed (${why}); retrying`)
+        continue
+      }
+      throw e instanceof Error && /^Apimart chat /.test(e.message)
+        ? new Error(`cinematography-describe: ${e.message}`)
+        : e
+    }
+  }
+  throw lastErr ?? new Error('cinematography-describe: exhausted retries')
+}
+
 // ─── Image capabilities ─────────────────────────────────────────────
 // (apimartImageSize removed 2026-05-23: the new api.apimart.ai image
 // endpoint takes `aspect_ratio` strings directly; per-aspect pixel-size
@@ -1839,6 +1900,7 @@ const handlers: Record<string, (req: CapReq) => Promise<CapRes>> = {
   'consistency-check': consistencyCheck,
   'storyboard-qc': storyboardQC,
   'bridge-row-judge': bridgeRowJudge,
+  'cinematography-describe': cinematographyDescribe,
   'text-to-image': textToImage,
   'batch-image': batchImage,
   'smart-edit': smartEdit,

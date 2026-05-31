@@ -72,13 +72,15 @@ function buildMotionDescription(req: {
   visualStyle?: string
   contextRefs?: BeatVideoContextRef[]
 }): string {
-  // STRIPPED prompt: ONLY dialogue + SFX survive, and they live BELOW the
-  // reference blocks. motion_prompts, style, scene, mood, motivation,
-  // psychology, lighting, shot size, and context refs are all discarded —
-  // they biased Seedance away from the keyframe. The keyframe (a
-  // multi-panel director storyboard sheet) carries the motion via panel
-  // progression on its own.
-  // Voice info is appended later by actor-agent.attachVoiceRefs.
+  // Only dialogue + SFX survive in this block. motion_prompts / style /
+  // scene / mood / motivation / psychology / lighting / shot size used to
+  // be stripped because they biased Seedance away from the keyframe — but
+  // the keyframe is now visual-only (storyboard panels + diagrams with no
+  // embedded text labels), so the camera / lighting / motion vocabulary
+  // is re-introduced by a separate `cinematography-describe` LLM step
+  // that reads the keyframe image (see describeKeyframeCinematography
+  // below). Dialogue + SFX stay here; voice refs are attached later by
+  // actor-agent.attachVoiceRefs.
   void req.visualStyle
   void req.contextRefs
   const r = req.row
@@ -90,6 +92,63 @@ function buildMotionDescription(req: {
     blocks.push(`【音效 / SFX】\n${r.sound_effects.trim()}`)
   }
   return blocks.join('\n\n')
+}
+
+/**
+ * Build the row context string passed to the cinematography-describe LLM
+ * step. The model uses these textual cues alongside the keyframe image to
+ * ground its description in this specific shot rather than producing
+ * generic cinematography prose.
+ */
+function buildCinematographyContext(row: BeatVideoRow, visualStyle?: string): string {
+  const lines: string[] = []
+  if (row.shot_number) lines.push(`镜头编号：${row.shot_number}`)
+  if (row.shot_size) lines.push(`景别（用户已选）：${row.shot_size}`)
+  if (row.visual_description) lines.push(`画面：${row.visual_description}`)
+  if (row.character_actions) lines.push(`角色动作：${row.character_actions}`)
+  if (row.motion_prompts) lines.push(`运镜参考：${row.motion_prompts}`)
+  if (row.lighting_atmosphere) lines.push(`光影：${row.lighting_atmosphere}`)
+  if (row.emotion_mood) lines.push(`情绪：${row.emotion_mood}`)
+  if (visualStyle) lines.push(`视觉风格锁定：${visualStyle}`)
+  return [
+    '请基于这张分镜板（director storyboard sheet）+ 下面的行字段，写出本镜头的镜头/光线/动作语言：',
+    '',
+    ...lines,
+    '',
+    '只输出 4-8 行中文，每行一句，不要标题、不要 JSON、不要 emoji。',
+  ].join('\n')
+}
+
+/**
+ * Read the keyframe image and produce a 4-8 line cinematography paragraph
+ * (镜头 / 光线 / 动作). Wired into shoot() so the Seedance text prompt
+ * carries explicit camera / lighting / motion language now that the
+ * keyframe itself dropped those text labels in favor of pure storyboard
+ * panels + diagrams.
+ *
+ * Failure handling: returns empty string. The shoot proceeds with just
+ * dialogue + SFX in the text prompt and the keyframe as the image input —
+ * worse than having the cinematography block, but still useful.
+ */
+async function describeKeyframeCinematography(opts: {
+  keyframeUrl: string
+  row: BeatVideoRow
+  visualStyle?: string
+}): Promise<string> {
+  try {
+    const r = await runCapability({
+      capability: 'cinematography-describe',
+      inputs: [
+        { kind: 'text', text: buildCinematographyContext(opts.row, opts.visualStyle) },
+        { kind: 'image', url: opts.keyframeUrl },
+      ],
+    })
+    return (r.outputs[0]?.text ?? '').trim()
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn(`[cinematographer-agent] cinematography-describe failed (${(e as Error).message}); falling back to dialogue/SFX-only prompt`)
+    return ''
+  }
 }
 
 /**
@@ -110,11 +169,16 @@ function assembleShootPrompt(req: {
   keyframeUrl: string
   contextRefs?: BeatVideoContextRef[]
   visualStyle?: string
+  cinematography?: string
 }): string {
   const dialogueAndSfx = buildMotionDescription(req)
   const legend = buildImageLegend(req.keyframeUrl)
+  const cinematographyBlock = req.cinematography?.trim()
+    ? `【镜头语言 / CINEMATOGRAPHY】（基于 @图片1 / image1 的分析）\n${req.cinematography.trim()}`
+    : ''
   return fillTemplate(TPL.shoot, {
     imageLegend: legend,
+    cinematographyBlock,
     dialogueAndSfx,
   }).trim()
 }
@@ -189,6 +253,22 @@ export async function* shoot(
 
   yield {
     type: 'progress',
+    message: `cinematographer: reading keyframe for cinematography language (shot ${shot})`,
+  }
+  const cinematography = await describeKeyframeCinematography({
+    keyframeUrl: req.keyframeUrl,
+    row: req.row,
+    visualStyle: req.visualStyle,
+  })
+  if (cinematography) {
+    yield {
+      type: 'progress',
+      message: `cinematographer: ${cinematography.split('\n').length}-line cinematography block ready`,
+    }
+  }
+
+  yield {
+    type: 'progress',
     message: `cinematographer: composing Seedance prompt for shot ${shot} (${durationSeconds}s, ${aspect}, ${resolution}, omni-reference)`,
   }
 
@@ -197,6 +277,7 @@ export async function* shoot(
     keyframeUrl: req.keyframeUrl,
     contextRefs: req.contextRefs,
     visualStyle: req.visualStyle,
+    cinematography,
   })
 
   void ctx

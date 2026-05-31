@@ -74,6 +74,15 @@ export const CAPABILITIES: CapabilitySpec[] = [
     outputKind: 'text',
     nodeTypes: ['image', 'text'],
   },
+  {
+    id: 'cinematography-describe',
+    category: 'agent',
+    label: '镜头语言描述',
+    description: '看 keyframe storyboard 图，输出该镜头的镜头/光线/动作语言文字（供下游视频 prompt 使用）',
+    inputKinds: ['image', 'text'],
+    outputKind: 'text',
+    nodeTypes: ['image', 'text'],
+  },
 
   // ─── 图片能力 ──────────────────────────────────────────────────────
   {
