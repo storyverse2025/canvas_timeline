@@ -44,6 +44,8 @@ import {
   type BridgeRowProposal,
   type ComposeShotsRequest,
   type CritiqueTimelineRequest,
+  type CritiqueKeyframeRequest,
+  type CritiqueKeyframeResult,
   type CritiqueVideoConsistencyRequest,
   type GenerateKeyframeRequest,
   type GenerateStoryboardTableRequest,
@@ -409,6 +411,14 @@ function buildKeyframePrompt(req: GenerateKeyframeRequest): string {
     `# Director storyboard sheet — pre-production reference, NOT a final filmed frame.`,
     `Shot duration: ${req.shotDurationSeconds}s. Aspect: ${aspect}. Style: ${visualStyle}.`,
     ``,
+    ...(req.feedbackNote?.trim()
+      ? [
+          `## ⚠️ PREVIOUS ITERATION FEEDBACK (must address)`,
+          req.feedbackNote.trim(),
+          `This iteration MUST address every issue above while preserving everything that worked.`,
+          ``,
+        ]
+      : []),
     // ─── Module 1: Scene crop from 360 panorama (when scene ref present) ───
     ...(hasScene
       ? [
@@ -512,6 +522,14 @@ function buildCleanKeyframePrompt(req: GenerateKeyframeRequest): string {
     `# Cinematic shot frame — ONE full-frame composition, ready for video generation.`,
     `Shot duration: ${req.shotDurationSeconds}s. Aspect: ${aspect}. Style: ${visualStyle}.`,
     ``,
+    ...(req.feedbackNote?.trim()
+      ? [
+          `## ⚠️ PREVIOUS ITERATION FEEDBACK (must address)`,
+          req.feedbackNote.trim(),
+          `This iteration MUST address every issue above while preserving everything that worked.`,
+          ``,
+        ]
+      : []),
     `## Subject`,
     `${r.visual_description || r.storyboard_prompts || '(use the visual_description from this row)'}`,
     r.emotion_mood ? `Emotion / mood: ${r.emotion_mood}` : '',
@@ -633,6 +651,115 @@ export async function* generateKeyframe(
 
 // Pure helpers, exported for tests + reuse by the caller.
 export { buildKeyframePrompt, buildCleanKeyframePrompt, collectOrderedRefs }
+
+// ─── Verb: critiqueKeyframe ───────────────────────────────────────
+//
+// Vision-LLM judge for a generated keyframe vs the row's intent. Used
+// by the iterative-refine loop in useStoryboardGenerate to feed
+// previous-iteration notes into the next pass's prompt. Returns a 0-10
+// score plus per-aspect issues so the caller can decide whether to
+// keep iterating, accept this one, or stop early on a high score.
+//
+// Uses `freeform-text` because it accepts an image input + lets the
+// caller bake the full instruction into the text prompt — keeps us
+// from needing yet another bespoke vision capability.
+
+const CRITIQUE_KEYFRAME_FALLBACK: CritiqueKeyframeResult = {
+  score: 0,
+  issues: [],
+  summary: 'judge unavailable — kept candidate as-is',
+}
+
+export async function* critiqueKeyframe(
+  req: CritiqueKeyframeRequest,
+  ctx: ProjectContext,
+): AgentGenerator<CritiqueKeyframeResult> {
+  void ctx
+  const r = req.row
+  const shot = r.shot_number ?? '?'
+  yield {
+    type: 'progress',
+    message: `director: judging keyframe quality for shot ${shot}`,
+  }
+
+  const expectedLines = [
+    r.visual_description ? `视觉描述 / Visual: ${r.visual_description}` : null,
+    r.character_actions ? `角色动作 / Action: ${r.character_actions}` : null,
+    r.emotion_mood ? `情绪 / Mood: ${r.emotion_mood}` : null,
+    r.lighting_atmosphere ? `光影 / Lighting: ${r.lighting_atmosphere}` : null,
+    r.shot_size ? `景别 / Shot size: ${r.shot_size}` : null,
+    req.expected?.characters?.length ? `预期角色 / Characters: ${req.expected.characters.join(', ')}` : null,
+    req.expected?.scene ? `预期场景 / Scene: ${req.expected.scene}` : null,
+    req.expected?.props?.length ? `预期道具 / Props: ${req.expected.props.join(', ')}` : null,
+  ].filter(Boolean) as string[]
+
+  const instruction = [
+    '你是镜头分镜质量审查员。审查这张 keyframe 是否符合预期 — 严格、可执行、给下一轮迭代用。',
+    '',
+    'EXPECTED (从分镜行抽取):',
+    ...expectedLines,
+    '',
+    '审查维度: casting (角色一致性) · composition (景别 / 构图) · action (动作匹配) · mood (情绪) · style (画风) · lighting (光影) · props (道具是否出现) · continuity (跨镜一致性)',
+    '',
+    '输出 JSON ONLY (no markdown fences, no prose). Shape:',
+    '{',
+    '  "score": 0-10 (10 = perfect match, 5 = usable, ≤ 3 = unusable),',
+    '  "issues": [',
+    '    { "aspect": "casting"|"composition"|"action"|"mood"|"style"|"lighting"|"props"|"continuity"|"other",',
+    '      "severity": "minor"|"major"|"blocking",',
+    '      "summary": "一句话描述问题",',
+    '      "fix": "下一轮迭代应该怎么改 — 必须可执行" }',
+    '  ],',
+    '  "summary": "一句话总评 (中英文均可)"',
+    '}',
+    '',
+    '如果完全符合预期，score=10、issues=[]、summary 给一句话肯定即可。',
+  ].join('\n')
+
+  let parsed: CritiqueKeyframeResult = CRITIQUE_KEYFRAME_FALLBACK
+  try {
+    const out = await runCapability({
+      capability: 'freeform-text',
+      inputs: [
+        { kind: 'text', text: instruction },
+        { kind: 'image', url: req.keyframeUrl },
+      ],
+    })
+    const text = (out.outputs[0]?.text ?? '').trim()
+    const jsonMatch = text.match(/\{[\s\S]*\}/)
+    if (jsonMatch) {
+      const raw = JSON.parse(jsonMatch[0]) as Partial<CritiqueKeyframeResult>
+      parsed = {
+        score: typeof raw.score === 'number' ? Math.max(0, Math.min(10, raw.score)) : 0,
+        issues: Array.isArray(raw.issues) ? raw.issues : [],
+        summary: typeof raw.summary === 'string' ? raw.summary : '',
+      }
+    }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn(`[director-agent] critiqueKeyframe failed: ${(e as Error).message}`)
+  }
+
+  yield {
+    type: 'progress',
+    message: `director: keyframe score ${parsed.score}/10 — ${parsed.summary || (parsed.issues.length === 0 ? 'matches expectation' : `${parsed.issues.length} issue(s) flagged`)}`,
+  }
+  yield { type: 'result', payload: parsed }
+}
+
+// Helper exported so the caller (useStoryboardGenerate) can format the
+// critic's findings as the `feedbackNote` for the next iteration's
+// keyframe prompt.
+export function formatKeyframeFeedbackForNext(critique: CritiqueKeyframeResult, iterationIndex: number): string {
+  if (critique.issues.length === 0 && critique.score >= 9) return ''
+  const lines = [
+    `Score: ${critique.score}/10 (iteration ${iterationIndex})`,
+    critique.summary ? `Verdict: ${critique.summary}` : '',
+    'Issues to fix in the next iteration:',
+    ...critique.issues.map((i) => `- [${i.aspect}/${i.severity}] ${i.summary}  →  FIX: ${i.fix}`),
+  ].filter(Boolean)
+  return lines.join('\n')
+}
 
 // ─── Verb: critiqueVideoConsistency ────────────────────────────────
 
@@ -997,6 +1124,7 @@ export const directorAgent = {
   critiqueTimeline,
   applyTimelineFixes,
   generateKeyframe,
+  critiqueKeyframe,
   critiqueVideoConsistency,
   searchAndRewrite,
   proposeBridgeRow,
@@ -1017,6 +1145,8 @@ export type {
   CritiqueTimelineRequest,
   ApplyTimelineFixesRequest,
   GenerateKeyframeRequest,
+  CritiqueKeyframeRequest,
+  CritiqueKeyframeResult,
   CritiqueVideoConsistencyRequest,
   SearchAndRewriteRequest,
   SearchAndRewriteResult,

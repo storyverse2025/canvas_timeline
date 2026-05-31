@@ -199,6 +199,54 @@ export interface GenerateKeyframeRequest {
    * stays unchanged.
    */
   stylizeFacesFor2D?: boolean
+
+  /**
+   * Free-form note appended to both grid + clean prompts. Used by the
+   * iterative-refine loop to feed the previous critique's findings into
+   * the next generation pass ("fix the casting drift; tighten framing;
+   * preserve the lighting"). Empty / undefined = first pass, no header.
+   */
+  feedbackNote?: string
+}
+
+// ─── critiqueKeyframe ─────────────────────────────────────────────
+
+export interface KeyframeIssue {
+  /** Which dimension drifted. */
+  aspect: 'casting' | 'composition' | 'action' | 'mood' | 'style' | 'lighting' | 'props' | 'continuity' | 'other'
+  /** How bad it is. */
+  severity: 'minor' | 'major' | 'blocking'
+  /** One-line description of what's wrong. */
+  summary: string
+  /** Concrete fix the next iteration should apply. */
+  fix: string
+}
+
+export interface CritiqueKeyframeResult {
+  /** Overall quality score (0 = unusable, 10 = matches expectation perfectly). */
+  score: number
+  /** Per-issue breakdown. Empty when the keyframe matches the row. */
+  issues: KeyframeIssue[]
+  /** One-line overall verdict for the chat log. */
+  summary: string
+}
+
+export interface CritiqueKeyframeRequest {
+  /** The candidate keyframe URL to judge. Prefer the clean variant. */
+  keyframeUrl: string
+  /** Row metadata describing what the keyframe was supposed to realize. */
+  row: KeyframeRow & {
+    shot_number?: string
+    character_actions?: string
+    emotion_mood?: string
+  }
+  /** Optional character / scene / prop names so the critic can call out drift
+   *  by name ("Alice's hair is now long, should be short"). */
+  expected?: {
+    characters?: string[]
+    scene?: string
+    props?: string[]
+  }
 }
 
 export interface KeyframeResult {
