@@ -1,6 +1,8 @@
 import type { Plugin } from 'vite'
 import type { IncomingMessage, ServerResponse } from 'http'
+import * as fs from 'fs'
 import { writeFileSync, mkdirSync } from 'fs'
+import * as path from 'path'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 
@@ -767,6 +769,93 @@ interface ArtRagSearchHit {
   source_url: string
 }
 
+interface RagExample {
+  id?: string
+  prompt_text?: string
+  output_media_url?: string
+  output_media_type?: string | null
+  task_category?: string
+  task_type?: string
+  model_name?: string
+  source_name?: string
+  source_url?: string
+}
+
+// In-process JSONL-backed RAG. Replaces the prior FastAPI-over-chromaDB
+// proxy: ~/repos/prompt_rag/ now provides only the data files; this
+// plugin reads them once at startup and scores in-memory. No Python
+// service, no extra deps. Trade-off: text-overlap scoring instead of
+// dense-vector semantic search — usually still useful at top-K=5 since
+// the corpus is image-prompt-dense and queries are also prompt-like.
+//
+// Override the data file via PROMPT_RAG_JSONL=<absolute path>.
+let cachedExamples: RagExample[] | null = null
+let cachedTokens: Map<string, Set<string>> | null = null  // id → token set
+let cachedDocFreq: Map<string, number> | null = null      // token → # docs
+
+function ragJsonlPath(): string {
+  if (process.env.PROMPT_RAG_JSONL) return process.env.PROMPT_RAG_JSONL
+  // Default to the canonical files relative to ~/repos/prompt_rag/.
+  // Tries data/examples.jsonl (the canonical location) first, then
+  // examples.jsonl (the older/smaller scratch file).
+  const home = process.env.HOME || ''
+  const candidates = [
+    path.join(home, 'repos/prompt_rag/data/examples.jsonl'),
+    path.join(home, 'repos/prompt_rag/examples.jsonl'),
+  ]
+  for (const c of candidates) {
+    try { fs.accessSync(c, fs.constants.R_OK); return c } catch { /* try next */ }
+  }
+  return candidates[0]! // first one — caller surfaces the ENOENT
+}
+
+function tokenize(text: string): string[] {
+  // Lowercase + split on whitespace / punctuation, keep CJK chars individually
+  // so Chinese queries also match. Two char-classes — ASCII word and a single
+  // CJK char — so we don't need word segmentation libraries.
+  const out: string[] = []
+  const re = /([a-z][a-z0-9_-]*|[一-鿿])/gi
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    const tok = m[1]!.toLowerCase()
+    if (tok.length >= 2 || /[一-鿿]/.test(tok)) out.push(tok)
+  }
+  return out
+}
+
+function loadExamples(): RagExample[] {
+  if (cachedExamples) return cachedExamples
+  const p = ragJsonlPath()
+  let raw: string
+  try {
+    raw = fs.readFileSync(p, 'utf8')
+  } catch (e) {
+    throw new Error(
+      `art-rag-search: could not read ${p}: ${(e as Error).message}. Set PROMPT_RAG_JSONL in .env to point at your prompt examples JSONL.`,
+    )
+  }
+  const examples: RagExample[] = []
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    try { examples.push(JSON.parse(trimmed) as RagExample) } catch { /* skip malformed */ }
+  }
+  cachedExamples = examples
+  // Precompute tokens + doc frequencies so per-request scoring is O(query
+  // tokens × matching docs) instead of O(N × M).
+  const tokens = new Map<string, Set<string>>()
+  const docFreq = new Map<string, number>()
+  for (const ex of examples) {
+    const id = ex.id ?? `_${tokens.size}`
+    const toks = new Set(tokenize(ex.prompt_text ?? ''))
+    tokens.set(id, toks)
+    for (const t of toks) docFreq.set(t, (docFreq.get(t) ?? 0) + 1)
+  }
+  cachedTokens = tokens
+  cachedDocFreq = docFreq
+  return examples
+}
+
 async function artRagSearch(req: IncomingMessage): Promise<{ hits: ArtRagSearchHit[] }> {
   const body = (await readJson(req)) as {
     query?: string
@@ -777,26 +866,68 @@ async function artRagSearch(req: IncomingMessage): Promise<{ hits: ArtRagSearchH
   }
   const query = (body.query ?? '').trim()
   if (!query) throw new Error('art-rag-search: missing query field')
-  // Default points at the local FastAPI service ~/repos/prompt_rag/serve.py.
-  // Override via PROMPT_RAG_URL in .env if you run it elsewhere.
-  const base = process.env.PROMPT_RAG_URL || 'http://127.0.0.1:7411'
-  const res = await fetch(`${base}/search`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      query,
-      top_k: body.top_k ?? 5,
-      task_category: body.task_category ?? null,
-      task_type: body.task_type ?? null,
-      model_name: body.model_name ?? null,
-    }),
-  })
-  if (!res.ok) {
-    throw new Error(
-      `prompt_rag /search ${res.status}: ${(await res.text()).slice(0, 200)}. Is uvicorn running? Try: cd ~/repos/prompt_rag && uvicorn serve:app --host 127.0.0.1 --port 7411`,
-    )
+
+  const examples = loadExamples()
+  if (examples.length === 0) {
+    return { hits: [] }
   }
-  return res.json() as Promise<{ hits: ArtRagSearchHit[] }>
+  const N = examples.length
+  const queryTokens = tokenize(query)
+  if (queryTokens.length === 0) {
+    return { hits: [] }
+  }
+
+  // Score: sum of log(N / df) for each unique query token that appears in
+  // the example's prompt tokens. This is IDF-weighted token overlap —
+  // rare matching terms (e.g. "rooftop", "Tarkovsky") count more than
+  // common ones (e.g. "the", "art"). Caps at the top_k requested.
+  const taskType = body.task_type ?? null
+  const taskCategory = body.task_category ?? null
+  const modelName = body.model_name ?? null
+  const seen = new Set<string>(queryTokens) // dedupe query terms
+  const tokens = cachedTokens!
+  const docFreq = cachedDocFreq!
+
+  const scored: Array<{ ex: RagExample; score: number }> = []
+  for (const ex of examples) {
+    if (taskType && ex.task_type !== taskType) continue
+    if (taskCategory && ex.task_category !== taskCategory) continue
+    if (modelName && ex.model_name !== modelName) continue
+    const exTokens = tokens.get(ex.id ?? '') ?? new Set<string>()
+    if (exTokens.size === 0) continue
+    let score = 0
+    let matched = 0
+    for (const t of seen) {
+      if (exTokens.has(t)) {
+        const df = docFreq.get(t) ?? 1
+        score += Math.log(1 + N / df)
+        matched += 1
+      }
+    }
+    if (matched === 0) continue
+    scored.push({ ex, score })
+  }
+
+  scored.sort((a, b) => b.score - a.score)
+  const topK = Math.max(1, Math.min(20, body.top_k ?? 5))
+  const top = scored.slice(0, topK)
+  // Normalize score to (0, 1] for display so the UI can show a "similarity"
+  // percentage that's consistent across queries. Best match in this batch
+  // = 1.0; everything else scales down from there.
+  const max = top[0]?.score ?? 1
+  const hits: ArtRagSearchHit[] = top.map((s, i) => ({
+    id: s.ex.id ?? `_${i}`,
+    prompt: s.ex.prompt_text ?? '',
+    similarity: max > 0 ? s.score / max : 0,
+    output_media_url: s.ex.output_media_url ?? '',
+    output_media_type: s.ex.output_media_type ?? null,
+    task_category: s.ex.task_category ?? '',
+    task_type: s.ex.task_type ?? '',
+    model_name: s.ex.model_name ?? '',
+    source_name: s.ex.source_name ?? '',
+    source_url: s.ex.source_url ?? '',
+  }))
+  return { hits }
 }
 
 async function dispatch(req: Req): Promise<{ url: string; kind: 'image' | 'video' }> {
