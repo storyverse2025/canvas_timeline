@@ -22,6 +22,7 @@ import { runAgentWithChatBridge } from '@/lib/agents/chat-bridge'
 import { createMemoryContext } from '@/lib/agents/_shared/context/memory'
 import { createCapabilityLLM } from '@/lib/agents/_shared/llm/capability'
 import { getArtStyle } from '@/lib/canvas-elements'
+import { extractFirstFrame, extractLastFrame } from '@/lib/video-frame'
 
 /**
  * Resolve a slot to the canvas node that should feed the keyframe.
@@ -406,7 +407,10 @@ export function useStoryboardGenerate() {
      *  can show the user exactly what the model received. */
     const attemptShoot = async (
       keyframeUrl: string,
-      opts: { invitedImageAssetIds?: string[] } = {},
+      opts: {
+        invitedImageAssetIds?: string[]
+        transitionFrames?: { firstFrameUrl: string; lastFrameUrl: string }
+      } = {},
     ): Promise<{ url: string; prompt: string; voiceAudioUrls: string[] }> => {
       // Track what the augmenter actually attached so we can return it
       // to the caller. The cinematographer's shoot result only carries
@@ -502,10 +506,15 @@ export function useStoryboardGenerate() {
             resolution: '480p',
             promptPostProcessor,
             invitedImageAssetIds: opts.invitedImageAssetIds,
+            transitionFrames: opts.transitionFrames,
           },
           agentCtx,
         ),
-        { verb: opts.invitedImageAssetIds?.length ? 'shoot (with digital-asset whitelist)' : 'shoot' },
+        { verb: opts.transitionFrames
+          ? 'shoot (first-last-frame transition)'
+          : opts.invitedImageAssetIds?.length
+            ? 'shoot (with digital-asset whitelist)'
+            : 'shoot' },
       )
       return { ...shootResult, voiceAudioUrls: attachedVoiceAudioUrls }
     }
@@ -525,9 +534,52 @@ export function useStoryboardGenerate() {
         throw new Error('缺少 keyframe —— 先生成 keyframe 再拍摄 beat video')
       }
 
+      // Transition routing: bridge rows generate via Seedance's first-last-
+      // frame mode using their neighbors' boundary frames so the clip
+      // actually animates from prev → next rather than playing as an
+      // independent shot. Frame extraction is best-effort (the video may
+      // not be CORS-readable) — falls back to keyframes when extraction
+      // fails. If neither side has a video or keyframe, we skip transition
+      // mode and let the standard omni-reference path run.
+      let transitionFrames: { firstFrameUrl: string; lastFrameUrl: string } | undefined
+      if (row.isTransition) {
+        const allRows = useStoryboardStore.getState().rows
+        const idx = allRows.findIndex((r) => r.id === row.id)
+        const prev = idx > 0 ? allRows[idx - 1] : undefined
+        const next = idx >= 0 && idx < allRows.length - 1 ? allRows[idx + 1] : undefined
+        const frameFor = async (
+          neighbor: StoryboardRow | undefined,
+          side: 'first' | 'last',
+        ): Promise<string | undefined> => {
+          if (!neighbor) return undefined
+          if (neighbor.beatVideoUrl) {
+            try {
+              const f = side === 'last'
+                ? await extractLastFrame(neighbor.beatVideoUrl)
+                : await extractFirstFrame(neighbor.beatVideoUrl)
+              if (f) return f
+            } catch {
+              // Fall through to keyframe fallback.
+            }
+          }
+          return neighbor.keyframeCleanUrl || neighbor.keyframeUrl || neighbor.reference_image || undefined
+        }
+        const [firstFrameUrl, lastFrameUrl] = await Promise.all([
+          frameFor(prev, 'last'),   // prev's LAST frame = transition's FIRST frame
+          frameFor(next, 'first'),  // next's FIRST frame = transition's LAST frame
+        ])
+        if (firstFrameUrl && lastFrameUrl) {
+          transitionFrames = { firstFrameUrl, lastFrameUrl }
+        } else {
+          toast.message('过渡帧不可用', {
+            description: '前镜或后镜既无 beat video 也无 keyframe — 回退到普通生成路径',
+          })
+        }
+      }
+
       let result: { url: string; prompt: string; voiceAudioUrls: string[] }
       try {
-        result = await attemptShoot(keyframeUrl)
+        result = await attemptShoot(keyframeUrl, { transitionFrames })
       } catch (firstErr) {
         const msg = String((firstErr as Error).message ?? firstErr)
         if (!isPrivacyBlock(msg)) throw firstErr

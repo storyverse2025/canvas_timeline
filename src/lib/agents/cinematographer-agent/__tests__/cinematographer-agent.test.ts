@@ -204,6 +204,40 @@ describe('shoot', () => {
     expect(call.inputs[1]).toEqual({ kind: 'image', url: 'https://k.png' })
   })
 
+  it('transition mode: routes to first-last-frame capability with prev/next boundary images instead of omni-reference text-to-video', async () => {
+    mockedRunCapability.mockResolvedValue({ outputs: [{ kind: 'video', url: 'https://transition.mp4' }] })
+    const ctx = createMemoryContext({ llm: { complete: async () => '' } })
+    const result = await driveAuto(
+      shoot(
+        {
+          row: { duration: 3, motion_prompts: 'whip pan', visual_description: 'bridge cut' },
+          keyframeUrl: 'https://bridge-keyframe.png',
+          transitionFrames: {
+            firstFrameUrl: 'https://prev-last-frame.png',
+            lastFrameUrl: 'https://next-first-frame.png',
+          },
+        },
+        ctx,
+      ),
+    )
+    expect(result.url).toBe('https://transition.mp4')
+    // Routed to first-last-frame, NOT text-to-video.
+    const firstLastCall = mockedRunCapability.mock.calls.find((c) => c[0]!.capability === 'first-last-frame')
+    const t2vCall = mockedRunCapability.mock.calls.find((c) => c[0]!.capability === 'text-to-video')
+    expect(firstLastCall).toBeTruthy()
+    expect(t2vCall).toBeUndefined()
+    const inputs = firstLastCall![0]!.inputs
+    // 1 text + 2 images (first + last). Bridge keyframe is intentionally
+    // NOT shipped — first-last mode reads start + end from the two images.
+    expect(inputs).toHaveLength(3)
+    expect(inputs[1]).toEqual({ kind: 'image', url: 'https://prev-last-frame.png' })
+    expect(inputs[2]).toEqual({ kind: 'image', url: 'https://next-first-frame.png' })
+    // Voice refs / digital assets / reference_mode do NOT bleed into the
+    // first-last call — bridges don't carry dialogue and the model only
+    // accepts the 2 boundary images.
+    expect(firstLastCall![0]!.params?.reference_mode).toBeUndefined()
+  })
+
   it('clamps short durations up to 5s', async () => {
     mockedRunCapability.mockResolvedValue({ outputs: [{ kind: 'video', url: 'u' }] })
     const ctx = createMemoryContext({ llm: { complete: async () => '' } })

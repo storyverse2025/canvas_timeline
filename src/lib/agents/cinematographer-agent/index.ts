@@ -213,6 +213,43 @@ function assembleShootPrompt(req: {
   }).trim()
 }
 
+async function callFirstLastFrame(opts: {
+  prompt: string
+  firstFrameUrl: string
+  lastFrameUrl: string
+  durationSeconds: number
+  aspect: '16:9' | '9:16' | '1:1' | '4:3'
+  resolution: '480p' | '720p' | '1080p'
+}): Promise<string> {
+  // Seedance's first-last-frame mode interpolates between two reference
+  // images. Used for bridge / transition clips so the cut from prev →
+  // bridge → next reads as a real motion transition rather than three
+  // independent shots cobbled together.
+  //
+  // Voice audio refs are intentionally omitted — transition clips don't
+  // carry dialogue (the bridge proposal sets dialogue: '' for the same
+  // reason). If a future bridge does have dialogue, we'd need to switch
+  // to a model that accepts both end-frames AND voice refs.
+  const r = await runCapability({
+    capability: 'first-last-frame',
+    inputs: [
+      { kind: 'text', text: opts.prompt },
+      { kind: 'image', url: opts.firstFrameUrl },
+      { kind: 'image', url: opts.lastFrameUrl },
+    ],
+    params: {
+      provider: SHOOT_PROVIDER,
+      model: SHOOT_MODEL,
+      duration: String(opts.durationSeconds),
+      aspect: opts.aspect,
+      resolution: opts.resolution,
+    },
+  })
+  const url = r.outputs[0]?.url
+  if (!url) throw new Error('cinematographer: first-last-frame returned no url')
+  return url
+}
+
 async function callSeedance(opts: {
   prompt: string
   keyframeUrl: string
@@ -326,16 +363,24 @@ export async function* shoot(
   const prompt = typeof augmented === 'string' ? augmented : augmented.videoPrompt
   const voiceAudioUrls = typeof augmented === 'string' ? undefined : augmented.voiceAudioUrls
 
+  const mode = req.transitionFrames ? 'first-last-frame transition' : 'omni-reference'
   yield {
     type: 'progress',
-    message: `cinematographer: rolling on Seedance (${SHOOT_PROVIDER}/${SHOOT_MODEL})${
+    message: `cinematographer: rolling on Seedance (${SHOOT_PROVIDER}/${SHOOT_MODEL}, ${mode})${
       voiceAudioUrls?.length ? ` + ${voiceAudioUrls.length} voice ref${voiceAudioUrls.length === 1 ? '' : 's'}` : ''
     }`,
   }
-  const url = await callSeedance({
-    prompt, keyframeUrl: req.keyframeUrl, voiceAudioUrls, durationSeconds, aspect, resolution,
-    invitedImageAssetIds: req.invitedImageAssetIds,
-  })
+  const url = req.transitionFrames
+    ? await callFirstLastFrame({
+        prompt,
+        firstFrameUrl: req.transitionFrames.firstFrameUrl,
+        lastFrameUrl: req.transitionFrames.lastFrameUrl,
+        durationSeconds, aspect, resolution,
+      })
+    : await callSeedance({
+        prompt, keyframeUrl: req.keyframeUrl, voiceAudioUrls, durationSeconds, aspect, resolution,
+        invitedImageAssetIds: req.invitedImageAssetIds,
+      })
 
   yield {
     type: 'result',

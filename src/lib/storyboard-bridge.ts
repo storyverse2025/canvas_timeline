@@ -250,6 +250,11 @@ function proposalToStoryboardRow(
     keyframeNodeId: undefined,
     beatVideoNodeId: undefined,
     referenceNodeId: undefined,
+    // Bridge rows generate beat-video via first-last-frame mode using
+    // their neighbors' boundary frames, not the standard omni-reference
+    // keyframe. See useStoryboardGenerate.generateBeatVideo for the
+    // routing.
+    isTransition: true,
   }
 }
 
