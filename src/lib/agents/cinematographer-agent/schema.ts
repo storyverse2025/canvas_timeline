@@ -128,6 +128,31 @@ export interface BeatVideoResult {
   contextRefs: BeatVideoContextRef[]
 }
 
+/** One variant within a multi-strategy shoot. */
+export interface ShootVariant {
+  /** Short tag identifying the strategy ('stable' | 'balanced' | 'kinetic'). */
+  strategyName: string
+  /** Human-readable one-line description of what this variant emphasizes. */
+  strategyDescription: string
+  /** Video URL returned by Seedance for this variant. */
+  url: string
+  /** Full prompt that was sent (includes the strategy overlay). */
+  prompt: string
+  /** Effective duration in seconds. */
+  durationSeconds: number
+}
+
+export interface MultiStrategyResult {
+  /** All variants that successfully rendered (failed variants are dropped). */
+  variants: ShootVariant[]
+  /** Variants that failed, kept so the UI can report cost without surprise. */
+  failures: Array<{ strategyName: string; reason: string }>
+  /** Keyframe URL that fed every variant. */
+  keyframeUrl: string
+  /** Context refs (text-only) echoed back. */
+  contextRefs: BeatVideoContextRef[]
+}
+
 export interface ReviseRequest {
   /** The shoot result that the director flagged for revision. */
   previous: BeatVideoResult

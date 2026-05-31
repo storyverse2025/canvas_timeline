@@ -7,10 +7,12 @@ import {
   buildMotionDescription,
   cinematographerAgent,
   clampDuration,
+  pickStrategies,
   predictDialogueDurationSeconds,
   resolveEffectiveDurationSeconds,
   revise,
   shoot,
+  shootMultiStrategy,
   SHOOT_MODEL,
   SHOOT_PROVIDER,
 } from '@/lib/agents/cinematographer-agent'
@@ -418,5 +420,121 @@ describe('revise', () => {
     )
     const sent = spy.mock.calls[0]![0]![0]!.content as string
     expect(sent).toContain('(无 — 上一版通过，但导演要求重拍)')
+  })
+})
+
+describe('shootMultiStrategy', () => {
+  beforeEach(() => mockedRunCapability.mockReset())
+
+  it('pickStrategies: 2 → stable+kinetic, 3 → stable+balanced+kinetic, 1 → default', () => {
+    expect(pickStrategies(1).map((s) => s.name)).toEqual(['default'])
+    expect(pickStrategies(2).map((s) => s.name)).toEqual(['stable', 'kinetic'])
+    expect(pickStrategies(3).map((s) => s.name)).toEqual(['stable', 'balanced', 'kinetic'])
+  })
+
+  // Mock both the cinematography-describe (pre-roll) and text-to-video
+  // (per-variant) capabilities so tests can count text-to-video calls
+  // without the describe step poisoning the assertion.
+  function mockBothCapabilities(handleVideo: () => { kind: 'video'; url: string } | Error) {
+    let videoCall = 0
+    mockedRunCapability.mockImplementation(async (...args: unknown[]) => {
+      const req = args[0] as { capability?: string } | undefined
+      if (req?.capability === 'cinematography-describe') {
+        return { outputs: [{ kind: 'text' as const, text: 'stable handheld, soft top light' }] }
+      }
+      videoCall += 1
+      const out = handleVideo()
+      if (out instanceof Error) throw out
+      return { outputs: [out] }
+    })
+    return () => videoCall
+  }
+
+  function countByCapability(cap: string): number {
+    return mockedRunCapability.mock.calls.filter((c) => c[0]!.capability === cap).length
+  }
+
+  it('fires N parallel Seedance calls and returns one variant per success', async () => {
+    let i = 0
+    mockBothCapabilities(() => ({ kind: 'video', url: `https://variant-${++i}.mp4` }))
+    const ctx = createMemoryContext({ llm: { complete: async () => '' } })
+    const result = await driveAuto(
+      shootMultiStrategy(
+        {
+          row: { duration: 5, motion_prompts: 'p' },
+          keyframeUrl: 'https://k.png',
+          variants: 2,
+        },
+        ctx,
+      ),
+    )
+    // Two text-to-video calls (one per variant). The cinematography-describe
+    // pre-roll is separate.
+    expect(countByCapability('text-to-video')).toBe(2)
+    expect(result.variants).toHaveLength(2)
+    expect(result.failures).toHaveLength(0)
+    expect(result.variants.map((v) => v.strategyName).sort()).toEqual(['kinetic', 'stable'])
+    const stable = result.variants.find((v) => v.strategyName === 'stable')!
+    const kinetic = result.variants.find((v) => v.strategyName === 'kinetic')!
+    expect(stable.prompt).toContain('STRATEGY OVERLAY: STABLE')
+    expect(kinetic.prompt).toContain('STRATEGY OVERLAY: KINETIC')
+    expect(stable.url).not.toBe(kinetic.url)
+  })
+
+  it('drops failed variants but still returns the survivors', async () => {
+    let v = 0
+    mockBothCapabilities(() => {
+      v += 1
+      if (v === 1) return new Error('content policy')
+      return { kind: 'video', url: 'https://kinetic.mp4' }
+    })
+    const ctx = createMemoryContext({ llm: { complete: async () => '' } })
+    const result = await driveAuto(
+      shootMultiStrategy(
+        { row: { duration: 5, motion_prompts: 'p' }, keyframeUrl: 'https://k.png', variants: 2 },
+        ctx,
+      ),
+    )
+    expect(result.variants).toHaveLength(1)
+    expect(result.failures).toHaveLength(1)
+    expect(result.failures[0]!.reason).toContain('content policy')
+  })
+
+  it('throws when every variant fails', async () => {
+    // Cinematography-describe succeeds (returns fake text), but every
+    // Seedance video call rejects. Use mockResolvedValueOnce/mockRejected-
+    // ValueOnce so vitest doesn't flag the rejected promise as unhandled
+    // before driveAuto's await unwraps it.
+    mockedRunCapability
+      .mockResolvedValueOnce({ outputs: [{ kind: 'text', text: 'fake cinematography' }] })
+      .mockRejectedValueOnce(new Error('quota exceeded'))
+      .mockRejectedValueOnce(new Error('quota exceeded'))
+    const ctx = createMemoryContext({ llm: { complete: async () => '' } })
+    let caught: Error | undefined
+    try {
+      await driveAuto(
+        shootMultiStrategy(
+          { row: { duration: 5, motion_prompts: 'p' }, keyframeUrl: 'https://k.png', variants: 2 },
+          ctx,
+        ),
+      )
+    } catch (e) {
+      caught = e as Error
+    }
+    expect(caught).toBeDefined()
+    expect(caught!.message).toMatch(/all 2 variants failed/)
+    expect(caught!.message).toMatch(/quota exceeded/)
+  })
+
+  it('clamps variant count to [2, 3]', async () => {
+    mockBothCapabilities(() => ({ kind: 'video', url: 'u' }))
+    const ctx = createMemoryContext({ llm: { complete: async () => '' } })
+    await driveAuto(
+      shootMultiStrategy(
+        { row: { duration: 5, motion_prompts: 'p' }, keyframeUrl: 'https://k.png', variants: 10 },
+        ctx,
+      ),
+    )
+    expect(countByCapability('text-to-video')).toBe(3)
   })
 })

@@ -465,6 +465,150 @@ export async function* revise(
   }
 }
 
+// ─── Verb: shootMultiStrategy ─────────────────────────────────────
+//
+// Generate N variants of the same shot in parallel, each with a different
+// "strategy overlay" appended to the base prompt. Callers (currently the
+// shot-editor multi-strategy panel) hand the array of variants back to
+// the user so a human can pick the winner — no automated judge in this
+// MVP. Cost scales linearly with N; default is 2.
+
+const STRATEGY_OVERLAYS: Record<string, { description: string; overlay: string }> = {
+  stable: {
+    description: '保守稳定 — 镜头节奏内敛，构图忠实于 keyframe',
+    overlay: '【STRATEGY OVERLAY: STABLE】\nKeep the camera restrained. Match the keyframe composition tightly. Subtle motion only; do not invent extra camera moves the keyframe does not suggest.',
+  },
+  balanced: {
+    description: '中庸平衡 — 在 keyframe 忠实度和镜头活力之间取中',
+    overlay: '【STRATEGY OVERLAY: BALANCED】\nModerate camera energy. Balance fidelity to keyframe with engaging motion. One clear camera move, no more.',
+  },
+  kinetic: {
+    description: '激进有力 — 推拉摇移更夸张，节奏更紧',
+    overlay: '【STRATEGY OVERLAY: KINETIC】\nDynamic, expressive camera. Push the action harder than the keyframe alone suggests. Stronger motion arcs, more aggressive framing changes.',
+  },
+}
+
+export function pickStrategies(n: number): Array<{ name: string; description: string; overlay: string }> {
+  if (n <= 1) return [{ name: 'default', description: '默认', overlay: '' }]
+  const k = n === 2 ? ['stable', 'kinetic'] : ['stable', 'balanced', 'kinetic']
+  return k.slice(0, n).map((name) => ({
+    name,
+    description: STRATEGY_OVERLAYS[name]!.description,
+    overlay: STRATEGY_OVERLAYS[name]!.overlay,
+  }))
+}
+
+export interface MultiStrategyRequest extends ShootRequest {
+  /** Number of variants to render in parallel. Clamped to [2, 3]. */
+  variants?: number
+}
+
+export async function* shootMultiStrategy(
+  req: MultiStrategyRequest,
+  ctx: ProjectContext,
+): AgentGenerator<import('./schema').MultiStrategyResult> {
+  const shot = req.row.shot_number ?? '?'
+  const n = Math.min(3, Math.max(2, req.variants ?? 2))
+  const durationSeconds = resolveEffectiveDurationSeconds({
+    userRequested: req.durationSecondsOverride ?? req.row.duration ?? MIN_DURATION,
+    dialogue: req.row.dialogue,
+  })
+  const aspect = req.aspect ?? '16:9'
+  const resolution = req.resolution ?? SHOOT_RESOLUTION_DEFAULT
+
+  if (!req.keyframeUrl) {
+    throw new Error('cinematographer: shootMultiStrategy requires keyframeUrl')
+  }
+
+  void ctx
+
+  yield {
+    type: 'progress',
+    message: `cinematographer: reading keyframe for cinematography language (shot ${shot}, ${n}-variant multi-strategy)`,
+  }
+  const cinematography = await describeKeyframeCinematography({
+    keyframeUrl: req.keyframeUrl,
+    row: req.row,
+    visualStyle: req.visualStyle,
+  })
+
+  const basePrompt = assembleShootPrompt({
+    row: req.row,
+    keyframeUrl: req.keyframeUrl,
+    contextRefs: req.contextRefs,
+    visualStyle: req.visualStyle,
+    cinematography,
+  })
+
+  const augmented = req.promptPostProcessor ? await req.promptPostProcessor(basePrompt) : basePrompt
+  const prompt = typeof augmented === 'string' ? augmented : augmented.videoPrompt
+  const voiceAudioUrls = typeof augmented === 'string' ? undefined : augmented.voiceAudioUrls
+
+  const strategies = pickStrategies(n)
+  const variantPrompts = strategies.map((s) => ({
+    ...s,
+    prompt: s.overlay ? `${prompt}\n\n${s.overlay}` : prompt,
+  }))
+
+  yield {
+    type: 'progress',
+    message: `cinematographer: rolling ${variantPrompts.length} parallel variants (${variantPrompts.map((v) => v.name).join(' / ')}) on Seedance — cost ${variantPrompts.length}×`,
+  }
+
+  const settled = await Promise.allSettled(
+    variantPrompts.map((v) =>
+      callSeedance({
+        prompt: v.prompt,
+        keyframeUrl: req.keyframeUrl,
+        voiceAudioUrls,
+        durationSeconds,
+        aspect,
+        resolution,
+        invitedImageAssetIds: req.invitedImageAssetIds,
+      }),
+    ),
+  )
+
+  const variants = settled
+    .map((r, i) => ({ result: r, strategy: variantPrompts[i]! }))
+    .filter((x): x is { result: PromiseFulfilledResult<string>; strategy: typeof variantPrompts[number] } =>
+      x.result.status === 'fulfilled',
+    )
+    .map((x) => ({
+      strategyName: x.strategy.name,
+      strategyDescription: x.strategy.description,
+      url: x.result.value,
+      prompt: x.strategy.prompt,
+      durationSeconds,
+    }))
+
+  const failures = settled
+    .map((r, i) => ({ result: r, strategy: variantPrompts[i]! }))
+    .filter((x): x is { result: PromiseRejectedResult; strategy: typeof variantPrompts[number] } =>
+      x.result.status === 'rejected',
+    )
+    .map((x) => ({
+      strategyName: x.strategy.name,
+      reason: (x.result.reason as Error)?.message ?? String(x.result.reason),
+    }))
+
+  if (variants.length === 0) {
+    throw new Error(
+      `cinematographer: all ${n} variants failed. First failure: ${failures[0]?.reason ?? 'unknown'}`,
+    )
+  }
+
+  yield {
+    type: 'result',
+    payload: {
+      variants,
+      failures,
+      keyframeUrl: req.keyframeUrl,
+      contextRefs: req.contextRefs ?? [],
+    },
+  }
+}
+
 // Pure helpers — exported for tests + reuse.
 export {
   buildMotionDescription,
@@ -485,6 +629,7 @@ export const cinematographerAgent = {
   systemPrompt: SYSTEM,
   shoot,
   revise,
+  shootMultiStrategy,
 } as const
 
 export type {
@@ -494,4 +639,6 @@ export type {
   BeatVideoRow,
   ShootRequest,
   ReviseRequest,
+  ShootVariant,
+  MultiStrategyResult,
 } from './schema'
