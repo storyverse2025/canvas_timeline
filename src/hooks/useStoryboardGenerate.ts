@@ -9,7 +9,8 @@ import { useProjectDB } from '@/stores/project-db'
 import { useLibtvTasksStore } from '@/stores/libtv-tasks-store'
 import type { StoryboardRow, ElementSlot } from '@/types/storyboard'
 import type { AssetType } from '@/types/asset'
-import { generateKeyframe as directorGenerateKeyframe, critiqueVideoConsistency as directorCritiqueVideo } from '@/lib/agents/director-agent'
+import { generateKeyframe as directorGenerateKeyframe, critiqueVideoConsistency as directorCritiqueVideo, critiqueKeyframe as directorCritiqueKeyframe, formatKeyframeFeedbackForNext } from '@/lib/agents/director-agent'
+import type { CritiqueKeyframeResult } from '@/lib/agents/director-agent'
 import type {
   GenerateKeyframeRequest,
   KeyframeCharacterRef,
@@ -176,7 +177,7 @@ export function useStoryboardGenerate() {
    */
   const runKeyframeGeneration = useCallback(async (
     row: StoryboardRow,
-    opts: { stylizeFacesFor2D?: boolean; taskLabel?: string } = {},
+    opts: { stylizeFacesFor2D?: boolean; taskLabel?: string; feedbackNote?: string } = {},
   ): Promise<string> => {
     const taskId = uuid()
     startTask({
@@ -189,7 +190,7 @@ export function useStoryboardGenerate() {
     updateRow(row.id, { status: 'in_progress' })
 
     try {
-      const url = await _doKeyframeGen(row, opts.stylizeFacesFor2D ?? false)
+      const url = await _doKeyframeGen(row, opts.stylizeFacesFor2D ?? false, opts.feedbackNote ?? '')
       updateTask(taskId, { status: 'done', resultUrl: url, resultKind: 'image' })
       return url
     } catch (e) {
@@ -197,6 +198,10 @@ export function useStoryboardGenerate() {
       updateTask(taskId, { status: 'failed', error: String((e as Error).message ?? e) })
       throw e
     }
+    // _doKeyframeGen omitted: declared later in the same scope (TDZ if listed)
+    // and its identity is stable for this hook lifetime — matches the original
+    // dep list before feedbackNote was threaded through.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startTask, updateTask, updateRow])
 
   const generateKeyframe = useCallback(async (row: StoryboardRow) => {
@@ -212,6 +217,83 @@ export function useStoryboardGenerate() {
     }
   }, [runKeyframeGeneration])
 
+  // ─── Iterative refine: N sequential keyframes with AI judge between ──
+  //
+  // For each iteration:
+  //   1. Generate keyframe (using prev iteration's critique as feedbackNote)
+  //   2. Vision LLM critiques the result against the row's intent
+  //   3. Critique becomes the next iteration's feedbackNote
+  //
+  // Every iteration's grid + clean keyframes land on canvas next to each
+  // other (same wiring as the single-shot path), so all N candidates are
+  // immediately comparable. User adopts the best one via the existing
+  // ⭐ flow on ImageCanvasNode. Cost = N × (2 image gen + 1 vision call).
+  //
+  // No early-exit: even if iteration 1 scores 10/10, we still run all N
+  // so the user gets the full A/B set. Future toggle could short-circuit
+  // on high score.
+  const generateKeyframesIterative = useCallback(async (row: StoryboardRow, n: number = 4) => {
+    if (!row.storyboard_prompts?.trim() && !row.visual_description?.trim()) {
+      toast.error('缺少画面描述或分镜提示词')
+      return
+    }
+    const clamped = Math.max(2, Math.min(6, Math.floor(n)))
+    const taskId = uuid()
+    startTask({ id: taskId, nodeId: `sb-kf-iter-${row.id}`, itemId: row.id, prompt: `Keyframe ×${clamped} (iterative)` })
+    updateTask(taskId, { status: 'polling' })
+
+    const candidates: Array<{ iter: number; url: string; critique: CritiqueKeyframeResult }> = []
+    let feedbackNote = ''
+    try {
+      for (let i = 0; i < clamped; i++) {
+        const iterLabel = `iter ${i + 1}/${clamped}`
+        // Generate this iteration's keyframe — runKeyframeGeneration's
+        // existing canvas wiring drops both grid + clean nodes for us.
+        const freshRow = useStoryboardStore.getState().rows.find((r) => r.id === row.id) ?? row
+        const url = await runKeyframeGeneration(freshRow, {
+          taskLabel: `Keyframe (${iterLabel})`,
+          feedbackNote: feedbackNote || undefined,
+        })
+
+        // Critique the clean variant when present (cleaner judging signal
+        // than the multi-panel grid sheet); fall back to grid otherwise.
+        const reReadRow = useStoryboardStore.getState().rows.find((r) => r.id === row.id) ?? row
+        const judgeUrl = reReadRow.keyframeCleanUrl || url
+        const critiqueCtx = createMemoryContext({ llm: createCapabilityLLM() })
+        const critique = await runAgentWithChatBridge(
+          'director-agent',
+          directorCritiqueKeyframe(
+            {
+              keyframeUrl: judgeUrl,
+              row: reReadRow,
+              expected: {
+                characters: [reReadRow.character1?.description, reReadRow.character2?.description]
+                  .filter((d): d is string => Boolean(d?.trim())),
+                scene: reReadRow.scene?.description || undefined,
+                props: [reReadRow.prop1?.description, reReadRow.prop2?.description]
+                  .filter((d): d is string => Boolean(d?.trim())),
+              },
+            },
+            critiqueCtx,
+          ),
+          { verb: `critique-keyframe ${row.shot_number ?? '?'} ${iterLabel}` },
+        )
+        candidates.push({ iter: i + 1, url, critique })
+        feedbackNote = formatKeyframeFeedbackForNext(critique, i + 1)
+      }
+
+      const best = [...candidates].sort((a, b) => b.critique.score - a.critique.score)[0]
+      updateTask(taskId, { status: 'done', resultUrl: best?.url, resultKind: 'image' })
+      const scoresLine = candidates.map((c) => `${c.iter}: ${c.critique.score}/10`).join(' · ')
+      toast.success(`Keyframe ×${clamped} 迭代完成`, {
+        description: `分数 ${scoresLine}. 最高分 iter ${best?.iter}（已留在画布上，点击它的 ⭐ 采用）。`,
+      })
+    } catch (e) {
+      updateTask(taskId, { status: 'failed', error: String((e as Error).message ?? e) })
+      toast.error('迭代生成失败', { description: String((e as Error).message).slice(0, 200) })
+    }
+  }, [runKeyframeGeneration, startTask, updateTask])
+
   // The actual generation body — pure side-effectful function (canvas writes,
   // row update). Kept separate from runKeyframeGeneration so the task-status
   // bookkeeping wraps it uniformly. Defined outside useCallback because it
@@ -219,6 +301,7 @@ export function useStoryboardGenerate() {
   const _doKeyframeGen = useCallback(async (
     row: StoryboardRow,
     stylizeFacesFor2D: boolean,
+    feedbackNote: string = '',
   ): Promise<string> => {
     // Re-instate the original generateKeyframe body, parametrized by
     // stylizeFacesFor2D so the privacy-block retry can opt in.
@@ -313,6 +396,7 @@ export function useStoryboardGenerate() {
       refs: [],
       aspect: '16:9',
       stylizeFacesFor2D,
+      feedbackNote: feedbackNote || undefined,
     }
 
     const agentCtx = createMemoryContext({ llm: createCapabilityLLM() })
@@ -906,5 +990,5 @@ export function useStoryboardGenerate() {
     }
   }, [updateRow, startTask, updateTask])
 
-  return { generateKeyframe, generateBeatVideo, generateBeatVideoMultiStrategy }
+  return { generateKeyframe, generateKeyframesIterative, generateBeatVideo, generateBeatVideoMultiStrategy }
 }

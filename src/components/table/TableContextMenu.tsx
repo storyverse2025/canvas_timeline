@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { Trash2, Plus, Wand2, Film, Image as ImageIcon, Drama, Music2, Layers, Library } from 'lucide-react'
+import { Trash2, Plus, Wand2, Film, Image as ImageIcon, Drama, Music2, Layers, Library, Repeat } from 'lucide-react'
 import { toast } from 'sonner'
 import { useStoryboardStore } from '@/stores/storyboard-store'
 import { useProjectDB } from '@/stores/project-db'
@@ -31,7 +31,7 @@ export function TableContextMenu({ menu, onClose }: Props) {
   const rows = useStoryboardStore((s) => s.rows)
   const removeRow = useStoryboardStore((s) => s.removeRow)
   const insertRowAfter = useStoryboardStore((s) => s.insertRowAfter)
-  const { generateKeyframe, generateBeatVideo, generateBeatVideoMultiStrategy } = useStoryboardGenerate()
+  const { generateKeyframe, generateKeyframesIterative, generateBeatVideo, generateBeatVideoMultiStrategy } = useStoryboardGenerate()
 
   const row = rows.find((r) => r.id === menu?.rowId)
   const rowIdx = rows.findIndex((r) => r.id === menu?.rowId)
@@ -146,6 +146,11 @@ export function TableContextMenu({ menu, onClose }: Props) {
   const handleGenKeyframe = () => {
     onClose()
     generateKeyframe(row)
+  }
+
+  const handleGenKeyframeIterative = () => {
+    onClose()
+    generateKeyframesIterative(row, 4)
   }
 
   const handleGenBeatVideo = () => {
@@ -264,6 +269,7 @@ export function TableContextMenu({ menu, onClose }: Props) {
       style={{ left: menu.x, top: menu.y }}
     >
       <MenuBtn icon={ImageIcon} label="生成 Keyframe" onClick={handleGenKeyframe} />
+      <MenuBtn icon={Repeat} label="迭代生成 4 个 Keyframe (AI judge)" onClick={handleGenKeyframeIterative} />
       <MenuBtn icon={Film} label="生成 Beat Video" onClick={handleGenBeatVideo} />
       <MenuBtn icon={Layers} label="拍 2 方案 (multi-strategy)" onClick={handleGenBeatVideoMultiStrategy} />
       <MenuBtn icon={Library} label="查 RAG 美术参考" onClick={handleRagSearch} />

@@ -1,7 +1,10 @@
+import { toast } from 'sonner'
 import { useShotEditorStore, type EditMode } from '@/stores/shot-editor-store'
 import { useStoryboardStore } from '@/stores/storyboard-store'
-import { X, MessageSquare, Paintbrush, Sparkles, RotateCcw, Upload, ChevronLeft, ChevronRight } from 'lucide-react'
+import { useCanvasItemStore } from '@/stores/canvas-item-store'
+import { X, MessageSquare, Paintbrush, Sparkles, RotateCcw, Upload, ChevronLeft, ChevronRight, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { thumb } from '@/lib/thumb'
 import { DialogEditPanel } from './DialogEditPanel'
 import { InpaintPanel } from './InpaintPanel'
 import { AssociationPanel } from './AssociationPanel'
@@ -23,6 +26,8 @@ export function ShotEditorOverlay() {
   const setEditMode = useShotEditorStore((s) => s.setEditMode)
   const closeEditor = useShotEditorStore((s) => s.closeEditor)
   const rows = useStoryboardStore((s) => s.rows)
+  const updateRow = useStoryboardStore((s) => s.updateRow)
+  const allItems = useCanvasItemStore((s) => s.items)
 
   if (!isOpen || !rowId) return null
 
@@ -33,6 +38,30 @@ export function ShotEditorOverlay() {
   const imageUrl = row.keyframeUrl || row.reference_image
   const hasPrev = rowIdx > 0
   const hasNext = rowIdx < rows.length - 1
+
+  // Pull every historical keyframe for this row off the canvas item store.
+  // Both the multi-panel grid (role='keyframe') and the clean single-frame
+  // variant (role='keyframe-clean') are eligible. We match by name prefix
+  // so iteration variants (KF-S1, KF-S1-clean, KF-S1-iter2, …) all show
+  // up regardless of which path generated them.
+  const namePrefix = `KF-${row.shot_number}`
+  const keyframeVersions = Object.values(allItems)
+    .filter((it) => {
+      if (it.kind !== 'image') return false
+      if (it.role !== 'keyframe' && it.role !== 'keyframe-clean') return false
+      const n = it.name ?? ''
+      return n === namePrefix || n.startsWith(`${namePrefix}-`) || n.startsWith(`${namePrefix} `)
+    })
+    .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
+
+  const adoptVersion = (itemId: string, url: string) => {
+    updateRow(row.id, {
+      keyframeUrl: url,
+      reference_image: url,
+      keyframeNodeId: row.keyframeNodeId, // node id stays on the original — adoption is by URL, not node
+    })
+    toast.success(`已采用版本 ${itemId.slice(0, 8)} 作为当前 keyframe`)
+  }
 
   const goTo = (idx: number) => {
     const target = rows[idx]
@@ -92,12 +121,71 @@ export function ShotEditorOverlay() {
 
       {/* Body */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left: Image viewer */}
-        <div className="flex-1 flex items-center justify-center bg-black/90 p-4">
-          {imageUrl ? (
-            <img src={imageUrl} alt={row.shot_number} className="max-w-full max-h-full object-contain rounded" />
-          ) : (
-            <div className="text-zinc-500 text-sm">无参考图 — 请先生成 Keyframe</div>
+        {/* Left: Image viewer + version history strip */}
+        <div className="flex-1 flex flex-col bg-black/90">
+          <div className="flex-1 flex items-center justify-center p-4 overflow-hidden">
+            {imageUrl ? (
+              <img src={imageUrl} alt={row.shot_number} className="max-w-full max-h-full object-contain rounded" />
+            ) : (
+              <div className="text-zinc-500 text-sm">无参考图 — 请先生成 Keyframe</div>
+            )}
+          </div>
+
+          {/* History strip — every historical KF-{shot}* item is shown
+              as a thumbnail; click to adopt as the row's current
+              keyframe. The currently-adopted one is highlighted +
+              gets a check badge. */}
+          {keyframeVersions.length > 0 && (
+            <div className="shrink-0 border-t border-border bg-zinc-950/80 px-3 py-2">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[10px] uppercase text-muted-foreground">
+                  Keyframe 历史版本 ({keyframeVersions.length})
+                </span>
+                <span className="text-[10px] text-muted-foreground/60">
+                  点击缩略图采用
+                </span>
+              </div>
+              <div className="flex gap-1.5 overflow-x-auto pb-1">
+                {keyframeVersions.map((it) => {
+                  const isAdopted = it.content === imageUrl
+                  const isClean = it.role === 'keyframe-clean'
+                  return (
+                    <button
+                      key={it.id}
+                      onClick={() => adoptVersion(it.id, it.content ?? '')}
+                      className={cn(
+                        'relative shrink-0 rounded border-2 overflow-hidden transition-all hover:scale-105',
+                        isAdopted ? 'border-emerald-400' : 'border-zinc-700 hover:border-zinc-500',
+                      )}
+                      style={{ width: 96, height: 56 }}
+                      title={`${it.name}${isClean ? ' (clean)' : ''} — ${new Date(it.createdAt ?? 0).toLocaleString('zh-CN')}`}
+                    >
+                      {it.content ? (
+                        <img
+                          src={thumb(it.content, 256)}
+                          alt={it.name ?? ''}
+                          loading="lazy"
+                          decoding="async"
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-full h-full bg-zinc-800" />
+                      )}
+                      {isAdopted && (
+                        <div className="absolute top-0.5 right-0.5 bg-emerald-500 rounded-full p-0.5">
+                          <Check className="w-2.5 h-2.5 text-white" />
+                        </div>
+                      )}
+                      {isClean && (
+                        <div className="absolute bottom-0.5 left-0.5 text-[8px] px-1 bg-black/60 text-emerald-300 rounded">
+                          clean
+                        </div>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
           )}
         </div>
 
