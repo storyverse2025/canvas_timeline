@@ -202,12 +202,25 @@ export interface GenerateKeyframeRequest {
 }
 
 export interface KeyframeResult {
-  /** The image URL returned by text-to-image. */
+  /**
+   * The grid keyframe URL — multi-panel storyboard sheet with time-slice
+   * labels, character/prop diagrams, floor plan. Kept for the UI's pacing
+   * reference and as the fallback when the clean variant isn't available.
+   */
   url: string
-  /** The full text prompt that was sent (for retries/debug). */
+  /** The full text prompt for the grid sheet (for retries/debug). */
   prompt: string
   /** Image references that were sent in stable order (image1, image2, ...). */
   imageRefs: Array<{ role: string; description?: string; imageUrl: string }>
+  /**
+   * Single clean cinematic frame — no panels, no labels, no diagrams.
+   * Cinematographer prefers this as the Seedance omni-reference so the
+   * grid sheet's borders don't leak into the generated video. Optional
+   * for back-compat (older code paths still return only `url`).
+   */
+  cleanUrl?: string
+  /** The full text prompt for the clean frame (for retries/debug). */
+  cleanPrompt?: string
 }
 
 export interface CritiqueVideoConsistencyRequest {

@@ -67,6 +67,14 @@ export interface StoryboardRow extends StoryboardRowInput {
   /** Canvas node ID for the keyframe image */
   keyframeNodeId?: string;
   keyframeUrl?: string;
+  /**
+   * Optional second keyframe rendered as a single clean cinematic frame
+   * (no panels / no time labels / no grid). When present, cinematographer
+   * uses this as the Seedance omni-reference instead of keyframeUrl so the
+   * grid sheet's borders + labels don't leak into the generated video. The
+   * grid `keyframeUrl` is kept for the storyboard UI's pacing reference.
+   */
+  keyframeCleanUrl?: string;
   /** Canvas node ID for the beat video */
   beatVideoNodeId?: string;
   beatVideoUrl?: string;

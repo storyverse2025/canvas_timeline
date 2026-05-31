@@ -486,12 +486,99 @@ function buildKeyframePrompt(req: GenerateKeyframeRequest): string {
     .join('\n')
 }
 
+/**
+ * Build the prompt for the CLEAN keyframe variant — a single full-frame
+ * cinematic composition with no panels, time labels, or diagrams. The
+ * cinematographer prefers this image as Seedance's omni-reference so the
+ * grid sheet's borders + labels don't leak into the generated video.
+ *
+ * Uses the same character/scene/prop references as the grid build so the
+ * casting / location / props stay consistent across the two variants.
+ */
+function buildCleanKeyframePrompt(req: GenerateKeyframeRequest): string {
+  const r = req.row
+  const aspect = req.aspect ?? '16:9'
+  const visualStyle = req.visualStyle ?? '冷调写实电影质感 / cold-toned filmic'
+  const orderedRefs = collectOrderedRefs(req)
+  const legendLines = orderedRefs.map((ref, i) =>
+    `- image${i + 1} = ${ref.role}${ref.description ? ` (${ref.description})` : ''}`,
+  )
+
+  const sceneLabel = req.scene
+    ? `${req.scene.name ? `${req.scene.name} — ` : ''}${req.scene.description ?? ''}`.trim() || '(scene from row visual_description)'
+    : '(no scene ref supplied — infer from row visual_description)'
+
+  return [
+    `# Cinematic shot frame — ONE full-frame composition, ready for video generation.`,
+    `Shot duration: ${req.shotDurationSeconds}s. Aspect: ${aspect}. Style: ${visualStyle}.`,
+    ``,
+    `## Subject`,
+    `${r.visual_description || r.storyboard_prompts || '(use the visual_description from this row)'}`,
+    r.emotion_mood ? `Emotion / mood: ${r.emotion_mood}` : '',
+    r.emotion_atmosphere ? `Atmosphere: ${r.emotion_atmosphere}` : '',
+    ``,
+    `## Composition`,
+    `Render ONE continuous cinematic frame — the most visually important beat of this shot (typically the climax / hero moment). Full-bleed; the frame fills the entire output.`,
+    `Maintain character + scene + prop fidelity from the supplied reference images.`,
+    ``,
+    `## Scene`,
+    sceneLabel,
+    ``,
+    `## NEGATIVE`,
+    `Absolutely NO panel borders, NO panel grid, NO multi-panel storyboard, NO time-slice labels (e.g. "0–1.5s"), NO arrows, NO floor plans, NO numbered diagrams, NO character-height comparison strip, NO text annotations, NO UI elements, NO logos, NO watermarks, NO captions, NO subtitles. NO gutters between regions. This is a single clean cinematic frame, NOT a storyboard sheet.`,
+    ``,
+    ...(legendLines.length
+      ? [
+          `## Reference image legend`,
+          `Use the supplied reference images as labeled below. Maintain character + scene consistency.`,
+          ...legendLines,
+          ``,
+        ]
+      : []),
+    `## Quality bar`,
+    `- 4K ultra-high definition; ${visualStyle}.`,
+    `- ONE continuous cinematic frame — not a sheet, not panels.`,
+    `- Aspect ratio ${aspect}.`,
+    `- Output is the OMNI-REFERENCE for Seedance 2.0 — must be visually clean (no markings of any kind).`,
+    req.stylizeFacesFor2D
+      ? `\n## 3DCG STYLIZATION (privacy retry)\n把原来人物脸部3DCG风格化，尽量保持面部细节，但可以避免系统误认真人；其他地方保持原来美术风格。`
+      : '',
+  ]
+    .filter((line) => line !== '')
+    .join('\n')
+}
+
+async function callKeyframeCapability(opts: {
+  prompt: string
+  orderedRefs: OrderedImageRef[]
+  aspect: '16:9' | '9:16' | '1:1' | '4:3'
+}): Promise<string> {
+  const r = await runCapability({
+    capability: 'text-to-image',
+    inputs: [
+      { kind: 'text', text: opts.prompt },
+      ...opts.orderedRefs.map((ref) => ({ kind: 'image' as const, url: ref.imageUrl })),
+    ],
+    params: {
+      provider: KEYFRAME_PROVIDER,
+      model: KEYFRAME_MODEL,
+      aspect: opts.aspect,
+      quality: 'hd',
+      resolution: '4k',
+    },
+  })
+  const url = r.outputs[0]?.url
+  if (!url) throw new Error('director-agent: keyframe capability returned no url')
+  return url
+}
+
 export async function* generateKeyframe(
   req: GenerateKeyframeRequest,
   ctx: ProjectContext,
 ): AgentGenerator<KeyframeResult> {
   yield { type: 'progress', message: 'director: composing visual development board prompt' }
   const prompt = buildKeyframePrompt(req)
+  const cleanPrompt = buildCleanKeyframePrompt(req)
   const orderedRefs = collectOrderedRefs(req)
 
   if (!req.row.storyboard_prompts && !req.row.visual_description) {
@@ -503,37 +590,49 @@ export async function* generateKeyframe(
   void ctx
   yield {
     type: 'progress',
-    message: `director: rendering 4K keyframe via ${KEYFRAME_PROVIDER}/${KEYFRAME_MODEL}`,
+    message: `director: rendering grid + clean keyframes in parallel via ${KEYFRAME_PROVIDER}/${KEYFRAME_MODEL}`,
   }
 
-  const r = await runCapability({
-    capability: 'text-to-image',
-    inputs: [
-      { kind: 'text', text: prompt },
-      ...orderedRefs.map((ref) => ({ kind: 'image' as const, url: ref.imageUrl })),
-    ],
-    params: {
-      // Pin the routing per the planning conversation contract. The
-      // capabilities plugin reads params.provider + params.model and
-      // forwards `model` straight to TokenRouter (the only image
-      // backend). `provider` is kept for symmetry / future routing.
-      provider: KEYFRAME_PROVIDER,
-      model: KEYFRAME_MODEL,
-      aspect: req.aspect ?? '16:9',
-      // Request high-quality / 4K output. TokenRouter forwards these as
-      // hints; the server-side maps `aspect` to the closest supported
-      // size (e.g. 1792x1024 for 16:9).
-      quality: 'hd',
-      resolution: '4k',
-    },
-  })
-  const url = r.outputs[0]?.url
+  const aspect = req.aspect ?? '16:9'
+  // Parallel: grid (UI pacing reference) + clean (Seedance omni-reference).
+  // 2x image cost per keyframe; user accepted this in the planning interview
+  // (chose the 双 keyframe option vs alternatives). If the clean call fails
+  // but the grid succeeds we still return the grid so downstream Seedance
+  // calls can fall back to it — and vice versa.
+  const [gridResult, cleanResult] = await Promise.allSettled([
+    callKeyframeCapability({ prompt, orderedRefs, aspect }),
+    callKeyframeCapability({ prompt: cleanPrompt, orderedRefs, aspect }),
+  ])
+
+  if (gridResult.status === 'rejected' && cleanResult.status === 'rejected') {
+    throw gridResult.reason instanceof Error
+      ? gridResult.reason
+      : new Error(String(gridResult.reason))
+  }
+
+  const gridUrl = gridResult.status === 'fulfilled' ? gridResult.value : undefined
+  const cleanUrl = cleanResult.status === 'fulfilled' ? cleanResult.value : undefined
+
+  // Prefer grid for `url` (back-compat: callers and persisted rows expect
+  // the multi-panel sheet there). If the grid call failed, fall back to
+  // clean so the UI still gets something.
+  const url = gridUrl ?? cleanUrl
   if (!url) throw new Error('director-agent: keyframe capability returned no url')
-  yield { type: 'result', payload: { url, prompt, imageRefs: orderedRefs } }
+
+  yield {
+    type: 'result',
+    payload: {
+      url,
+      prompt,
+      imageRefs: orderedRefs,
+      cleanUrl,
+      cleanPrompt: cleanUrl ? cleanPrompt : undefined,
+    },
+  }
 }
 
 // Pure helpers, exported for tests + reuse by the caller.
-export { buildKeyframePrompt, collectOrderedRefs }
+export { buildKeyframePrompt, buildCleanKeyframePrompt, collectOrderedRefs }
 
 // ─── Verb: critiqueVideoConsistency ────────────────────────────────
 
