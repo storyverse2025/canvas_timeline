@@ -1,8 +1,9 @@
 import { useEffect, useRef } from 'react'
-import { Trash2, Plus, Wand2, Film, Image as ImageIcon, Drama, Music2, Layers } from 'lucide-react'
+import { Trash2, Plus, Wand2, Film, Image as ImageIcon, Drama, Music2, Layers, Library } from 'lucide-react'
 import { toast } from 'sonner'
 import { useStoryboardStore } from '@/stores/storyboard-store'
 import { useProjectDB } from '@/stores/project-db'
+import { useChatStore } from '@/stores/chat-store'
 import { useStoryboardGenerate } from '@/hooks/useStoryboardGenerate'
 import { runCapability } from '@/lib/capabilities/client'
 import { enrichRow as actorEnrichRow } from '@/lib/agents/actor-agent'
@@ -10,6 +11,7 @@ import { designRow as soundDesignRow } from '@/lib/agents/sound-agent'
 import { runAgentWithChatBridge } from '@/lib/agents/chat-bridge'
 import { createMemoryContext } from '@/lib/agents/_shared/context/memory'
 import { createCapabilityLLM } from '@/lib/agents/_shared/llm/capability'
+import { api } from '@/lib/api-client'
 import type { StoryboardRow } from '@/types/storyboard'
 import { cn } from '@/lib/utils'
 
@@ -156,6 +158,39 @@ export function TableContextMenu({ menu, onClose }: Props) {
     generateBeatVideoMultiStrategy(row, 2)
   }
 
+  const handleRagSearch = async () => {
+    onClose()
+    const query = row.visual_description?.trim() || row.storyboard_prompts?.trim() || ''
+    if (!query) {
+      toast.error('查 RAG 参考需要 visual_description', { description: '先在分镜表填一句画面描述' })
+      return
+    }
+    const addMessage = useChatStore.getState().addMessage
+    addMessage('system', `🔎 RAG: 查找美术参考 (shot ${row.shot_number}) — query: "${query.slice(0, 80)}…"`)
+    try {
+      const { hits } = await api.artRag.search({ query, topK: 5 })
+      if (hits.length === 0) {
+        addMessage('system', `RAG: 没找到匹配的参考。可能数据库里没有相似镜头。`)
+        return
+      }
+      const lines = hits
+        .map((h, i) => {
+          const sim = (h.similarity * 100).toFixed(0)
+          const media = h.output_media_url ? `\n   ${h.output_media_type ?? 'media'}: ${h.output_media_url}` : ''
+          const source = h.source_name ? ` · ${h.source_name}` : ''
+          return `**${i + 1}.** [${sim}% 相似${source}] ${h.prompt.slice(0, 180)}${h.prompt.length > 180 ? '…' : ''}${media}`
+        })
+        .join('\n\n')
+      addMessage(
+        'assistant',
+        `RAG: 找到 ${hits.length} 条参考 (shot ${row.shot_number})\n\n${lines}\n\n— 点击 media 链接预览。如果某条参考合适，复制 prompt 粘进 \`storyboard_prompts\` 列即可作为美术指导。`,
+      )
+    } catch (e) {
+      toast.error('RAG 查询失败', { description: String((e as Error).message).slice(0, 200) })
+      addMessage('system', `❌ RAG 查询失败: ${(e as Error).message}`)
+    }
+  }
+
   const updateRow = useStoryboardStore.getState().updateRow
 
   const handleSoundDesign = async () => {
@@ -231,6 +266,7 @@ export function TableContextMenu({ menu, onClose }: Props) {
       <MenuBtn icon={ImageIcon} label="生成 Keyframe" onClick={handleGenKeyframe} />
       <MenuBtn icon={Film} label="生成 Beat Video" onClick={handleGenBeatVideo} />
       <MenuBtn icon={Layers} label="拍 2 方案 (multi-strategy)" onClick={handleGenBeatVideoMultiStrategy} />
+      <MenuBtn icon={Library} label="查 RAG 美术参考" onClick={handleRagSearch} />
       <MenuBtn icon={Drama} label="演员完善表演 (actor-agent)" onClick={handleActorEnrich} />
       <MenuBtn icon={Music2} label="音频设计 BGM/SFX/混音 (sound-agent)" onClick={handleSoundDesign} />
       <div className="my-1 border-t border-zinc-800" />
