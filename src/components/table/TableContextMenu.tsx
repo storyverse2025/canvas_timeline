@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { Trash2, Plus, Wand2, Film, Image as ImageIcon, Drama, Music2 } from 'lucide-react'
+import { Trash2, Plus, Wand2, Film, Image as ImageIcon, Drama, Music2, Layers } from 'lucide-react'
 import { toast } from 'sonner'
 import { useStoryboardStore } from '@/stores/storyboard-store'
 import { useProjectDB } from '@/stores/project-db'
@@ -29,7 +29,7 @@ export function TableContextMenu({ menu, onClose }: Props) {
   const rows = useStoryboardStore((s) => s.rows)
   const removeRow = useStoryboardStore((s) => s.removeRow)
   const insertRowAfter = useStoryboardStore((s) => s.insertRowAfter)
-  const { generateKeyframe, generateBeatVideo } = useStoryboardGenerate()
+  const { generateKeyframe, generateBeatVideo, generateBeatVideoMultiStrategy } = useStoryboardGenerate()
 
   const row = rows.find((r) => r.id === menu?.rowId)
   const rowIdx = rows.findIndex((r) => r.id === menu?.rowId)
@@ -151,6 +151,11 @@ export function TableContextMenu({ menu, onClose }: Props) {
     generateBeatVideo(row)
   }
 
+  const handleGenBeatVideoMultiStrategy = () => {
+    onClose()
+    generateBeatVideoMultiStrategy(row, 2)
+  }
+
   const updateRow = useStoryboardStore.getState().updateRow
 
   const handleSoundDesign = async () => {
@@ -225,6 +230,7 @@ export function TableContextMenu({ menu, onClose }: Props) {
     >
       <MenuBtn icon={ImageIcon} label="生成 Keyframe" onClick={handleGenKeyframe} />
       <MenuBtn icon={Film} label="生成 Beat Video" onClick={handleGenBeatVideo} />
+      <MenuBtn icon={Layers} label="拍 2 方案 (multi-strategy)" onClick={handleGenBeatVideoMultiStrategy} />
       <MenuBtn icon={Drama} label="演员完善表演 (actor-agent)" onClick={handleActorEnrich} />
       <MenuBtn icon={Music2} label="音频设计 BGM/SFX/混音 (sound-agent)" onClick={handleSoundDesign} />
       <div className="my-1 border-t border-zinc-800" />

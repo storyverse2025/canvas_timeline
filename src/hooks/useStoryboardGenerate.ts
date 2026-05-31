@@ -16,7 +16,7 @@ import type {
   KeyframePropRef,
   KeyframeSceneRef,
 } from '@/lib/agents/director-agent'
-import { shoot as cinematographerShoot } from '@/lib/agents/cinematographer-agent'
+import { shoot as cinematographerShoot, shootMultiStrategy as cinematographerShootMultiStrategy } from '@/lib/agents/cinematographer-agent'
 import type { BeatVideoContextRef } from '@/lib/agents/cinematographer-agent'
 import { runAgentWithChatBridge } from '@/lib/agents/chat-bridge'
 import { createMemoryContext } from '@/lib/agents/_shared/context/memory'
@@ -704,5 +704,95 @@ export function useStoryboardGenerate() {
     }
   }, [updateRow, startTask, updateTask])
 
-  return { generateKeyframe, generateBeatVideo }
+  const generateBeatVideoMultiStrategy = useCallback(async (row: StoryboardRow, variants: 2 | 3 = 2) => {
+    const keyframeUrl = row.keyframeCleanUrl || row.keyframeUrl || row.reference_image || ''
+    if (!keyframeUrl) {
+      toast.error('缺少 keyframe —— 先生成 keyframe 再拍多方案')
+      return
+    }
+    const taskId = uuid()
+    startTask({ id: taskId, nodeId: `sb-bv-${row.id}`, itemId: row.id, prompt: `Beat Video × ${variants}` })
+    updateTask(taskId, { status: 'polling' })
+    try {
+      const contextRefs: BeatVideoContextRef[] = []
+      const pushCtx = (role: string, description: string | undefined) => {
+        if (!description?.trim()) return
+        contextRefs.push({ role, description })
+      }
+      pushCtx('角色1', row.character1?.description)
+      pushCtx('角色2', row.character2?.description)
+      pushCtx('道具1', row.prop1?.description)
+      pushCtx('道具2', row.prop2?.description)
+      pushCtx('场景', row.scene?.description)
+
+      const db = useProjectDB.getState()
+      const visualStyle = getArtStyle({ customStyle: db.artDirection.customStyle, stylePreset: db.artDirection.stylePreset })
+
+      const agentCtx = createMemoryContext({ llm: createCapabilityLLM() })
+      const result = await runAgentWithChatBridge(
+        'cinematographer-agent',
+        cinematographerShootMultiStrategy(
+          {
+            row, visualStyle, keyframeUrl, contextRefs,
+            aspect: '16:9', resolution: '480p', variants,
+          },
+          agentCtx,
+        ),
+        { verb: `shoot-multi-strategy (${variants}×)` },
+      )
+
+      if (result.variants.length === 0) {
+        throw new Error('All variants failed')
+      }
+
+      // Persist every variant as its own canvas item so the user can see them
+      // side-by-side; first one becomes the row's primary beatVideoUrl. The
+      // user can manually adopt a different variant by clicking it on canvas
+      // (existing AdoptButton flow).
+      const baseX = 600
+      const rowIdx = useStoryboardStore.getState().rows.findIndex((r) => r.id === row.id)
+      const baseY = Math.max(0, rowIdx) * 300
+      const VIDEO_WIDTH = 280
+      const VIDEO_GAP = 24
+
+      let primaryNodeId: string | undefined
+      result.variants.forEach((v, i) => {
+        const itemId = useCanvasItemStore.getState().addItem({
+          kind: 'video',
+          name: `BV-${row.shot_number}-${v.strategyName}`,
+          content: v.url,
+          prompt: v.prompt,
+          role: i === 0 ? 'beat-video' : 'beat-video-alternate',
+        })
+        const nodeId = useCanvasStore.getState().addItemNode(
+          itemId, 'video',
+          { x: baseX + i * (VIDEO_WIDTH + VIDEO_GAP), y: baseY },
+          { width: VIDEO_WIDTH, height: 160 },
+        )
+        if (i === 0) primaryNodeId = nodeId
+      })
+
+      const primary = result.variants[0]!
+      updateRow(row.id, {
+        beatVideoUrl: primary.url,
+        beatVideoNodeId: primaryNodeId,
+      })
+      updateTask(taskId, { status: 'done', resultUrl: primary.url, resultKind: 'video' })
+
+      const failedNote = result.failures.length > 0
+        ? ` (${result.failures.length} 个方案失败: ${result.failures.map((f) => f.strategyName).join(', ')})`
+        : ''
+      toast.success(
+        `Beat Video ${row.shot_number} × ${result.variants.length} 方案已就绪${failedNote}`,
+        {
+          description: `默认选用「${primary.strategyName}」(${primary.strategyDescription})；其余方案已放在画布上，右键 → 「采用为当前」可切换`,
+        },
+      )
+    } catch (e) {
+      updateTask(taskId, { status: 'failed', error: String((e as Error).message ?? e) })
+      toast.error('多方案拍摄失败', { description: String((e as Error).message).slice(0, 200) })
+    }
+  }, [updateRow, startTask, updateTask])
+
+  return { generateKeyframe, generateBeatVideo, generateBeatVideoMultiStrategy }
 }
