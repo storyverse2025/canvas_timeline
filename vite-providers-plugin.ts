@@ -697,6 +697,63 @@ Return JSON ONLY, no markdown, with this shape:
   }
 }
 
+async function textRevise(req: IncomingMessage): Promise<VoiceRevisePlan> {
+  const key = process.env.APIMART_API_KEY
+  if (!key) throw new Error('APIMART_API_KEY not set')
+  const body = (await readJson(req)) as {
+    text?: string
+    element_kind?: string
+    element_context?: Record<string, unknown>
+  }
+  const text = (body.text ?? '').trim()
+  if (!text) throw new Error('text-revise: missing text field')
+  const elementKind = body.element_kind || 'image'
+  const elementContext = body.element_context ?? {}
+
+  const sys = `You are a prompt-revision assistant for an AI image generator. The user has just typed feedback about a ${elementKind}. Read the feedback, then output a JSON object describing how to revise the current generation prompt.
+
+Current element context (the user is talking about this):
+${JSON.stringify(elementContext, null, 2).slice(0, 1500)}
+
+Return JSON ONLY, no markdown, with this shape:
+{
+  "user_intent": "<one sentence in the user's language summarising what they want changed>",
+  "new_prompt": "<a complete revised image-generation prompt that incorporates the user's feedback. Preserve everything in the original that wasn't criticised. Use English unless the original context is Chinese-heavy.>",
+  "key_changes": ["short bullet of what changed", ...],
+  "preserve": ["what was kept", ...],
+  "severity": "minor | moderate | major"
+}`
+
+  const res = await fetch(`${apimartBaseUrl()}/chat/completions`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: process.env.APIMART_TEXT_MODEL || APIMART_TEXT_MODEL,
+      messages: [
+        { role: 'system', content: sys },
+        { role: 'user', content: `User feedback: ${text}` },
+      ],
+    }),
+  })
+  if (!res.ok) throw new Error(`Apimart text-revise ${res.status}: ${await res.text()}`)
+  const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
+  const out = data.choices?.[0]?.message?.content?.trim() ?? ''
+  const jsonM = out.match(/\{[\s\S]*\}/)
+  if (!jsonM) throw new Error(`text-revise: model did not return JSON. Got: ${out.slice(0, 200)}`)
+  const plan = JSON.parse(jsonM[0]) as Partial<VoiceRevisePlan>
+  if (!plan.new_prompt) throw new Error('text-revise: missing new_prompt in model output')
+  // Echo the user text back as transcript so the frontend's existing
+  // voice-revise consumer shape works unchanged.
+  return {
+    new_prompt: plan.new_prompt,
+    user_intent: plan.user_intent ?? '',
+    transcript: text,
+    key_changes: plan.key_changes,
+    preserve: plan.preserve,
+    severity: plan.severity,
+  }
+}
+
 async function dispatch(req: Req): Promise<{ url: string; kind: 'image' | 'video' }> {
   if (!req.provider || !req.model) throw new Error('provider/model required')
   if (!req.prompt?.trim()) throw new Error('prompt required')
@@ -741,6 +798,15 @@ export function providersPlugin(): Plugin {
         if (req.method !== 'POST') { sendJson(res, 405, { error: 'POST only' }); return }
         try {
           const r = await voiceRevise(req)
+          sendJson(res, 200, r)
+        } catch (e) {
+          sendJson(res, 500, { error: String((e as Error).message ?? e) })
+        }
+      })
+      server.middlewares.use('/providers/text-revise', async (req, res) => {
+        if (req.method !== 'POST') { sendJson(res, 405, { error: 'POST only' }); return }
+        try {
+          const r = await textRevise(req)
           sendJson(res, 200, r)
         } catch (e) {
           sendJson(res, 500, { error: String((e as Error).message ?? e) })
