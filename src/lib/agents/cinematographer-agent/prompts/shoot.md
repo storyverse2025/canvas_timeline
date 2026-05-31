@@ -17,6 +17,9 @@ output: text (Seedance 2.0 video generation prompt)
 【NEGATIVE】
 不要图板边框、分栏、网格、箭头、字幕、logo、水印、UI、乱码文字。不要换角，不要增角。
 
+【AUDIO / 音轨】
+仅保留对白与音效。NO background music, NO score, NO musical instruments, NO ambient soundtrack。不要任何配乐或BGM。
+
 {{imageLegend}}
 
 {{cinematographyBlock}}
