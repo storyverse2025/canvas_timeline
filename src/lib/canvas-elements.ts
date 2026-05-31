@@ -39,6 +39,8 @@ export interface ExtractedCharacter {
   appearance: string
   clothing: string
   expression: string
+  /** Numeric height (e.g. "172cm"). Locks intra-extraction relative scale. */
+  height?: string
   image_prompt: string
 }
 
@@ -53,6 +55,10 @@ export interface ExtractedScene {
 export interface ExtractedProp {
   name: string
   description: string
+  /** Numeric size with units (e.g. "长 30cm × 宽 8cm" / "直径 15cm"). */
+  dimensions?: string
+  /** Human-relative anchor (e.g. "掌心大小" / "前臂长度" / "半人高"). */
+  scale_reference?: string
   image_prompt: string
 }
 

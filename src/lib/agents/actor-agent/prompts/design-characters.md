@@ -39,7 +39,7 @@ actor-agent / design-characters
     "name": "林清",
     "biography": "...200-400 字叙事，写出角色的形成性事件、内心矛盾、对当下行动的驱动...",
     "appearance_pillars": {
-      "subject":         "Pillar 1 · 主体：性别/年龄/构图/视线/全身-半身-大头/场景上下文",
+      "subject":         "Pillar 1 · 主体：性别/年龄/**身高（必须把 extracted character 的 height 字段原文写进来，例 '身高 172cm'，如果 height 字段缺失就按性别年龄给个合理值）**/构图/视线/全身-半身-大头/场景上下文",
       "bone_structure":  "Pillar 2 · 骨相结构：脸型/额头/太阳穴/颧骨颧弓/下颌角度/下巴",
       "features":        "Pillar 3 · 五官特征：眉/眼/鼻/唇/耳-毛流-痣-疤-雀斑",
       "expression":      "Pillar 4 · 面部神态：视线/嘴角/微表情，与 personality_layers 一致",

@@ -10,6 +10,7 @@ import {
   critiqueTimeline,
   critiqueVideoConsistency,
   directorAgent,
+  extractVisualAnchors,
   generateKeyframe,
   generateStoryboardTable,
   KEYFRAME_MODEL,
@@ -37,6 +38,7 @@ describe('director-agent: meta', () => {
   it('exposes the verbs on the module export', () => {
     expect(directorAgent.allocateShots).toBe(allocateShots)
     expect(directorAgent.composeShots).toBe(composeShots)
+    expect(directorAgent.extractVisualAnchors).toBe(extractVisualAnchors)
     expect(directorAgent.generateStoryboardTable).toBe(generateStoryboardTable)
     expect(directorAgent.critiqueTimeline).toBe(critiqueTimeline)
     expect(directorAgent.applyTimelineFixes).toBe(applyTimelineFixes)
@@ -81,6 +83,35 @@ describe('composeShots', () => {
     expect(sent).toContain('ALLOC')
     expect(sent).toContain('ANCHOR')
     expect(sent).toContain('180°')
+  })
+})
+
+describe('extractVisualAnchors', () => {
+  it('passes the FULL revisedScript + clarifications un-truncated (anchors must see every iconic beat)', async () => {
+    const { llm, spy } = llmReturning('A1. [Scene 2 镜头B] 父亲滚筒灰漆覆盖手印\nA2. [Scene 6 灰色巨浪] 沃斯抽取灰雾')
+    const ctx = createMemoryContext({ llm })
+    const longScript = 'X'.repeat(20000)
+    const out = await driveAuto(
+      extractVisualAnchors(
+        { revisedScript: longScript, userClarifications: 'Q: 战斗风格？\nA: 少年漫式华丽' },
+        ctx,
+      ),
+    )
+    expect(out).toContain('A1. [Scene 2 镜头B]')
+    expect(out).toContain('A2. [Scene 6 灰色巨浪]')
+    const sent = spy.mock.calls[0]![0]![0]!.content as string
+    // The whole script must travel — slicing would defeat the purpose
+    // (you'd miss the very anchors you're trying to surface).
+    expect(sent).toContain(longScript)
+    expect(sent).toContain('少年漫式华丽')
+  })
+
+  it('falls back to a placeholder clarification line when the user answered nothing', async () => {
+    const { llm, spy } = llmReturning('A1. anchor')
+    const ctx = createMemoryContext({ llm })
+    await driveAuto(extractVisualAnchors({ revisedScript: 'S', userClarifications: '' }, ctx))
+    const sent = spy.mock.calls[0]![0]![0]!.content as string
+    expect(sent).toContain('（用户未回答 ask 阶段问题）')
   })
 })
 
@@ -131,6 +162,72 @@ describe('generateStoryboardTable', () => {
     expect(sent).toContain('必须拆成多行')
     expect(sent).toContain('character1 + character2')
   })
+
+  it('injects the visualAnchors list as a HARD CONSTRAINT — every An must be realized by a row', async () => {
+    const { llm, spy } = llmReturning('```json\n[]\n```')
+    const ctx = createMemoryContext({ llm })
+    const anchors = [
+      'A1. [Scene 2 镜头B] 父亲滚筒灰漆覆盖手印 | 字段提示：visual_description="滚筒灰漆覆盖彩色手印"',
+      'A2. [Scene 6 灰色巨浪] 沃斯抽取灰雾→压成金属巨浪 | 字段提示：visual_description="七窍抽雾→灰色巨浪"',
+      'A3. [Scene 7 RAPID CUTS 凯] 紫罗兰几何防御矩阵',
+    ].join('\n')
+    await driveAuto(
+      generateStoryboardTable(
+        {
+          artStyle: 'cinematic',
+          totalDurationSeconds: 120,
+          characterDesigns: '[]',
+          sceneDesigns: '[]',
+          propDesigns: '[]',
+          shotAllocation: 'A',
+          shotComposition: 'C',
+          visualStrategy: 'S',
+          elementContext: 'E',
+          revisedScript: 'rev',
+          visualAnchors: anchors,
+        },
+        ctx,
+      ),
+    )
+    const sent = spy.mock.calls[0]![0]![0]!.content as string
+    // The anchor list itself lands verbatim in the prompt.
+    expect(sent).toContain('A1. [Scene 2 镜头B]')
+    expect(sent).toContain('A2. [Scene 6 灰色巨浪]')
+    expect(sent).toContain('A3. [Scene 7 RAPID CUTS 凯]')
+    // Hard-constraint language so the LLM cannot treat anchors as optional.
+    expect(sent).toContain('HARD CONSTRAINT')
+    expect(sent).toContain('至少有一个 row 单独承载')
+    expect(sent).toContain('严禁把多个 An 合并到一个 row')
+    expect(sent).toContain('严禁用通用画面替换 An')
+    // Dialogue anchors must be copied literally — no rewrites/translations.
+    expect(sent).toContain('不允许改写、弱化、翻译')
+    // Target row count vs anchor count tradeoff: anchors win.
+    expect(sent).toContain('优先保 An')
+  })
+
+  it('degrades to a placeholder when visualAnchors is omitted (single-phase fallback)', async () => {
+    const { llm, spy } = llmReturning('```json\n[]\n```')
+    const ctx = createMemoryContext({ llm })
+    await driveAuto(
+      generateStoryboardTable(
+        {
+          artStyle: 'cinematic',
+          totalDurationSeconds: 60,
+          characterDesigns: '[]',
+          sceneDesigns: '[]',
+          propDesigns: '[]',
+          shotAllocation: 'A',
+          shotComposition: 'C',
+          visualStrategy: 'S',
+          elementContext: 'E',
+          revisedScript: 'rev',
+        },
+        ctx,
+      ),
+    )
+    const sent = spy.mock.calls[0]![0]![0]!.content as string
+    expect(sent).toContain('未运行锚点提炼步骤')
+  })
 })
 
 describe('critiqueTimeline', () => {
@@ -176,6 +273,28 @@ describe('critiqueTimeline', () => {
     expect(sent).toContain('每行 scene + character 人数上限')
     expect(sent).toContain('3 位以上主要角色')
     expect(sent).toContain('拆成多行')
+  })
+
+  it('forces a two-pass anchor checklist (extract iconic anchors → tick each against rows) — surfaces missing/diluted/replaced beats with explicit prefixes applyTimelineFixes can act on', async () => {
+    const { llm, spy } = llmReturning('[]')
+    const ctx = createMemoryContext({ llm })
+    await driveAuto(critiqueTimeline(
+        { storyboardJson: '[]', artStyle: 'cinematic', characterNames: ['莉安', '陆', '凯', '空', '沃斯'], targetRowCount: 12, totalDurationSeconds: 120, userScript: 'USR', userClarifications: '' },
+        ctx,
+      ))
+    const sent = spy.mock.calls[0]![0]![0]!.content as string
+    // STEP A: must extract iconic anchors as a numbered list before checking.
+    expect(sent).toContain('STEP A')
+    expect(sent).toContain('强制清单')
+    expect(sent).toContain('逐场景')
+    // STEP B: must tick each anchor against rows with explicit issue prefixes
+    // so applyTimelineFixes can recognize and route them.
+    expect(sent).toContain('STEP B')
+    expect(sent).toContain('[anchor-missing An]')
+    expect(sent).toContain('[anchor-diluted An]')
+    expect(sent).toContain('[anchor-replaced An]')
+    // Dialogue rewrites (e.g. weakened punchlines) must be flagged.
+    expect(sent).toContain('台词改写')
   })
 })
 
@@ -226,6 +345,13 @@ describe('generateKeyframe (slim diagrammatic storyboard sheet)', () => {
         shot_size: 'medium close-up',
         lighting_atmosphere: 'sodium street lamps spill',
         character_motivation: 'Alice protects the secret',
+        character_actions: 'Alice ducks behind chimney, Bob signals from edge',
+        dialogue: 'Alice: "他还在追吗？"',
+        motion_prompts: 'handheld push-in then static beat',
+        emotion_mood: '紧张',
+        emotion_atmosphere: '雨后湿冷',
+        performance_guidance: 'breath visible, eye contact only at final beat',
+        visual_anchor: 'silver pocketwatch in Alice\'s palm',
       },
       shotDurationSeconds: 8,
       projectTitle: '雨夜街角',
@@ -244,6 +370,31 @@ describe('generateKeyframe (slim diagrammatic storyboard sheet)', () => {
     expect(prompt).toContain('Director storyboard sheet')
     expect(prompt).toContain('Shot duration: 8s')
     expect(prompt).toContain('Cold-toned filmic noir')
+
+    // Project context surfaces type/tone from script-agent's dossier.
+    expect(prompt).toContain('## Project context')
+    expect(prompt).toContain('- Project: 雨夜街角')
+    expect(prompt).toContain('- Type: 短剧单集')
+    expect(prompt).toContain('- Tone: 悬疑救赎')
+
+    // Story beat anchors: every populated row field MUST be surfaced.
+    // This was the bug that made the keyframe drift away from the
+    // user's script — fields silently dropped to model. Lock the
+    // labels so future refactors can't reintroduce the regression.
+    expect(prompt).toContain('## Story beat anchors')
+    expect(prompt).toContain('Shot size: medium close-up')
+    expect(prompt).toContain('Visual description: rooftop at dusk')
+    expect(prompt).toContain('Character actions: Alice ducks behind chimney, Bob signals from edge')
+    expect(prompt).toContain('Dialogue: Alice: "他还在追吗？"')
+    expect(prompt).toContain('Motion / camera intent: handheld push-in then static beat')
+    expect(prompt).toContain('Emotion (mood): 紧张')
+    expect(prompt).toContain('Emotion (atmosphere): 雨后湿冷')
+    expect(prompt).toContain('Character motivation: Alice protects the secret')
+    expect(prompt).toContain('Performance guidance: breath visible')
+    expect(prompt).toContain('Lighting atmosphere: sodium street lamps spill')
+    expect(prompt).toContain("Visual anchor (must-keep): silver pocketwatch in Alice's palm")
+    // Panel grid hints back to the anchors.
+    expect(prompt).toContain('Stage the panels using every field in the **Story beat anchors** block above')
 
     // Heavy text modules are GONE: no project info bar, no 3-view column,
     // no technical-param bottom row, no separate concept-art block.

@@ -22,6 +22,11 @@ export const ExtractedCharacterSchema = z.object({
   expression: z.string().default(''),
   body_type: z.string().optional(),
   distinctive_features: z.string().optional(),
+  // Numeric height with unit (e.g. "172cm"). Internally consistent across
+  // the characters of a single extraction so downstream comparison strips +
+  // keyframe scale stay coherent. LLM-estimated when the script doesn't
+  // state it — accuracy doesn't matter, only intra-extraction consistency.
+  height: z.string().default(''),
   image_prompt: z.string().default(''),
   img_url: optionalUrl,
   generation_prompt: optionalText,
@@ -47,6 +52,14 @@ export const ExtractedPropSchema = z.object({
   description: z.string().default(''),
   material: z.string().optional(),
   significance: z.string().optional(),
+  // Numeric size with units (e.g. "长 30cm × 宽 8cm" / "直径 15cm"). Locks
+  // the prop's absolute scale so when it's rendered alongside characters
+  // in downstream keyframes the relative proportion is consistent.
+  dimensions: z.string().default(''),
+  // Human-relative anchor (e.g. "掌心大小" / "前臂长度" / "半人高"). Gives
+  // the image model a concrete reference frame that survives even when
+  // numeric units don't render well in the image.
+  scale_reference: z.string().default(''),
   image_prompt: z.string().default(''),
   img_url: optionalUrl,
   generation_prompt: optionalText,

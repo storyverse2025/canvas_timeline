@@ -89,6 +89,21 @@ scene 的 description 必须使用场景提取步骤中的详细描述。这样�
 - storyboard_prompts 必须明确是多格导演分镜图，并包含每格的时间切片和动作/情绪推进；不要只写单帧 keyframe prompt。
 - motion_prompts 必须引用 storyboard_prompts 的格子顺序，让 Seedance 2 视频按多格时间推进生成，不要把多格图当最终分屏画面。
 
+【视觉锚点清单（HARD CONSTRAINT — 比时长更优先）】
+下面是 extractVisualAnchors 从用户剧本中提炼出的 iconic 锚点清单。**每一条 An 都必须在最终分镜表中至少有一个 row 单独承载**：
+
+{{visualAnchors}}
+
+锚点处理规则（违反任意一条 → 整张表作废）：
+- 每条 An 至少有一个 row 把它实现到位（visual_description / character_actions / dialogue 必须出现锚点描述里提到的关键短语，不要重新概括）。
+- 严禁把多个 An 合并到一个 row（"RAPID CUTS 凯/陆/空"必须是 3 个独立 row，不能压成 1 行"群像快剪段"）。
+- 严禁用通用画面替换 An（"沃斯抬手发令"不能替换"沃斯抽取灰雾压成灰色巨浪"）。
+- 锚点台词（A<n> 标注 "dialogue 字面引用" 的）必须**字面**抄进 row.dialogue，不允许改写、弱化、翻译。
+- 锚点数量 > targetRowCount 时，**优先保 An**：把允许压缩的通用过场 row 缩短或合并（duration 降到 [2, 4]），给 An 让位置。锚点是观众认得出原作的唯一标志，过场是可以让的。
+- 锚点中标注的 character1/character2 提示，必须在对应 row 的 character1 / character2 槽中填入正确的角色名（与 castingCards / characterDesigns 对齐）。
+
+输出后，整体反查一遍：清单的 A1..An，是否每条都能在表里指到一个 row？任何一条找不到 → 重写。
+
 【尊重用户已经写好的分镜（最高优先级）】
 - 如果"医生诊断后剧本"里有形如 **"镜头 A / 镜头 B / 镜头 C"、"SERIES OF SHOTS"、"RAPID CUTS"、"FLASH IMAGES"、"SHOT N"、"场景 N. 时间.地点"** 等显式分镜/段落标记，**必须为每一个标记单独产出 1 个 row**。不要把多个标记合并成一个 row、也不要按时间段聚合（拒绝"【0-30s】角色 A 做了 XYZ"这种把若干镜头合在一起的写法）。
 - 用户在剧本里写明的运镜（"摄像机拉远"、"快剪"、"慢动作"、"闪回"、"特写/中景/全景"标注）必须**逐字保留**到对应 row 的 `visual_description` / `shot_size` / `motion_prompts` 字段里。这是 keyframe 和视频生成阶段必须看到的明确指令，不要翻译成抽象语言。

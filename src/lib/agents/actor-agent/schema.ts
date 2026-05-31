@@ -130,6 +130,10 @@ export interface ExtractedCharacterInput {
   appearance: string
   clothing: string
   expression: string
+  /** Numeric height (e.g. "172cm"). Passed through so the 7-pillar
+   *  appearance_prompt can encode it in Pillar 1 — keeps body proportion
+   *  consistent when the actor-agent's prompt drives image generation. */
+  height?: string
   image_prompt: string
 }
 

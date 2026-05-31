@@ -70,6 +70,30 @@ export interface GenerateStoryboardTableRequest {
    * caller passes the same text it persisted to script.optimizedText.
    */
   revisedScript: string
+  /**
+   * Numbered iconic-anchor list produced by extractVisualAnchors. Each
+   * line is `A<n>. [Scene] <iconic-beat description> | 字段提示：<hint>`.
+   * The storyboard prompt treats these as HARD constraints — every
+   * anchor must be realized by at least one row, anchors must not be
+   * merged/diluted/replaced. Empty string is accepted (skips the hard
+   * checklist) so the verb stays callable when the caller doesn't run
+   * the two-phase flow.
+   */
+  visualAnchors?: string
+}
+
+export interface ExtractVisualAnchorsRequest {
+  /**
+   * The post-doctor revised script (same value the caller passes to
+   * generateStoryboardTable). Anchors are extracted from this text.
+   */
+  revisedScript: string
+  /**
+   * Formatted Q&A of the user's answers to script-agent's ask phase
+   * — used so anchors honor the user's locked-in visual direction
+   * (e.g., "少年漫式华丽战斗" → must keep per-character battle rows).
+   */
+  userClarifications: string
 }
 
 export interface CritiqueTimelineRequest {
@@ -109,6 +133,9 @@ export interface ApplyTimelineFixesRequest {
 
 /** Subset of fields the keyframe agent reads from a storyboard row. */
 export interface KeyframeRow {
+  /** Optional shot number — surfaces in the prompt header so the image
+   *  model can self-reference (e.g., "S3-frame4 should follow S3-frame3"). */
+  shot_number?: string
   storyboard_prompts?: string
   visual_description?: string
   lighting_atmosphere?: string
@@ -118,6 +145,25 @@ export interface KeyframeRow {
   character_psychology?: string
   performance_guidance?: string
   shot_size?: string
+  /** What the visible characters DO in this beat (the actor-facing verb
+   *  list, e.g. "陆踩魔能轨道俯冲, 撞上凯紫罗兰晶格"). Required for the
+   *  keyframe panel grid to show progressive action rather than static
+   *  poses. */
+  character_actions?: string
+  /** Spoken dialogue. Drives mouth shape / expression / glance direction
+   *  in the rendered panels even though the image is silent. */
+  dialogue?: string
+  /** Camera-language hint from the storyboard ("dolly in", "rapid cuts",
+   *  "one-shot pan"). Used to inform how the panel grid stages action
+   *  across panels — distinct from cinematographer's runtime motion. */
+  motion_prompts?: string
+  /** Free-form visual anchor unique to this beat (a prop, color, or
+   *  pose the user explicitly asked to keep). Surfaced verbatim so the
+   *  model doesn't drift away from the user's must-have visual. */
+  visual_anchor?: string
+  /** Scene tags from script-agent's per-row tagging — short keywords
+   *  (e.g., "镜面墙, 灰色制服群众"). Helps the model bias environment. */
+  scene_tags?: string
 }
 
 /**

@@ -126,6 +126,11 @@ export function formatPropDescriptionBody(prop: ExtractedProp): string {
   sections.push(`# ${prop.name}`)
   sections.push('## 道具描述 / Prop Description')
   if (prop.description) sections.push(prop.description)
+  // Dimensions + scale_reference go in the body so they flow through
+  // slot.description into director-agent's keyframe prompt — that's how
+  // the multi-prop relative-size diagram gets anchored to real numbers.
+  if (prop.dimensions) sections.push(`尺寸 / Dimensions: ${prop.dimensions}`)
+  if (prop.scale_reference) sections.push(`相对参照 / Scale ref: ${prop.scale_reference}`)
   if (prop.image_prompt) {
     sections.push('')
     sections.push('## 图像 Prompt (可复制) / Image Prompt')

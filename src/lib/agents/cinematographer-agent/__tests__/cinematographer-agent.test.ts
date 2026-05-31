@@ -53,42 +53,60 @@ describe('pure helpers', () => {
     expect(clampDuration(7.6)).toBe(8)
   })
 
-  it('buildMotionDescription keeps ONLY dialogue + SFX (motion_prompts, style/scene/mood are all stripped — keyframe carries the motion via its panel progression)', () => {
+  it('buildMotionDescription surfaces every populated row field alongside dialogue + SFX — keyframe + Seedance pull the same direction', () => {
     const desc = buildMotionDescription({
       row: {
-        motion_prompts: 'slow push-in',
+        shot_number: 'S7',
+        motion_prompts: 'one-shot pan from Riku to Kai',
         storyboard_prompts: '3-panel grid: setup, beat, climax',
-        visual_description: 'rooftop at dusk',
-        character_actions: 'Alice draws the watch',
-        shot_size: 'medium close-up',
+        visual_description: '索利斯方舟庭院; mana-rail arc; violet lattice block',
+        character_actions: 'Riku zips by on mana-rail; Kai conjures violet lattice',
+        emotion_mood: '炫技 / 少年漫',
+        emotion_atmosphere: '色彩缤纷与魔法粒子',
+        shot_size: 'wide / one-shot',
+        lighting_atmosphere: 'sunset palette; magical particle bloom',
+        character_motivation: 'establish each student\'s elemental power',
+        performance_guidance: 'Riku grins; Kai eyes never leave the book',
         dialogue: 'Alice: We have to go.',
-        sound_effects: 'distant thunder; footsteps on wet gravel',
+        sound_effects: 'mana-rail hum; lattice crackle',
       },
       visualStyle: 'Cold-toned filmic',
     })
-    // Kept: dialogue + SFX, labelled with their own blocks.
+    // Row beat anchors block — labelled list of every populated field.
+    expect(desc).toContain('【行字段锚点 / ROW BEAT ANCHORS】')
+    expect(desc).toContain('视觉风格 / Style: Cold-toned filmic')
+    expect(desc).toContain('镜头编号 / Shot #: S7')
+    expect(desc).toContain('景别 / Shot size: wide / one-shot')
+    expect(desc).toContain('画面 / Visual: 索利斯方舟庭院')
+    expect(desc).toContain('角色动作 / Character actions: Riku zips by on mana-rail')
+    expect(desc).toContain('运镜意图 / Motion intent: one-shot pan from Riku to Kai')
+    expect(desc).toContain('情绪 / Emotion mood: 炫技 / 少年漫')
+    expect(desc).toContain('氛围 / Atmosphere: 色彩缤纷与魔法粒子')
+    expect(desc).toContain('光影 / Lighting: sunset palette')
+    expect(desc).toContain("动机 / Character motivation: establish each student's elemental power")
+    expect(desc).toContain('表演要点 / Performance guidance: Riku grins')
+    // Dialogue + SFX still in their own labelled blocks.
     expect(desc).toContain('【对白 / DIALOGUE】')
     expect(desc).toContain('Alice: We have to go.')
     expect(desc).toContain('【音效 / SFX】')
-    expect(desc).toContain('distant thunder')
-    // Stripped: motion_prompts (now carried by the keyframe panels alone),
-    // style, storyboard panels, visual_description, actions, mood, shot
-    // size — they all biased the model off the keyframe.
-    expect(desc).not.toContain('slow push-in')
-    expect(desc).not.toContain('Cold-toned filmic')
-    expect(desc).not.toContain('3-panel grid')
-    expect(desc).not.toContain('rooftop at dusk')
-    expect(desc).not.toContain('Alice draws the watch')
-    expect(desc).not.toContain('medium close-up shot')
-    expect(desc).not.toContain('temporal guidance')
+    expect(desc).toContain('mana-rail hum; lattice crackle')
   })
 
-  it('buildMotionDescription returns empty string when there is no dialogue and no SFX', () => {
+  it('buildMotionDescription returns empty string when row has nothing populated and no dialogue/SFX/style', () => {
+    const desc = buildMotionDescription({ row: {} })
+    expect(desc).toBe('')
+  })
+
+  it('buildMotionDescription with only motion_prompts (no dialogue/SFX) still surfaces the row anchors block', () => {
     const desc = buildMotionDescription({
       row: { motion_prompts: 'push in', visual_description: 'rooftop' },
       visualStyle: 'Cold-toned filmic',
     })
-    expect(desc).toBe('')
+    // Was previously '' because dialogue+SFX were the only kept fields.
+    expect(desc).toContain('【行字段锚点 / ROW BEAT ANCHORS】')
+    expect(desc).toContain('画面 / Visual: rooftop')
+    expect(desc).toContain('运镜意图 / Motion intent: push in')
+    expect(desc).toContain('视觉风格 / Style: Cold-toned filmic')
   })
 
   it('buildImageLegend lists ONLY the keyframe (omni-reference / 全能参考 mode)', () => {
@@ -140,11 +158,11 @@ describe('shoot', () => {
     expect(result.durationSeconds).toBe(8)
     expect(result.keyframeUrl).toBe('https://k.png')
     expect(result.contextRefs).toHaveLength(2)
-    // motion_prompts is no longer in the prompt — the keyframe (storyboard
-    // panels) carries motion on its own. Only the reference + casting + neg
-    // blocks land here when there's no dialogue/SFX.
+    // Row beat anchors block now surfaces motion_prompts (and shot_number /
+    // duration / etc.) — keyframe + Seedance pull the same direction.
     expect(result.prompt).toContain('【全能参考 / Director Reference】')
-    expect(result.prompt).not.toContain('push in')
+    expect(result.prompt).toContain('【行字段锚点 / ROW BEAT ANCHORS】')
+    expect(result.prompt).toContain('运镜意图 / Motion intent: push in')
 
     // shoot() now fires cinematography-describe BEFORE the text-to-video
     // call; find the Seedance call by capability name rather than index.
@@ -227,7 +245,7 @@ describe('shoot', () => {
     ).rejects.toThrow(/no url/)
   })
 
-  it('does NOT bake context-ref descriptions into the motion text any more (would bias Seedance off the keyframe)', () => {
+  it('does NOT bake context-ref descriptions into the motion text any more (row beat anchors are the channel now; contextRefs stay out)', () => {
     const prompt = assembleShootPrompt({
       row: { motion_prompts: 'm' },
       keyframeUrl: 'https://k.png',
@@ -237,6 +255,8 @@ describe('shoot', () => {
       ],
     })
     expect(prompt).not.toContain('Featuring')
+    // ContextRef descriptions are still NOT injected — anchors carry the
+    // structured row text instead, contextRefs were a separate channel.
     expect(prompt).not.toContain('Alice')
     expect(prompt).not.toContain('Rooftop')
     // Legend should still list ONLY image1.
@@ -255,8 +275,10 @@ describe('shoot', () => {
     expect(prompt).toContain('【CASTING LOCK / 角色锁定】')
     expect(prompt).toContain('【NEGATIVE】')
     expect(prompt).toContain('不要换角')
-    // visual_description should NOT appear in the assembled prompt — stripped.
-    expect(prompt).not.toContain('rooftop')
+    // visual_description NOW appears as part of the ROW BEAT ANCHORS block
+    // (reinforces the keyframe instead of being silently dropped).
+    expect(prompt).toContain('画面 / Visual: rooftop')
+    expect(prompt).toContain('运镜意图 / Motion intent: push in')
   })
 })
 

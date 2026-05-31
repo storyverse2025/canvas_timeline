@@ -29,6 +29,7 @@ import { searchNodes, getNode, regenerateImage, updateNodePrompt } from '@/lib/c
 import skillSource from './SKILL.md?raw'
 import allocateShotsSource from './prompts/allocate-shots.md?raw'
 import composeShotsSource from './prompts/compose-shots.md?raw'
+import extractVisualAnchorsSource from './prompts/extract-visual-anchors.md?raw'
 import generateTableSource from './prompts/generate-storyboard-table.md?raw'
 import critiqueTimelineSource from './prompts/critique-timeline.md?raw'
 import applyTimelineFixesSource from './prompts/apply-timeline-fixes.md?raw'
@@ -45,6 +46,7 @@ import {
   type ComposeShotsRequest,
   type CritiqueTimelineRequest,
   type CritiqueVideoConsistencyRequest,
+  type ExtractVisualAnchorsRequest,
   type GenerateKeyframeRequest,
   type GenerateStoryboardTableRequest,
   type KeyframeResult,
@@ -60,6 +62,7 @@ const { body: SYSTEM } = parseFrontmatter(skillSource)
 const TPL = {
   allocateShots: parseFrontmatter(allocateShotsSource).body,
   composeShots: parseFrontmatter(composeShotsSource).body,
+  extractVisualAnchors: parseFrontmatter(extractVisualAnchorsSource).body,
   generateTable: parseFrontmatter(generateTableSource).body,
   critiqueTimeline: parseFrontmatter(critiqueTimelineSource).body,
   applyTimelineFixes: parseFrontmatter(applyTimelineFixesSource).body,
@@ -169,6 +172,39 @@ export async function* composeShots(
   yield { type: 'result', payload: text }
 }
 
+// ─── Verb: extractVisualAnchors ────────────────────────────────────
+//
+// Phase-one pass before generateStoryboardTable. Produces a numbered
+// list of iconic visual / action / dialogue anchors from the user's
+// script — the things that, if dropped, would leave the audience
+// feeling "the script's signature moments are gone." The generator
+// (next verb) treats every line as a HARD constraint: each anchor
+// must be realized by at least one row, anchors may not be merged or
+// replaced with generic shots.
+
+export async function* extractVisualAnchors(
+  req: ExtractVisualAnchorsRequest,
+  ctx: ProjectContext,
+): AgentGenerator<string> {
+  yield { type: 'progress', message: 'director: extracting iconic visual anchors from script' }
+  const text = await ctx.llm.complete(
+    [
+      {
+        role: 'user',
+        content: fillTemplate(TPL.extractVisualAnchors, {
+          // Both un-truncated: the whole point of the extractor is to see
+          // every iconic detail the user wrote. Slicing here would drop
+          // the very anchors we are trying to surface.
+          revisedScript: req.revisedScript,
+          userClarifications: req.userClarifications || '（用户未回答 ask 阶段问题）',
+        }),
+      },
+    ],
+    { system: SYSTEM, signal: ctx.abort },
+  )
+  yield { type: 'result', payload: text.trim() }
+}
+
 // ─── Verb: generateStoryboardTable ─────────────────────────────────
 
 export async function* generateStoryboardTable(
@@ -191,6 +227,10 @@ export async function* generateStoryboardTable(
           visualStrategy: req.visualStrategy.slice(0, 400),
           elementContext: req.elementContext,
           revisedScript: req.revisedScript,
+          // Anchors are NOT truncated — they are the hard constraint the
+          // prompt enforces row-by-row. Empty string when the caller
+          // skipped the two-phase flow; the prompt degrades gracefully.
+          visualAnchors: req.visualAnchors || '（未运行锚点提炼步骤；按 revisedScript 自行判断 iconic 镜头）',
         }),
       },
     ],
@@ -361,6 +401,53 @@ function collectOrderedRefs(req: GenerateKeyframeRequest): OrderedImageRef[] {
   return out
 }
 
+/**
+ * Collect every non-empty storyboard-row text field into a labelled list.
+ * These were silently dropped by the original keyframe prompt builder —
+ * only `storyboard_prompts || visual_description` survived. The image
+ * model now sees the full beat: action, dialogue (drives expressions),
+ * motion intent (drives panel pacing), motivation, lighting, mood, etc.
+ *
+ * Each line is one labelled fact, so the model can read them without
+ * a paragraph parse. Empty fields are dropped entirely (rather than
+ * showing as "(unspecified)") to avoid teaching the model to ignore
+ * absence as signal.
+ */
+function buildStoryBeatAnchors(req: GenerateKeyframeRequest): string[] {
+  const r = req.row
+  const out: string[] = []
+  const push = (label: string, value: string | undefined) => {
+    const v = (value ?? '').trim()
+    if (v) out.push(`- ${label}: ${v}`)
+  }
+  push('Shot #', r.shot_number)
+  push('Shot size', r.shot_size)
+  push('Visual description', r.visual_description)
+  push('Character actions', r.character_actions)
+  push('Dialogue', r.dialogue)
+  push('Motion / camera intent', r.motion_prompts)
+  push('Emotion (mood)', r.emotion_mood)
+  push('Emotion (atmosphere)', r.emotion_atmosphere)
+  push('Character motivation', r.character_motivation)
+  push('Character psychology', r.character_psychology)
+  push('Performance guidance', r.performance_guidance)
+  push('Lighting atmosphere', r.lighting_atmosphere)
+  push('Visual anchor (must-keep)', r.visual_anchor)
+  push('Scene tags', r.scene_tags)
+  return out
+}
+
+function buildProjectHeaderLines(req: GenerateKeyframeRequest): string[] {
+  const out: string[] = []
+  if (req.projectTitle) out.push(`- Project: ${req.projectTitle}`)
+  if (req.genre) out.push(`- Genre: ${req.genre}`)
+  else {
+    if (req.projectType) out.push(`- Type: ${req.projectType}`)
+    if (req.projectTone) out.push(`- Tone: ${req.projectTone}`)
+  }
+  return out
+}
+
 function buildKeyframePrompt(req: GenerateKeyframeRequest): string {
   const r = req.row
   const aspect = req.aspect ?? '16:9'
@@ -373,6 +460,8 @@ function buildKeyframePrompt(req: GenerateKeyframeRequest): string {
   const hasProps = props.length > 0
   const hasMultipleCharacters = characters.length >= 2
   const hasSpatialNeed = hasMultipleCharacters || hasProps
+  const beatAnchorLines = buildStoryBeatAnchors(req)
+  const projectHeaderLines = buildProjectHeaderLines(req)
 
   // Image legend uses the same flattened order as collectOrderedRefs so
   // "see imageN" hints in the prompt align with the actual image inputs.
@@ -409,6 +498,26 @@ function buildKeyframePrompt(req: GenerateKeyframeRequest): string {
     `# Director storyboard sheet — pre-production reference, NOT a final filmed frame.`,
     `Shot duration: ${req.shotDurationSeconds}s. Aspect: ${aspect}. Style: ${visualStyle}.`,
     ``,
+    // ─── Project header (genre / tone / title) ─────────────────────────
+    // Surfaces the script-agent dossier so the image model renders with
+    // genre intent instead of generic cinematic style.
+    ...(projectHeaderLines.length
+      ? [`## Project context`, ...projectHeaderLines, ``]
+      : []),
+    // ─── Story beat anchors (per-row fields from storyboard table) ─────
+    // EVERY non-empty field from the storyboard row is surfaced here.
+    // Without this block the model used to only see
+    // storyboard_prompts || visual_description — character actions,
+    // dialogue, motion intent, motivation, lighting, mood, and visual
+    // anchors were all silently dropped, which is the single biggest
+    // reason generated keyframes drift away from the user's script.
+    ...(beatAnchorLines.length
+      ? [
+          `## Story beat anchors (THE GROUND TRUTH for this shot — every panel below must honor these)`,
+          ...beatAnchorLines,
+          ``,
+        ]
+      : []),
     // ─── Module 1: Scene crop from 360 panorama (when scene ref present) ───
     ...(hasScene
       ? [
@@ -424,7 +533,10 @@ function buildKeyframePrompt(req: GenerateKeyframeRequest): string {
     `- Panel count: choose 3–6 panels based on the ${req.shotDurationSeconds}s duration and the density of the action below; denser action → more panels.`,
     `- **Each panel carries a TIME-SLICE LABEL at the top-left of that panel** (e.g. "0–1.5s", "1.5–3.0s"). The time labels must sum to exactly ${req.shotDurationSeconds}s with no gaps or overlaps.`,
     `- Panels show **progressive action** across the shot. Do NOT print camera angles / focal lengths / lighting / style names as text — let the rendered visuals carry composition and mood.`,
-    `- Action guidance: ${r.storyboard_prompts || r.visual_description || '(use the visual_description from this row)'}`,
+    `- Action guidance: ${r.storyboard_prompts || r.visual_description || '(see the Story beat anchors block above — visual_description was empty)'}`,
+    ...(beatAnchorLines.length
+      ? [`- Stage the panels using every field in the **Story beat anchors** block above — character_actions drives blocking, motion intent drives panel ordering, dialogue drives expressions and glance direction, motivation/psychology drive subtext.`]
+      : []),
     ``,
     // ─── Module 3: Multi-character height comparison strip ───
     ...(hasMultipleCharacters
@@ -894,6 +1006,7 @@ export const directorAgent = {
   systemPrompt: SYSTEM,
   allocateShots,
   composeShots,
+  extractVisualAnchors,
   generateStoryboardTable,
   critiqueTimeline,
   applyTimelineFixes,
@@ -914,6 +1027,7 @@ export type {
   KeyframePropRef,
   AllocateShotsRequest,
   ComposeShotsRequest,
+  ExtractVisualAnchorsRequest,
   GenerateStoryboardTableRequest,
   CritiqueTimelineRequest,
   ApplyTimelineFixesRequest,

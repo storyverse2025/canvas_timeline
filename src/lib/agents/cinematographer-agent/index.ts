@@ -72,19 +72,42 @@ function buildMotionDescription(req: {
   visualStyle?: string
   contextRefs?: BeatVideoContextRef[]
 }): string {
-  // Only dialogue + SFX survive in this block. motion_prompts / style /
-  // scene / mood / motivation / psychology / lighting / shot size used to
-  // be stripped because they biased Seedance away from the keyframe — but
-  // the keyframe is now visual-only (storyboard panels + diagrams with no
-  // embedded text labels), so the camera / lighting / motion vocabulary
-  // is re-introduced by a separate `cinematography-describe` LLM step
-  // that reads the keyframe image (see describeKeyframeCinematography
-  // below). Dialogue + SFX stay here; voice refs are attached later by
-  // actor-agent.attachVoiceRefs.
-  void req.visualStyle
+  // Story beat anchors are now reintroduced alongside dialogue + SFX.
+  // History: an earlier iteration stripped everything except dialogue/SFX
+  // because the row fields used to fight the keyframe. The current
+  // keyframe is itself a faithful realization of these row fields (the
+  // director-agent now surfaces every populated row field in its
+  // keyframe prompt), so reinforcing them in the cinematographer prompt
+  // keeps the keyframe + Seedance pulling in the same direction instead
+  // of relying on cinematography-describe to reconstruct lost intent
+  // from a single image.
+  //
+  // Voice refs are attached later by actor-agent.attachVoiceRefs.
   void req.contextRefs
   const r = req.row
   const blocks: string[] = []
+
+  const anchors: string[] = []
+  const push = (label: string, value: string | undefined) => {
+    const v = (value ?? '').trim()
+    if (v) anchors.push(`- ${label}: ${v}`)
+  }
+  if (req.visualStyle?.trim()) push('视觉风格 / Style', req.visualStyle)
+  push('镜头编号 / Shot #', r.shot_number)
+  push('景别 / Shot size', r.shot_size)
+  push('画面 / Visual', r.visual_description)
+  push('角色动作 / Character actions', r.character_actions)
+  push('运镜意图 / Motion intent', r.motion_prompts)
+  push('情绪 / Emotion mood', r.emotion_mood)
+  push('氛围 / Atmosphere', r.emotion_atmosphere)
+  push('光影 / Lighting', r.lighting_atmosphere)
+  push('动机 / Character motivation', r.character_motivation)
+  push('内心 / Character psychology', r.character_psychology)
+  push('表演要点 / Performance guidance', r.performance_guidance)
+  if (anchors.length) {
+    blocks.push(`【行字段锚点 / ROW BEAT ANCHORS】\n${anchors.join('\n')}`)
+  }
+
   if (r.dialogue && r.dialogue.trim()) {
     blocks.push(`【对白 / DIALOGUE】\n${r.dialogue.trim()}`)
   }

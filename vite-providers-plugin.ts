@@ -671,6 +671,9 @@ Return JSON ONLY, no markdown, with this shape:
     headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: process.env.APIMART_TEXT_MODEL || APIMART_TEXT_MODEL,
+      // Apimart's gemini-3-flash-preview defaults to SSE streaming when the
+      // payload includes input_audio. Force a single-shot JSON response.
+      stream: false,
       messages: [
         { role: 'system', content: sys },
         { role: 'user', content: [
@@ -681,8 +684,27 @@ Return JSON ONLY, no markdown, with this shape:
     }),
   })
   if (!res.ok) throw new Error(`Apimart voice-revise ${res.status}: ${await res.text()}`)
-  const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
-  const text = data.choices?.[0]?.message?.content?.trim() ?? ''
+  // Some upstream routes ignore stream:false and still return SSE — detect
+  // and concatenate content deltas instead of letting JSON.parse choke on
+  // `data: {...}` frames.
+  const raw = await res.text()
+  let text = ''
+  if (/^\s*data:\s/m.test(raw)) {
+    for (const line of raw.split('\n')) {
+      if (!line.startsWith('data:')) continue
+      const payload = line.slice(5).trim()
+      if (!payload || payload === '[DONE]') continue
+      try {
+        const obj = JSON.parse(payload) as { choices?: Array<{ delta?: { content?: string }; message?: { content?: string } }> }
+        const c = obj.choices?.[0]
+        text += c?.delta?.content ?? c?.message?.content ?? ''
+      } catch { /* skip malformed SSE line */ }
+    }
+    text = text.trim()
+  } else {
+    const data = JSON.parse(raw) as { choices?: Array<{ message?: { content?: string } }> }
+    text = data.choices?.[0]?.message?.content?.trim() ?? ''
+  }
   const jsonM = text.match(/\{[\s\S]*\}/)
   if (!jsonM) throw new Error(`voice-revise: model did not return JSON. Got: ${text.slice(0, 200)}`)
   const plan = JSON.parse(jsonM[0]) as Partial<VoiceRevisePlan>

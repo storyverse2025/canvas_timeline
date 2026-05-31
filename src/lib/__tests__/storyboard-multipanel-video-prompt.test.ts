@@ -34,12 +34,17 @@ describe('multi-panel director storyboard and Seedance prompt contract', () => {
     expect(combined).toContain('强一致动作情节')
   })
 
-  it('does NOT bake motion_prompts / storyboard_prompts / visual_description into the video prompt — the multi-panel keyframe image carries motion via panel progression on its own', async () => {
-    // generateBeatVideo migrated to cinematographer-agent.shoot.
-    // Per the stripped-prompt contract, the keyframe (a multi-panel director
-    // storyboard sheet) is the SINGLE source of motion + composition info
-    // for Seedance. Putting that info as text alongside the image biased
-    // the model away from the keyframe.
+  it('surfaces motion_prompts / visual_description (and the rest of the row beat fields) in the Seedance prompt — keyframe + Seedance now pull the same direction', async () => {
+    // History: an earlier contract stripped every row field except
+    // dialogue + SFX from the Seedance prompt to avoid biasing the
+    // model off the keyframe. In practice that compounded the
+    // generation pipeline's info loss — the keyframe itself was already
+    // a lossy compression of the script, and dropping the row text on
+    // top of that produced videos that visibly ignored the user's
+    // script. The keyframe builder (director-agent.buildKeyframePrompt)
+    // now surfaces every populated row field too, so reinforcing them
+    // in the Seedance prompt keeps both stages aligned with the user's
+    // intent instead of fighting each other.
     const { buildMotionDescription, clampDuration } = await import('@/lib/agents/cinematographer-agent')
 
     const desc = buildMotionDescription({
@@ -49,9 +54,13 @@ describe('multi-panel director storyboard and Seedance prompt contract', () => {
         visual_description: 'rooftop',
       },
     })
-    expect(desc).not.toContain('push in')
+    expect(desc).toContain('【行字段锚点 / ROW BEAT ANCHORS】')
+    expect(desc).toContain('运镜意图 / Motion intent: push in')
+    expect(desc).toContain('画面 / Visual: rooftop')
+    // storyboard_prompts is the panel-grid spec for the KEYFRAME, not
+    // the video — keep it out of the video text so we don't tell
+    // Seedance to literally render a multi-panel grid.
     expect(desc).not.toContain('3-panel grid')
-    expect(desc).not.toContain('rooftop')
 
     // Duration is clamped to [5, 15] by clampDuration (was inline math
     // Math.min(Math.max(Math.round(row.duration), 5), 15) in the legacy hook).

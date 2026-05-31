@@ -17,6 +17,7 @@ import {
   applyTimelineFixes as directorApplyTimelineFixes,
   composeShots as directorComposeShots,
   critiqueTimeline as directorCritiqueTimeline,
+  extractVisualAnchors as directorExtractVisualAnchors,
   generateStoryboardTable as directorGenerateStoryboardTable,
 } from '@/lib/agents/director-agent'
 import { runAgentWithChatBridge } from '@/lib/agents/chat-bridge'
@@ -65,6 +66,7 @@ export function createDirectorInitialState(): PipelineState {
           { id: 'visual-strategy', label: '全局视觉策略', status: 'pending' },
           { id: 'shot-allocation', label: '镜头分配计划', status: 'pending' },
           { id: 'shot-composition', label: '镜头构图设计', status: 'pending' },
+          { id: 'anchor-extraction', label: '剧本视觉锚点提炼', status: 'pending' },
           { id: 'storyboard-design', label: '分镜设计', status: 'pending' },
           { id: 'optimize-result', label: '优化结果', status: 'pending' },
         ],
@@ -371,7 +373,39 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   )
   setStep(state, 0, 10, 'done', shotComposition); onUpdate(state)
 
-  // Step 12: 分镜设计 — director-agent.generateStoryboardTable. The actual
+  // Step 12: 锚点提炼 — director-agent.extractVisualAnchors.
+  // Two-phase guardrail against the LLM compressing iconic script
+  // beats (镜头ABC, RAPID CUTS, 反派招式, 点睛台词) into generic shots
+  // to fit the duration budget. The output is a numbered anchor list
+  // that generateStoryboardTable treats as a HARD constraint: every
+  // anchor must land in at least one row; no merging / replacing /
+  // dialogue rewrites allowed. See extract-visual-anchors.md.
+  setStep(state, 0, 11, 'running'); onUpdate(state)
+  // Re-read fresh — clarifications may have been written by the
+  // script-agent ask phase earlier in this same pipeline run, and the
+  // `db` snapshot at the top of runOptimize was captured before that.
+  const userClarifications = (useProjectDB.getState().script.clarifications ?? [])
+    .map((c) => `Q: ${c.q}\nA: ${c.answer}`)
+    .join('\n\n')
+  let visualAnchors = ''
+  try {
+    visualAnchors = await runAgentWithChatBridge(
+      'director-agent',
+      directorExtractVisualAnchors({ revisedScript, userClarifications }, agentCtx),
+      { verb: 'extract-visual-anchors' },
+    )
+  } catch (e) {
+    // Anchor extraction failure is non-fatal — generateStoryboardTable
+    // degrades to the pre-two-phase behaviour (judges anchors itself
+    // from revisedScript). Log so the UI explains why anchors are
+    // empty, but don't kill the pipeline.
+    // eslint-disable-next-line no-console
+    console.warn('[director-assistant] extractVisualAnchors failed; proceeding without anchor list:', (e as Error).message)
+    visualAnchors = ''
+  }
+  setStep(state, 0, 11, 'done', visualAnchors || '（锚点提炼为空 — 退化为单阶段生成）'); onUpdate(state)
+
+  // Step 13: 分镜设计 — director-agent.generateStoryboardTable. The actual
   // storyboard table is generated here; the next step ("优化结果") is just
   // the "everything done" marker so the UI shows a clean handoff to the
   // self-check stage.
@@ -381,7 +415,7 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   // session's shots with the new project. The replaceAll downstream in
   // ScriptInputDialog / chat-intent will populate fresh rows on success.
   useStoryboardStore.getState().clear()
-  setStep(state, 0, 11, 'running'); onUpdate(state)
+  setStep(state, 0, 12, 'running'); onUpdate(state)
   const storyboardJson = await runAgentWithChatBridge(
     'director-agent',
     directorGenerateStoryboardTable(
@@ -396,6 +430,7 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
         visualStrategy,
         elementContext: elementCtx,
         revisedScript,
+        visualAnchors,
       },
       agentCtx,
     ),
@@ -404,11 +439,11 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   for (const issue of collectDurationIssues(storyboardJson, totalDurationSeconds)) {
     state.issues.push(issue)
   }
-  setStep(state, 0, 11, 'done', storyboardJson); onUpdate(state)
+  setStep(state, 0, 12, 'done', storyboardJson); onUpdate(state)
 
-  // Step 13: 优化结果 — final marker. No new work; just signals optimize
+  // Step 14: 优化结果 — final marker. No new work; just signals optimize
   // is done so the UI can advance to self-check.
-  setStep(state, 0, 12, 'done', '优化结果已生成，等待自检'); onUpdate(state)
+  setStep(state, 0, 13, 'done', '优化结果已生成，等待自检'); onUpdate(state)
 
   return storyboardJson
 }
