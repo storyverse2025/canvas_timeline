@@ -78,6 +78,14 @@ export interface StoryboardRow extends StoryboardRowInput {
   /** Canvas node ID for the beat video */
   beatVideoNodeId?: string;
   beatVideoUrl?: string;
+  /**
+   * Marks a row inserted by the storyboard-bridge pipeline as a transition
+   * clip between its neighbors. When true, generateBeatVideo extracts the
+   * prev row's last frame + the next row's first frame and calls Seedance
+   * in first-last-frame mode so the bridge actually transitions instead of
+   * playing as an independent shot.
+   */
+  isTransition?: boolean;
 }
 
 export const StoryboardListSchema = z.array(StoryboardRowSchema).min(1)

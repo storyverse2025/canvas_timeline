@@ -103,6 +103,16 @@ export interface ShootRequest {
    * chain in useStoryboardGenerate; empty / undefined in the normal path.
    */
   invitedImageAssetIds?: string[]
+  /**
+   * When set, generate a transition clip via Seedance's first-last-frame
+   * mode using these two boundary images instead of the omni-reference
+   * keyframe. Bridge rows (inserted by storyboard-bridge) thread their
+   * prev-row last-frame + next-row first-frame through this so the
+   * generated clip actually animates from A to B instead of playing as
+   * an independent shot. Keyframe is still required and is used by the
+   * cinematography-describe LLM step for prompt grounding.
+   */
+  transitionFrames?: { firstFrameUrl: string; lastFrameUrl: string }
 }
 
 export interface BeatVideoResult {
