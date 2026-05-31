@@ -515,6 +515,7 @@ export function ChatPanel() {
       const assistantMsgId = addMessage('assistant', '')
       let fullText = ''
       let fullThinking = ''
+      let streamErrorMessage = ''
 
       const canvasCtx = buildCanvasContext()
       const elementCtx = elementInventory ? `\n\n## 已识别的画布元素\n${buildElementContext(elementInventory)}\n\nIMPORTANT: 在生成分镜表时，请将上面识别的角色、道具、场景填入每行的 character1/character2、prop1/prop2、scene 字段中。image 字段必须填入 [node:xxxxxx] 这种短ID（不要填URL，系统会自动解析为真实图片地址），description 填入描述。` : ''
@@ -531,6 +532,7 @@ export function ChatPanel() {
             updateMessage(assistantMsgId, { content: fullText })
             break
           case 'error':
+            streamErrorMessage = event.text
             updateMessage(assistantMsgId, {
               content: fullText || `Error: ${event.text}`,
             })
@@ -540,35 +542,66 @@ export function ChatPanel() {
         }
       }
 
-      // Parse structured markers from response
-      await processResponse(fullText)
+      // Stream-level failure with no usable text → DO NOT run downstream
+      // parsers (storyboard auto-parse, structured-marker processing).
+      // They would just see the error string, fail schema, and burn the
+      // retry budget on the same upstream bridge that's already broken.
+      // Tell the user what actually happened so they can debug the bridge,
+      // not chase ghost JSON parse errors.
+      if (streamErrorMessage && !fullText.trim()) {
+        addMessage(
+          'system',
+          `❌ Claude bridge 调用失败：${streamErrorMessage}。检查 claude-bridge.mjs (port 3001) 是否在跑、网络是否通。如果在赶 deadline，可以走「导演助手」对话框（这条路不依赖 claude-bridge）。`,
+        )
+      } else {
+        // Parse structured markers from response
+        await processResponse(fullText)
 
-      // Auto-detect storyboard JSON → validate → retry on schema failure
-      const STORYBOARD_TRIGGER = /分镜|storyboard|shot.?list|表格|生成.*表|重新生成/i
-      const hasShotJson = /"shot_number"\s*:/.test(fullText)
-      if (STORYBOARD_TRIGGER.test(text) || hasShotJson) {
-        let attempt = 0
-        let lastText = fullText
-        let result = parseAndValidateStoryboard(lastText)
-        const maxRetries = 2
-        while (!result.ok && attempt < maxRetries) {
-          attempt++
-          addMessage('system', `分镜 schema 校验失败（第 ${attempt} 次）：${(result.errors ?? []).slice(0, 5).join('; ')} — 正在让 AI 修正…`)
-          const retryMsg = `上次输出未通过 schema 校验，错误：\n${(result.errors ?? []).join('\n')}\n\n请严格按 system prompt 中的 JSON schema 重新输出完整数组，只返回 \`\`\`json 代码块，不要任何解释文本。`
-          const retryMessages = [...claudeMessages, { role: 'assistant' as const, content: lastText }, { role: 'user' as const, content: retryMsg }]
-          const retryMsgId = addMessage('assistant', '')
-          lastText = ''
-          for await (const ev of streamClaude(retryMessages, { system: systemWithCtx })) {
-            if (ev.type === 'text') { lastText += ev.text; updateMessage(retryMsgId, { content: lastText }) }
-            else if (ev.type === 'error') { updateMessage(retryMsgId, { content: lastText || `Error: ${ev.text}` }); break }
+        // Auto-detect storyboard JSON → validate → retry on schema failure
+        const STORYBOARD_TRIGGER = /分镜|storyboard|shot.?list|表格|生成.*表|重新生成/i
+        const hasShotJson = /"shot_number"\s*:/.test(fullText)
+        if (STORYBOARD_TRIGGER.test(text) || hasShotJson) {
+          let attempt = 0
+          let lastText = fullText
+          let result = parseAndValidateStoryboard(lastText)
+          const maxRetries = 2
+          while (!result.ok && attempt < maxRetries) {
+            attempt++
+            addMessage('system', `分镜 schema 校验失败（第 ${attempt} 次）：${(result.errors ?? []).slice(0, 5).join('; ')} — 正在让 AI 修正…`)
+            const retryMsg = `上次输出未通过 schema 校验，错误：\n${(result.errors ?? []).join('\n')}\n\n请严格按 system prompt 中的 JSON schema 重新输出完整数组，只返回 \`\`\`json 代码块，不要任何解释文本。`
+            const retryMessages = [...claudeMessages, { role: 'assistant' as const, content: lastText }, { role: 'user' as const, content: retryMsg }]
+            const retryMsgId = addMessage('assistant', '')
+            lastText = ''
+            let retryStreamError = ''
+            for await (const ev of streamClaude(retryMessages, { system: systemWithCtx })) {
+              if (ev.type === 'text') { lastText += ev.text; updateMessage(retryMsgId, { content: lastText }) }
+              else if (ev.type === 'error') {
+                retryStreamError = ev.text
+                updateMessage(retryMsgId, { content: lastText || `Error: ${ev.text}` })
+                break
+              }
+            }
+            // Retry stream itself failed with no text. Don't loop on the
+            // same broken upstream — bail out and surface the network
+            // error instead of pretending it's a schema issue.
+            if (retryStreamError && !lastText.trim()) {
+              addMessage(
+                'system',
+                `❌ Claude bridge 在 schema 修正第 ${attempt} 次时仍失败：${retryStreamError}。停止重试。`,
+              )
+              break
+            }
+            result = parseAndValidateStoryboard(lastText)
           }
-          result = parseAndValidateStoryboard(lastText)
-        }
-        if (result.ok && result.rows) {
-          useStoryboardStore.getState().replaceAll(result.rows)
-          addMessage('system', `✓ 分镜表已生成：${result.rows.length} 行，时间轴已同步 → 切到「表格」/「时间线」查看`)
-        } else {
-          addMessage('system', `分镜生成失败（重试 ${attempt} 次后仍不通过）：${(result.errors ?? []).slice(0, 5).join('; ')}`)
+          if (result.ok && result.rows) {
+            useStoryboardStore.getState().replaceAll(result.rows)
+            addMessage('system', `✓ 分镜表已生成：${result.rows.length} 行，时间轴已同步 → 切到「表格」/「时间线」查看`)
+          } else if (!streamErrorMessage) {
+            // Only print "schema 重试 X 次失败" when the stream itself
+            // succeeded but the schema kept failing — otherwise the
+            // network error message above is the real story.
+            addMessage('system', `分镜生成失败（重试 ${attempt} 次后仍不通过）：${(result.errors ?? []).slice(0, 5).join('; ')}`)
+          }
         }
       }
     } catch (err) {
