@@ -369,6 +369,7 @@ export function useStoryboardGenerate() {
       keyframeUrl: url,
       reference_image: url,
       keyframeNodeId: kfNodeId,
+      keyframeCleanUrl: result.cleanUrl,
       status: 'done',
       ...updatedSlots,
     })
@@ -513,7 +514,13 @@ export function useStoryboardGenerate() {
       // Omni-reference mode (全能参考): only the keyframe goes to Seedance as
       // an image input. Character/scene/prop info threads through as TEXT
       // (contextRefs) so the model knows what to read out of the keyframe.
-      let keyframeUrl = row.keyframeUrl || row.reference_image || ''
+      //
+      // Prefer keyframeCleanUrl (single cinematic frame, no panel borders)
+      // over keyframeUrl (multi-panel storyboard sheet) so the grid's
+      // gutters + time labels don't leak into the generated video. Falls
+      // back to the grid URL for rows generated before the dual-keyframe
+      // build, and finally to reference_image.
+      let keyframeUrl = row.keyframeCleanUrl || row.keyframeUrl || row.reference_image || ''
       if (!keyframeUrl) {
         throw new Error('缺少 keyframe —— 先生成 keyframe 再拍摄 beat video')
       }

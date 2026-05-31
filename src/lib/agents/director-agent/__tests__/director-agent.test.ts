@@ -5,6 +5,7 @@ import {
   allocateShots,
   applyTimelineFixes,
   buildBridgePromptText,
+  buildCleanKeyframePrompt,
   buildKeyframePrompt,
   composeShots,
   critiqueTimeline,
@@ -474,6 +475,90 @@ describe('generateKeyframe (slim diagrammatic storyboard sheet)', () => {
     await expect(
       driveAuto(generateKeyframe({ row: { storyboard_prompts: 'p' }, shotDurationSeconds: 3 }, ctx)),
     ).rejects.toThrow(/no url/)
+  })
+
+  it('dual-keyframe: generateKeyframe fires both grid + clean image calls in parallel and returns both URLs', async () => {
+    let call = 0
+    mockedRunCapability.mockImplementation(async () => {
+      call += 1
+      return { outputs: [{ kind: 'image', url: `https://kf-${call}.png` }] }
+    })
+    const ctx = createMemoryContext({ llm: { complete: async () => '' } })
+    const result = await driveAuto(
+      generateKeyframe(
+        {
+          row: { storyboard_prompts: 'p', visual_description: 'rooftop' },
+          shotDurationSeconds: 5,
+          characters: [{ name: 'A', imageUrls: ['https://a.png'] }],
+        },
+        ctx,
+      ),
+    )
+    // Two text-to-image calls: first is the grid (existing buildKeyframePrompt),
+    // second is the clean variant (new buildCleanKeyframePrompt).
+    expect(mockedRunCapability).toHaveBeenCalledTimes(2)
+    expect(result.url).toBe('https://kf-1.png')
+    expect(result.cleanUrl).toBe('https://kf-2.png')
+    expect(result.cleanPrompt).toBeTruthy()
+    // First call carries the grid prompt (multi-panel sheet).
+    const gridCallPrompt = (mockedRunCapability.mock.calls[0]![0].inputs[0] as { text: string }).text
+    expect(gridCallPrompt).toMatch(/Storyboard panel grid/i)
+    // Second call carries the clean prompt — NO storyboard sheet.
+    const cleanCallPrompt = (mockedRunCapability.mock.calls[1]![0].inputs[0] as { text: string }).text
+    expect(cleanCallPrompt).toMatch(/ONE full-frame composition|cinematic frame/i)
+    expect(cleanCallPrompt).not.toMatch(/Storyboard panel grid/i)
+  })
+
+  it('dual-keyframe: falls back to grid url when clean call fails', async () => {
+    let call = 0
+    mockedRunCapability.mockImplementation(async () => {
+      call += 1
+      if (call === 2) throw new Error('content policy')
+      return { outputs: [{ kind: 'image', url: `https://kf-${call}.png` }] }
+    })
+    const ctx = createMemoryContext({ llm: { complete: async () => '' } })
+    const result = await driveAuto(
+      generateKeyframe(
+        { row: { storyboard_prompts: 'p' }, shotDurationSeconds: 5 },
+        ctx,
+      ),
+    )
+    expect(result.url).toBe('https://kf-1.png')
+    expect(result.cleanUrl).toBeUndefined()
+    expect(result.cleanPrompt).toBeUndefined()
+  })
+
+  it('dual-keyframe: falls back to clean url when grid call fails', async () => {
+    let call = 0
+    mockedRunCapability.mockImplementation(async () => {
+      call += 1
+      if (call === 1) throw new Error('content policy')
+      return { outputs: [{ kind: 'image', url: `https://kf-${call}.png` }] }
+    })
+    const ctx = createMemoryContext({ llm: { complete: async () => '' } })
+    const result = await driveAuto(
+      generateKeyframe(
+        { row: { storyboard_prompts: 'p' }, shotDurationSeconds: 5 },
+        ctx,
+      ),
+    )
+    expect(result.url).toBe('https://kf-2.png')
+    expect(result.cleanUrl).toBe('https://kf-2.png')
+  })
+
+  it('buildCleanKeyframePrompt: explicitly bans panel borders + grid + time labels', () => {
+    const prompt = buildCleanKeyframePrompt({
+      row: { storyboard_prompts: 'rooftop chase', visual_description: 'rooftop at dusk' },
+      shotDurationSeconds: 5,
+      characters: [{ name: 'Alice', imageUrls: ['https://a.png'] }],
+    })
+    expect(prompt).toMatch(/NO panel borders/)
+    expect(prompt).toMatch(/NO panel grid/)
+    expect(prompt).toMatch(/NO time-slice labels/)
+    expect(prompt).toMatch(/ONE continuous cinematic frame/i)
+    // Reuses same character ref legend → cinematographer gets a consistent
+    // omni-reference matching the grid's casting.
+    expect(prompt).toMatch(/image1 = Character — Alice/)
   })
 
   it('still appends legacy refs after structured ones', () => {
