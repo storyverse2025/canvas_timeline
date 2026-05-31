@@ -83,6 +83,15 @@ export const CAPABILITIES: CapabilitySpec[] = [
     outputKind: 'text',
     nodeTypes: ['image', 'text'],
   },
+  {
+    id: 'freeform-text',
+    category: 'agent',
+    label: '通用文本生成',
+    description: '不带 domain system prompt 的文本生成路径——用户 message 自带完整指令时使用（session title / 单纯 LLM 问答），避免被 element-extraction 等 domain handler 的硬编码 system 抢走任务',
+    inputKinds: ['text', 'image'],
+    outputKind: 'text',
+    nodeTypes: ['text', 'image'],
+  },
 
   // ─── 图片能力 ──────────────────────────────────────────────────────
   {
