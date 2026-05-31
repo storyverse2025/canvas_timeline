@@ -279,6 +279,38 @@ export const api = {
       }
       return res.json();
     },
+
+    // Text-only variant of revise() — skips transcription, sends typed feedback
+    // straight to the prompt-revision LLM. Same response shape so callers can
+    // reuse whatever they did with the voice plan. Used by the edit panel's
+    // "给 AI 反馈" tab.
+    textRevise: async (data: {
+      text: string;
+      elementKind: string;
+      elementContext?: Record<string, unknown>;
+    }): Promise<{
+      new_prompt: string;
+      user_intent: string;
+      transcript: string;
+      key_changes?: string[];
+      preserve?: string[];
+      severity?: string;
+    }> => {
+      const res = await fetch('/providers/text-revise', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: data.text,
+          element_kind: data.elementKind,
+          element_context: data.elementContext ?? {},
+        }),
+      });
+      if (!res.ok) {
+        const errText = await res.text().catch(() => res.statusText);
+        throw new Error(`text-revise ${res.status}: ${errText.slice(0, 300)}`);
+      }
+      return res.json();
+    },
   },
 
   // === Project Progress ===
