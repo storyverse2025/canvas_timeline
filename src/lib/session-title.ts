@@ -32,7 +32,16 @@ export async function ensureSessionTitle(scriptText: string): Promise<string> {
   // edited it, and the script text rarely changes meaningfully across re-runs.
   if (existing && existing.length >= 4 && existing.length <= 24) return existing
 
-  const llm = createCapabilityLLM()
+  // Use the freeform-text capability — the default 'element-extraction'
+  // capability has a hardcoded system prompt ("提取角色/场景/道具… 输出
+  // JSON") that overrides our TITLE_SYSTEM and makes the LLM return a
+  // dossier-like JSON blob instead of a 6-12 字 title. Observed in the
+  // wild: console showed
+  //   [session-title] LLM returned empty/short title: {"角色":["莉安"…
+  // freeform-text dispatches with a minimal "be useful" system so the
+  // TITLE_SYSTEM (flattened into the user content by createCapabilityLLM)
+  // is what actually drives the model.
+  const llm = createCapabilityLLM({ capabilityId: 'freeform-text' })
   let raw: string
   try {
     raw = await llm.complete(

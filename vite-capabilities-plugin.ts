@@ -546,6 +546,35 @@ async function cinematographyDescribe(req: CapReq): Promise<CapRes> {
   throw lastErr ?? new Error('cinematography-describe: exhausted retries')
 }
 
+/**
+ * freeform-text: no domain system prompt — caller's instructions must be
+ * embedded in the text input (which is what createCapabilityLLM does when
+ * flattening system + messages). Use this when the calling agent already
+ * has a precise prompt and you don't want a domain handler (element-
+ * extraction etc.) injecting its own "extract JSON" system on top.
+ *
+ * Example callers: session-title.ts (needs a 6-12 字 title, doesn't want
+ * element-extraction's "output JSON of elements" system stealing the task).
+ *
+ * Optional image input is allowed: when present, goes through geminiVision
+ * with the same minimal system; useful for ad-hoc vision questions that
+ * don't fit storyboard-qc / consistency-check / bridge-row-judge.
+ */
+async function freeformText(req: CapReq): Promise<CapRes> {
+  const text = getText(req.inputs)
+  if (!text) throw new Error('freeform-text: text input required')
+  const images = getImages(req.inputs)
+  // Minimal system — "be a useful Chinese creative assistant; follow the
+  // user's instructions literally". The caller's full prompt + content
+  // is already inside `text` (createCapabilityLLM flattens it). Anything
+  // stronger here risks overriding the caller's intent.
+  const sys = '你是有用的中文创作助手。严格按用户指令输出，不要添加解释、不要 markdown 围栏、不要 emoji。'
+  const result = images.length > 0
+    ? await apimartChat(sys, text, images[0], 0.5)
+    : await apimartChat(sys, text, undefined, 0.6)
+  return { outputs: [{ kind: 'text', text: result }] }
+}
+
 // ─── Image capabilities ─────────────────────────────────────────────
 // (apimartImageSize removed 2026-05-23: the new api.apimart.ai image
 // endpoint takes `aspect_ratio` strings directly; per-aspect pixel-size
@@ -1901,6 +1930,7 @@ const handlers: Record<string, (req: CapReq) => Promise<CapRes>> = {
   'storyboard-qc': storyboardQC,
   'bridge-row-judge': bridgeRowJudge,
   'cinematography-describe': cinematographyDescribe,
+  'freeform-text': freeformText,
   'text-to-image': textToImage,
   'batch-image': batchImage,
   'smart-edit': smartEdit,
