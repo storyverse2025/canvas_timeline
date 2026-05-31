@@ -75,6 +75,8 @@ export interface StoryboardRow extends StoryboardRowInput {
    * grid `keyframeUrl` is kept for the storyboard UI's pacing reference.
    */
   keyframeCleanUrl?: string;
+  /** Canvas node ID for the clean keyframe image (separate from grid). */
+  keyframeCleanNodeId?: string;
   /** Canvas node ID for the beat video */
   beatVideoNodeId?: string;
   beatVideoUrl?: string;

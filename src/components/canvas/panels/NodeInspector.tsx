@@ -17,6 +17,7 @@ import { thumb } from '@/lib/thumb'
 import { findVoiceByUrl, normalizeVoiceUrl } from '@/lib/voice-library'
 import type { Asset } from '@/types/asset'
 import type { Tag as TagType } from '@/types/canvas'
+import { PromptFeedbackPopover } from '@/components/canvas/PromptFeedbackPopover'
 
 const TYPE_ICONS: Record<string, React.ElementType> = {
   character: User,
@@ -124,16 +125,30 @@ export function NodeInspector() {
         <div>
           <div className="flex items-center gap-1.5 mb-1">
             <label className="text-xs text-muted-foreground">Prompt</label>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-5 text-[10px] px-2 ml-auto gap-1"
-              onClick={handleRegenerate}
-              disabled={regenerating || !selectedAsset.prompt}
-            >
-              {regenerating ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-              {regenerating ? '生成中...' : '重新生成'}
-            </Button>
+            <div className="ml-auto flex items-center gap-1">
+              <PromptFeedbackPopover
+                elementKind={(selectedAsset.type as 'character' | 'scene' | 'prop') ?? 'character'}
+                currentPrompt={selectedAsset.prompt ?? ''}
+                elementContext={{
+                  id: selectedAsset.id,
+                  name: selectedAsset.name,
+                  description: selectedAsset.description,
+                  imageUrl: selectedAsset.imageUrl,
+                  type: selectedAsset.type,
+                }}
+                onApply={(p) => updateAsset(selectedAsset.id, { prompt: p })}
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-5 text-[10px] px-2 gap-1"
+                onClick={handleRegenerate}
+                disabled={regenerating || !selectedAsset.prompt}
+              >
+                {regenerating ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                {regenerating ? '生成中...' : '重新生成'}
+              </Button>
+            </div>
           </div>
           <Textarea
             value={selectedAsset.prompt ?? ''}
@@ -313,7 +328,24 @@ function CanvasItemPanel({ nodeId }: { nodeId: string }) {
         {/* Generation metadata, if present */}
         {item.prompt && (
           <div>
-            <label className="text-xs text-muted-foreground">Prompt</label>
+            <div className="flex items-center gap-1.5 mb-1">
+              <label className="text-xs text-muted-foreground">Prompt</label>
+              <div className="ml-auto">
+                <PromptFeedbackPopover
+                  elementKind={item.kind === 'video' ? 'shot' : 'keyframe'}
+                  currentPrompt={item.prompt}
+                  elementContext={{
+                    id: item.id,
+                    name: item.name,
+                    role: item.role,
+                    kind: item.kind,
+                    content: item.content,
+                    description: item.description,
+                  }}
+                  onApply={(p) => updateItem(item.id, { prompt: p })}
+                />
+              </div>
+            </div>
             <Textarea
               value={item.prompt}
               onChange={(e) => updateItem(item.id, { prompt: e.target.value })}

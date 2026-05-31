@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { useAssetStore } from '@/stores/asset-store'
 import { useViewStore } from '@/stores/view-store'
 import { useTimelineStore } from '@/stores/timeline-store'
+import { useStoryboardStore } from '@/stores/storyboard-store'
 import type { Asset, AssetType } from '@/types/asset'
 import { VoiceFeedbackButton } from '@/components/canvas/VoiceFeedbackButton'
 import { thumb } from '@/lib/thumb'
@@ -80,11 +81,34 @@ function AssetRow({ asset }: { asset: Asset }) {
   const selectedAssetIds = useViewStore((s) => s.selectedAssetIds)
   const setSelectedAssetIds = useViewStore((s) => s.setSelectedAssetIds)
   const getItemsForAsset = useTimelineStore((s) => s.getItemsForAsset)
+  const storyboardRows = useStoryboardStore((s) => s.rows)
 
   const isSelected = selectedAssetIds.includes(asset.id)
   const meta = TYPE_META[asset.type]
   const { Icon } = meta
   const clipCount = getItemsForAsset(asset.id).length
+
+  // For character assets: scan the storyboard top-down and grab the
+  // FIRST row where this character is bound to a slot — its keyframe
+  // (prefer the clean variant when available) is shown as "首帧" so the
+  // user can see at a glance where this character first appears.
+  const firstFrameInfo = (() => {
+    if (asset.type !== 'character') return null
+    const needle = (asset.name ?? '').trim().toLowerCase()
+    if (!needle) return null
+    for (const r of storyboardRows) {
+      const slotMatches = (slot: { description?: string } | undefined): boolean => {
+        const d = (slot?.description ?? '').trim().toLowerCase()
+        if (!d) return false
+        return d === needle || d.includes(needle) || needle.includes(d)
+      }
+      if (slotMatches(r.character1) || slotMatches(r.character2)) {
+        const url = r.keyframeCleanUrl || r.keyframeUrl
+        if (url) return { shotNumber: r.shot_number, url }
+      }
+    }
+    return null
+  })()
 
   return (
     <TableRow
@@ -128,6 +152,22 @@ function AssetRow({ asset }: { asset: Asset }) {
           onSave={(v) => updateAsset(asset.id, { description: v })}
           multiline
         />
+      </TableCell>
+
+      {/* First frame — character's first appearance in the storyboard */}
+      <TableCell className="w-16 py-1.5 text-center">
+        {firstFrameInfo ? (
+          <img
+            src={thumb(firstFrameInfo.url, 256)}
+            alt={`First frame: ${firstFrameInfo.shotNumber}`}
+            loading="lazy"
+            decoding="async"
+            title={`第一次出现：${firstFrameInfo.shotNumber}`}
+            className="w-12 h-9 mx-auto rounded border border-border object-cover"
+          />
+        ) : (
+          <span className="text-[10px] text-muted-foreground/30">—</span>
+        )}
       </TableCell>
 
       {/* Timeline clips */}
@@ -252,6 +292,7 @@ export function AssetTable() {
                           <TableHead className="w-20 text-[10px] py-1">类型</TableHead>
                           <TableHead className="text-[10px] py-1">名称</TableHead>
                           <TableHead className="text-[10px] py-1">描述</TableHead>
+                          <TableHead className="w-16 text-[10px] py-1 text-center">首帧</TableHead>
                           <TableHead className="w-20 text-[10px] py-1 text-center">时间轴</TableHead>
                           <TableHead className="w-12 text-[10px] py-1 text-center">语音</TableHead>
                         </TableRow>
@@ -271,6 +312,7 @@ export function AssetTable() {
                     <TableHead className="w-20 text-[10px] py-1">类型</TableHead>
                     <TableHead className="text-[10px] py-1">名称</TableHead>
                     <TableHead className="text-[10px] py-1">描述</TableHead>
+                    <TableHead className="w-16 text-[10px] py-1 text-center">首帧</TableHead>
                     <TableHead className="w-20 text-[10px] py-1 text-center">时间轴</TableHead>
                   </TableRow>
                 </TableHeader>

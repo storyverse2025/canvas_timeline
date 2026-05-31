@@ -357,12 +357,36 @@ export function useStoryboardGenerate() {
       { width: KF_WIDTH, height: 180 },
     )
 
-    // Wire edges from each resolved ref node into the keyframe and persist
-    // the resolved nodeId back into the slot so future regens reuse it.
+    // If director-agent returned a clean keyframe variant (single
+    // cinematic frame, no panel borders — see #75), drop it on the
+    // canvas right next to the grid so the user can see both. Stored
+    // as a separate canvas item with role='keyframe-clean' so it's
+    // distinguishable from the grid sheet and won't fight for the
+    // adopted-keyframe ⭐ badge.
+    let kfCleanNodeId: string | undefined
+    if (result.cleanUrl) {
+      const kfCleanItemId = useCanvasItemStore.getState().addItem({
+        kind: 'image',
+        name: `KF-${row.shot_number}-clean`,
+        content: result.cleanUrl,
+        prompt: result.cleanPrompt ?? result.prompt,
+        role: 'keyframe-clean',
+      })
+      kfCleanNodeId = useCanvasStore.getState().addItemNode(
+        kfCleanItemId, 'image',
+        { x: kfX + KF_WIDTH + KF_GAP, y: baseY },
+        { width: KF_WIDTH, height: 180 },
+      )
+    }
+
+    // Wire edges from each resolved ref node into both keyframes and
+    // persist the resolved nodeId back into the slot so future regens
+    // reuse it. The clean keyframe shares the same ref set as the grid.
     const updatedSlots: Partial<Pick<StoryboardRow, 'character1' | 'character2' | 'prop1' | 'prop2' | 'scene'>> = {}
     for (const r of resolved) {
       if (!r.nodeId) continue
       useCanvasStore.getState().addEdge(r.nodeId, kfNodeId)
+      if (kfCleanNodeId) useCanvasStore.getState().addEdge(r.nodeId, kfCleanNodeId)
       updatedSlots[r.slotKey] = { ...r.slot, nodeId: r.nodeId, image: r.imageUrl || r.slot.image }
     }
 
@@ -371,6 +395,7 @@ export function useStoryboardGenerate() {
       reference_image: url,
       keyframeNodeId: kfNodeId,
       keyframeCleanUrl: result.cleanUrl,
+      keyframeCleanNodeId: kfCleanNodeId,
       status: 'done',
       ...updatedSlots,
     })
@@ -689,9 +714,14 @@ export function useStoryboardGenerate() {
         { width: 360, height: 200 },
       )
 
-      // Connect keyframe → beat video
+      // Connect BOTH keyframes (grid + clean) → beat video so the canvas
+      // shows the full provenance: the grid sheet was used for pacing/UI
+      // and the clean variant was the actual omni-reference Seedance saw.
       if (row.keyframeNodeId) {
         useCanvasStore.getState().addEdge(row.keyframeNodeId, vidNodeId)
+      }
+      if (row.keyframeCleanNodeId && row.keyframeCleanNodeId !== row.keyframeNodeId) {
+        useCanvasStore.getState().addEdge(row.keyframeCleanNodeId, vidNodeId)
       }
 
       updateRow(row.id, { beatVideoUrl: url, beatVideoNodeId: vidNodeId })
@@ -769,6 +799,14 @@ export function useStoryboardGenerate() {
           { x: baseX + i * (VIDEO_WIDTH + VIDEO_GAP), y: baseY },
           { width: VIDEO_WIDTH, height: 160 },
         )
+        // Connect both keyframes to every variant so the canvas provenance
+        // is complete for each (grid + clean → variant N).
+        if (row.keyframeNodeId) {
+          useCanvasStore.getState().addEdge(row.keyframeNodeId, nodeId)
+        }
+        if (row.keyframeCleanNodeId && row.keyframeCleanNodeId !== row.keyframeNodeId) {
+          useCanvasStore.getState().addEdge(row.keyframeCleanNodeId, nodeId)
+        }
         if (i === 0) primaryNodeId = nodeId
       })
 
