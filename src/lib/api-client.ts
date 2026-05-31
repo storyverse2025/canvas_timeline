@@ -313,6 +313,50 @@ export const api = {
     },
   },
 
+  // === Art-style RAG ===
+  // Wraps the local prompt_rag FastAPI service (see ~/repos/prompt_rag/serve.py).
+  // Returns nearest-neighbor reference prompts + their generated media URLs so
+  // the user can pick a real-world art example to anchor a shot's style.
+  artRag: {
+    search: async (data: {
+      query: string;
+      topK?: number;
+      taskCategory?: string;
+      taskType?: 't2i' | 'i2i' | 't2v' | 'i2v' | 'v2v';
+      modelName?: string;
+    }): Promise<{
+      hits: Array<{
+        id: string;
+        prompt: string;
+        similarity: number;
+        output_media_url: string;
+        output_media_type: string | null;
+        task_category: string;
+        task_type: string;
+        model_name: string;
+        source_name: string;
+        source_url: string;
+      }>;
+    }> => {
+      const res = await fetch('/providers/art-rag-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: data.query,
+          top_k: data.topK ?? 5,
+          task_category: data.taskCategory ?? null,
+          task_type: data.taskType ?? null,
+          model_name: data.modelName ?? null,
+        }),
+      });
+      if (!res.ok) {
+        const errText = await res.text().catch(() => res.statusText);
+        throw new Error(`art-rag-search ${res.status}: ${errText.slice(0, 300)}`);
+      }
+      return res.json();
+    },
+  },
+
   // === Project Progress ===
   // Polled by the canvas/table to show inline status for in-flight regens
   // and voice-feedback jobs.

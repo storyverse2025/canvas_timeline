@@ -754,6 +754,51 @@ Return JSON ONLY, no markdown, with this shape:
   }
 }
 
+interface ArtRagSearchHit {
+  id: string
+  prompt: string
+  similarity: number
+  output_media_url: string
+  output_media_type: string | null
+  task_category: string
+  task_type: string
+  model_name: string
+  source_name: string
+  source_url: string
+}
+
+async function artRagSearch(req: IncomingMessage): Promise<{ hits: ArtRagSearchHit[] }> {
+  const body = (await readJson(req)) as {
+    query?: string
+    top_k?: number
+    task_category?: string | null
+    task_type?: string | null
+    model_name?: string | null
+  }
+  const query = (body.query ?? '').trim()
+  if (!query) throw new Error('art-rag-search: missing query field')
+  // Default points at the local FastAPI service ~/repos/prompt_rag/serve.py.
+  // Override via PROMPT_RAG_URL in .env if you run it elsewhere.
+  const base = process.env.PROMPT_RAG_URL || 'http://127.0.0.1:7411'
+  const res = await fetch(`${base}/search`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      query,
+      top_k: body.top_k ?? 5,
+      task_category: body.task_category ?? null,
+      task_type: body.task_type ?? null,
+      model_name: body.model_name ?? null,
+    }),
+  })
+  if (!res.ok) {
+    throw new Error(
+      `prompt_rag /search ${res.status}: ${(await res.text()).slice(0, 200)}. Is uvicorn running? Try: cd ~/repos/prompt_rag && uvicorn serve:app --host 127.0.0.1 --port 7411`,
+    )
+  }
+  return res.json() as Promise<{ hits: ArtRagSearchHit[] }>
+}
+
 async function dispatch(req: Req): Promise<{ url: string; kind: 'image' | 'video' }> {
   if (!req.provider || !req.model) throw new Error('provider/model required')
   if (!req.prompt?.trim()) throw new Error('prompt required')
@@ -807,6 +852,15 @@ export function providersPlugin(): Plugin {
         if (req.method !== 'POST') { sendJson(res, 405, { error: 'POST only' }); return }
         try {
           const r = await textRevise(req)
+          sendJson(res, 200, r)
+        } catch (e) {
+          sendJson(res, 500, { error: String((e as Error).message ?? e) })
+        }
+      })
+      server.middlewares.use('/providers/art-rag-search', async (req, res) => {
+        if (req.method !== 'POST') { sendJson(res, 405, { error: 'POST only' }); return }
+        try {
+          const r = await artRagSearch(req)
           sendJson(res, 200, r)
         } catch (e) {
           sendJson(res, 500, { error: String((e as Error).message ?? e) })
