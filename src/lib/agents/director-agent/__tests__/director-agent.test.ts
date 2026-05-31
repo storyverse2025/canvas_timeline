@@ -215,10 +215,10 @@ describe('applyTimelineFixes', () => {
   })
 })
 
-describe('generateKeyframe (Hollywood 6-module visual development board)', () => {
+describe('generateKeyframe (slim diagrammatic storyboard sheet)', () => {
   beforeEach(() => mockedRunCapability.mockReset())
 
-  it('builds a Hollywood-template prompt with all 6 modules + ordered image legend', () => {
+  it('builds a slim diagrammatic prompt: storyboard grid + conditional diagrams, no heavy text modules', () => {
     const prompt = buildKeyframePrompt({
       row: {
         storyboard_prompts: 'multi-panel director sheet of rooftop chase',
@@ -240,41 +240,52 @@ describe('generateKeyframe (Hollywood 6-module visual development board)', () =>
       props: [{ name: 'Pocketwatch', description: 'silver', imageUrls: ['https://p.png'] }],
     })
 
-    // Header / module banner.
-    expect(prompt).toContain('Hollywood industrial-standard visual development board')
-    expect(prompt).toContain('4K ultra-high definition')
-    // 6 modules titled by number (Dual protagonist with 2 characters supplied).
-    expect(prompt).toContain('Layout (6 modules')
-    expect(prompt).toMatch(/### 1\. TOP — Project info bar/)
-    expect(prompt).toMatch(/### 2\. TOP-LEFT — Dual protagonist character design column/)
-    expect(prompt).toMatch(/### 3\. TOP-RIGHT — Core scene concept art/)
-    expect(prompt).toMatch(/### 4\. MIDDLE — 3-shot storyboard sequence/)
-    expect(prompt).toMatch(/### 5\. BOTTOM — Professional technical parameters/)
-    expect(prompt).toMatch(/### 6\. QUALITY REQUIREMENTS/)
-    // Project info propagated — TYPE / TONE / GENRE now appear as
-    // prominent header lines (uppercased + bolded for the image model).
-    expect(prompt).toContain('雨夜街角')
+    // Header reads as a director sheet, not a "Hollywood production board".
+    expect(prompt).toContain('Director storyboard sheet')
     expect(prompt).toContain('Shot duration: 8s')
-    expect(prompt).toContain('**TYPE**: 短剧单集')
-    expect(prompt).toContain('**TONE**: 悬疑救赎')
-    expect(prompt).toContain('**GENRE**: 短剧单集 · 悬疑救赎')
     expect(prompt).toContain('Cold-toned filmic noir')
-    // Character column. With scene-first ordering, scene is image1 so
-    // characters shift to image2/image3.
-    expect(prompt).toContain('Character 1: Alice — short hair, grey trench (see image2 for canonical look)')
-    expect(prompt).toContain('Character 2: Bob — rain jacket (see image3 for canonical look)')
-    expect(prompt).toContain('100% consistent character design across views')
-    // Scene block.
+
+    // Heavy text modules are GONE: no project info bar, no 3-view column,
+    // no technical-param bottom row, no separate concept-art block.
+    expect(prompt).not.toMatch(/Project info bar/)
+    expect(prompt).not.toMatch(/character design column/i)
+    expect(prompt).not.toContain('Professional technical parameters')
+    expect(prompt).not.toContain('three-view')
+    expect(prompt).not.toContain('Color palette')
+    expect(prompt).not.toContain('Cinematography lens parameters')
+
+    // Scene module: explicit 360° panorama crop instruction.
+    expect(prompt).toContain('Scene reference (cropped from 360° panorama)')
+    expect(prompt).toContain('360° equirectangular PANORAMA')
+    expect(prompt).toContain('Do NOT render the whole panorama')
     expect(prompt).toContain('Rooftop — wet concrete + neon')
-    // Storyboard sequence pulls in row.storyboard_prompts.
+
+    // Storyboard grid is the primary content with per-panel time labels;
+    // no per-panel camera/lens/lighting text annotations.
+    expect(prompt).toContain('Storyboard panel grid (primary content)')
+    expect(prompt).toMatch(/TIME-SLICE LABEL at the top-left/)
+    expect(prompt).toContain('sum to exactly 8s')
     expect(prompt).toContain('multi-panel director sheet of rooftop chase')
-    // Image legend in stable order — Scene FIRST as primary style anchor.
+    expect(prompt).toMatch(/Do NOT print camera angles \/ focal lengths \/ lighting \/ style names as text/)
+
+    // Diagrams gated by inputs: 2 chars → height strip; 2 chars + 1 prop →
+    // size diagram; ≥ 2 chars → spatial floor plan.
+    expect(prompt).toContain('Character height comparison strip')
+    expect(prompt).toContain('Character × prop relative-size diagram')
+    expect(prompt).toContain('Spatial floor plan (top-down, numbered)')
+    // Floor plan legend numbering: characters 1..N, props N+1..N+M.
+    expect(prompt).toMatch(/1\. Alice/)
+    expect(prompt).toMatch(/2\. Bob/)
+    expect(prompt).toMatch(/3\. Pocketwatch/)
+
+    // Image legend kept (Scene first as primary style anchor).
     expect(prompt).toContain('image1 = Scene — Rooftop')
     expect(prompt).toContain('image2 = Character — Alice')
     expect(prompt).toContain('image3 = Character — Bob')
     expect(prompt).toContain('image4 = Prop — Pocketwatch')
-    // SEEDANCE compatibility note.
-    expect(prompt).toContain('SEEDANCE 2.0 video generation pipeline')
+
+    // Seedance compatibility note in the slim quality bar.
+    expect(prompt).toContain('SEEDANCE 2.0 downstream video pipeline')
   })
 
   it('legend image numbers put Scene FIRST (image1), regardless of character count', () => {
@@ -323,23 +334,37 @@ describe('generateKeyframe (Hollywood 6-module visual development board)', () =>
     ])
   })
 
-  it('drops the character module entirely when no character refs are supplied (landscape / object shot)', () => {
+  it('drops every character/prop diagram when no characters are supplied (pure landscape shot)', () => {
     const prompt = buildKeyframePrompt({
       row: { storyboard_prompts: 'wide rooftop establishing shot' },
       shotDurationSeconds: 5,
       scene: { name: 'Rooftop', description: 'wet concrete + neon' },
     })
-    // Layout now declares 5 modules instead of 6.
-    expect(prompt).toContain('Layout (5 modules')
-    // The character module heading is replaced with an explicit NOTE.
-    expect(prompt).not.toMatch(/TOP-LEFT — .* character design column/)
-    expect(prompt).toContain('NOTE — No character design column')
-    expect(prompt).toContain('Do NOT render any character figures')
-    // Scene module moves to TOP (wide) since no character column.
-    expect(prompt).toMatch(/TOP \(wide\) — Core scene concept art/)
-    // No "see imageN" character hints, no character_motivation in tech params.
-    expect(prompt).not.toContain('Character 1:')
-    expect(prompt).not.toContain('image1 =')
+    // Scene module still present, panorama-crop instruction still applies.
+    expect(prompt).toContain('Scene reference (cropped from 360° panorama)')
+    // Storyboard grid is the only required diagram — chars/props/spatial all gone.
+    expect(prompt).toContain('Storyboard panel grid (primary content)')
+    expect(prompt).not.toContain('Character height comparison strip')
+    expect(prompt).not.toContain('Character × prop relative-size diagram')
+    expect(prompt).not.toContain('Spatial floor plan')
+  })
+
+  it('emits only the spatial floor plan (not the height strip) when a single character has props', () => {
+    const prompt = buildKeyframePrompt({
+      row: { storyboard_prompts: 'p' },
+      shotDurationSeconds: 5,
+      characters: [{ name: 'Solo' }],
+      props: [{ name: 'Pocketwatch' }],
+    })
+    // Height strip requires ≥ 2 chars; not emitted here.
+    expect(prompt).not.toContain('Character height comparison strip')
+    // Size diagram is emitted (chars ≥ 1 AND props ≥ 1).
+    expect(prompt).toContain('Character × prop relative-size diagram')
+    expect(prompt).toContain('Size reference character: Solo')
+    // Spatial plan is emitted (props trigger it even with single char).
+    expect(prompt).toContain('Spatial floor plan (top-down, numbered)')
+    expect(prompt).toMatch(/1\. Solo/)
+    expect(prompt).toMatch(/2\. Pocketwatch/)
   })
 
   it('appends the 3DCG-stylization clause when stylizeFacesFor2D is set (Seedance privacy retry)', () => {
@@ -363,36 +388,34 @@ describe('generateKeyframe (Hollywood 6-module visual development board)', () =>
     expect(stylized).toContain('Composition, palette, lighting, props')
   })
 
-  it('labels the character module per actual count (1 / 2 / 3+)', () => {
+  it('emits height comparison strip and spatial floor plan only when ≥ 2 characters', () => {
     const solo = buildKeyframePrompt({
       row: { storyboard_prompts: 'p' },
       shotDurationSeconds: 5,
       characters: [{ name: 'Alice' }],
     })
-    expect(solo).toContain('TOP-LEFT — Single-character character design column')
+    expect(solo).not.toContain('Character height comparison strip')
+    expect(solo).not.toContain('Spatial floor plan')
 
     const duo = buildKeyframePrompt({
       row: { storyboard_prompts: 'p' },
       shotDurationSeconds: 5,
       characters: [{ name: 'Alice' }, { name: 'Bob' }],
     })
-    expect(duo).toContain('TOP-LEFT — Dual protagonist character design column')
-
-    const trio = buildKeyframePrompt({
-      row: { storyboard_prompts: 'p' },
-      shotDurationSeconds: 5,
-      characters: [{ name: 'A' }, { name: 'B' }, { name: 'C' }],
-    })
-    expect(trio).toContain('TOP-LEFT — 3-character ensemble character design column')
+    expect(duo).toContain('Character height comparison strip')
+    expect(duo).toContain('Spatial floor plan (top-down, numbered)')
+    expect(duo).toMatch(/1\. Alice/)
+    expect(duo).toMatch(/2\. Bob/)
 
     const ensemble = buildKeyframePrompt({
       row: { storyboard_prompts: 'p' },
       shotDurationSeconds: 5,
       characters: [{ name: 'A' }, { name: 'B' }, { name: 'C' }, { name: 'D' }, { name: 'E' }],
     })
-    expect(ensemble).toContain('TOP-LEFT — 5-character ensemble character design column')
-    // Every character gets its own design line — no slicing to first 2.
-    expect(ensemble).toContain('Character 5: E')
+    // Height strip lists every character left-to-right.
+    expect(ensemble).toContain('Character height comparison strip')
+    expect(ensemble).toMatch(/1\. A/)
+    expect(ensemble).toMatch(/5\. E/)
   })
 
   it('throws when row lacks both storyboard_prompts and visual_description', async () => {
@@ -502,8 +525,6 @@ describe('generateKeyframe (Hollywood 6-module visual development board)', () =>
     expect(prompt).toContain('image3 = Character — Alice (1/3)')
     expect(prompt).toContain('image4 = Character — Alice (2/3)')
     expect(prompt).toContain('image5 = Character — Alice (3/3)')
-    // The character column hint references all 3 indices.
-    expect(prompt).toContain('see images 3, 4, 5 for canonical look — multiple views supplied')
   })
 })
 

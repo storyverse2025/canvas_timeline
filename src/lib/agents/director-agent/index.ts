@@ -364,132 +364,123 @@ function collectOrderedRefs(req: GenerateKeyframeRequest): OrderedImageRef[] {
 function buildKeyframePrompt(req: GenerateKeyframeRequest): string {
   const r = req.row
   const aspect = req.aspect ?? '16:9'
-  const title = req.projectTitle ?? '未命名 / Untitled'
-  const projectType = req.projectType ?? '未指定'
-  const tone = req.projectTone ?? '未指定'
-  // GENRE derives from type + tone when not explicitly supplied — gives the
-  // image model a single-line genre cue alongside the more granular fields.
-  const genre = req.genre ?? (
-    req.projectType && req.projectTone
-      ? `${req.projectType} · ${req.projectTone}`
-      : '未指定'
-  )
   const visualStyle = req.visualStyle ?? '冷调写实电影质感 / cold-toned filmic'
 
   const characters = req.characters ?? []
+  const props = req.props ?? []
+  const hasScene = !!req.scene
   const hasCharacters = characters.length > 0
+  const hasProps = props.length > 0
+  const hasMultipleCharacters = characters.length >= 2
+  const hasSpatialNeed = hasMultipleCharacters || hasProps
 
-  // Walk the same flattened order as collectOrderedRefs so the "see image N"
-  // hints stay aligned with the actual image inputs.
-  const orderedRefsForLegend = collectOrderedRefs(req)
-  const imageIndexByRole = new Map<string, number[]>()
-  orderedRefsForLegend.forEach((r, i) => {
-    const baseRole = r.role.replace(/\s\(\d+\/\d+\)$/, '')
-    const arr = imageIndexByRole.get(baseRole) ?? []
-    arr.push(i + 1)
-    imageIndexByRole.set(baseRole, arr)
-  })
-
-  // Character module is dynamic per row:
-  //   0 → skip the module entirely (the row is a landscape / object / SFX shot)
-  //   1 → "Single-character design column"
-  //   2 → "Dual protagonist character design column"
-  //   3+ → "Ensemble character design column"
-  const characterCountLabel = characters.length === 1
-    ? 'Single-character'
-    : characters.length === 2
-      ? 'Dual protagonist'
-      : `${characters.length}-character ensemble`
-  const characterColumnLines = characters.map((c, i) => {
-    const desc = c.description ? ` — ${c.description}` : ''
-    const indices = imageIndexByRole.get(`Character — ${c.name}`) ?? []
-    const ref = indices.length === 0
-      ? ''
-      : indices.length === 1
-        ? ` (see image${indices[0]} for canonical look)`
-        : ` (see images ${indices.join(', ')} for canonical look — multiple views supplied)`
-    return `- Character ${i + 1}: ${c.name}${desc}${ref}`
-  })
-
-  const sceneDesc = req.scene
-    ? `${req.scene.name ? `${req.scene.name} — ` : ''}${req.scene.description ?? ''}`.trim() || '(scene description from row)'
-    : '(scene description from row visual_description)'
-
-  const refs = orderedRefsForLegend
-  const legendLines = refs.map((ref, i) =>
+  // Image legend uses the same flattened order as collectOrderedRefs so
+  // "see imageN" hints in the prompt align with the actual image inputs.
+  const orderedRefs = collectOrderedRefs(req)
+  const legendLines = orderedRefs.map((ref, i) =>
     `- image${i + 1} = ${ref.role}${ref.description ? ` (${ref.description})` : ''}`,
   )
 
-  // Renumber modules when the character module is dropped so the LLM doesn't
-  // see "1, 3, 4, 5, 6" — the layout reads as a 5-module sheet instead.
+  const characterListLines = characters.map((c, i) => {
+    const desc = c.description ? ` — ${c.description}` : ''
+    return `  - ${i + 1}. ${c.name}${desc}`
+  })
+
+  const propListLines = props.map((p, i) => {
+    const desc = p.description ? ` — ${p.description}` : ''
+    return `  - ${i + 1}. ${p.name}${desc}`
+  })
+
+  // Spatial floor plan numbering: characters first (1..N), then props
+  // (N+1..N+M). Locks the legend mapping so the model can place numbered
+  // markers consistently.
+  const floorPlanLegendLines: string[] = []
+  characters.forEach((c, i) => floorPlanLegendLines.push(`  ${i + 1}. ${c.name}`))
+  props.forEach((p, i) => floorPlanLegendLines.push(`  ${characters.length + i + 1}. ${p.name}`))
+
+  const sceneLabel = req.scene
+    ? `${req.scene.name ? `${req.scene.name} — ` : ''}${req.scene.description ?? ''}`.trim() || '(scene from row visual_description)'
+    : '(no scene ref supplied — infer from row visual_description)'
+
   let modIdx = 0
   const next = () => ++modIdx
 
   return [
-    `# Hollywood industrial-standard visual development board, 4K ultra-high definition, professional film pre-production layout.`,
+    `# Director storyboard sheet — pre-production reference, NOT a final filmed frame.`,
+    `Shot duration: ${req.shotDurationSeconds}s. Aspect: ${aspect}. Style: ${visualStyle}.`,
     ``,
-    `## Project header bar`,
-    `- Title: ${title}`,
-    `- **TYPE**: ${projectType}`,
-    `- **TONE**: ${tone}`,
-    `- **GENRE**: ${genre}`,
-    `- Shot duration: ${req.shotDurationSeconds}s`,
-    `- Visual style: ${visualStyle}`,
-    `- Aspect ratio: ${aspect}`,
-    ``,
-    `## Layout (${hasCharacters ? '6' : '5'} modules, professional film production layout)`,
-    ``,
-    `### ${next()}. TOP — Project info bar`,
-    `Print "${title}" along with TYPE: ${projectType}, TONE: ${tone}, GENRE: ${genre}, duration ${req.shotDurationSeconds}s.`,
-    ``,
-    // Character module — only when the row actually has character refs.
-    ...(hasCharacters
+    // ─── Module 1: Scene crop from 360 panorama (when scene ref present) ───
+    ...(hasScene
       ? [
-          `### ${next()}. TOP-LEFT — ${characterCountLabel} character design column`,
-          ...characterColumnLines,
-          `Render front view, side view, back view three-view PLUS a face close-up for each character.`,
-          `**100% consistent character design across views — no facial drift, no clothing drift, no breaks.**`,
-          `Match the canonical look from the supplied reference image(s).`,
+          `## ${next()}. Scene reference (cropped from 360° panorama)`,
+          `**The scene reference image is a 360° equirectangular PANORAMA covering the full sphere.** Do NOT render the whole panorama. Pick the camera direction that matches this shot's framing and crop only the portion you need. Use the panorama for environment fidelity — lighting, architecture, props in view, color palette — never for literal frame composition.`,
+          `Scene: ${sceneLabel}.`,
           ``,
         ]
-      : [
-          `### ${next()}. NOTE — No character design column`,
-          `This row has no character refs (a landscape / object-focus / SFX shot). Do NOT render any character figures, three-views, or face close-ups. The space that would normally hold the character column is reallocated to the scene concept art module.`,
+      : []),
+    // ─── Module 2: Storyboard panel grid (always the primary content) ───
+    `## ${next()}. Storyboard panel grid (primary content)`,
+    `Render a multi-panel director storyboard grid covering this shot's action arc.`,
+    `- Panel count: choose 3–6 panels based on the ${req.shotDurationSeconds}s duration and the density of the action below; denser action → more panels.`,
+    `- **Each panel carries a TIME-SLICE LABEL at the top-left of that panel** (e.g. "0–1.5s", "1.5–3.0s"). The time labels must sum to exactly ${req.shotDurationSeconds}s with no gaps or overlaps.`,
+    `- Panels show **progressive action** across the shot. Do NOT print camera angles / focal lengths / lighting / style names as text — let the rendered visuals carry composition and mood.`,
+    `- Action guidance: ${r.storyboard_prompts || r.visual_description || '(use the visual_description from this row)'}`,
+    ``,
+    // ─── Module 3: Multi-character height comparison strip ───
+    ...(hasMultipleCharacters
+      ? [
+          `## ${next()}. Character height comparison strip`,
+          `Side-by-side strip of all ${characters.length} characters standing at consistent scale: frontal pose, neutral expression, full body, plain background.`,
+          `Locks relative heights so subsequent shots stay consistent.`,
+          `Characters (left-to-right):`,
+          ...characterListLines,
           ``,
-        ]),
-    `### ${next()}. ${hasCharacters ? 'TOP-RIGHT' : 'TOP (wide)'} — Core scene concept art`,
-    `Scene: ${sceneDesc}.`,
-    `Lighting / atmosphere: ${r.lighting_atmosphere || r.emotion_atmosphere || '(infer from emotion)'}.`,
-    ``,
-    `### ${next()}. MIDDLE — 3-shot storyboard sequence`,
-    `Render a 3-panel sequence covering this shot's action arc.`,
-    `Storyboard guidance: ${r.storyboard_prompts || r.visual_description || '(use the visual_description)'}.`,
-    `Each panel must annotate: camera angle, lens (focal length), shot size (${r.shot_size || '中景/Medium'}), and the key beat.`,
-    `Include arrow diagrams for camera movement (pan / tilt / dolly / push-in) connecting the panels.`,
-    ``,
-    `### ${next()}. BOTTOM — Professional technical parameters`,
-    `- Camera movement flowchart (arrow diagram across the sequence).`,
-    `- Lighting atmosphere: ${r.lighting_atmosphere || '(infer from scene)'}.`,
-    `- Color palette: 3-5 swatches consistent with ${visualStyle}.`,
-    `- Cinematography lens parameters: shot size ${r.shot_size || '中景'}, focal length, aperture (motivated by emotion).`,
-    hasCharacters && r.character_motivation ? `- Character motivation: ${r.character_motivation}.` : '',
-    hasCharacters && r.character_psychology ? `- Inner psychology: ${r.character_psychology}.` : '',
-    hasCharacters && r.performance_guidance ? `- Performance guidance: ${r.performance_guidance}.` : '',
-    ``,
-    `### ${next()}. QUALITY REQUIREMENTS`,
-    `- 4K ultra-high definition`,
-    `- ${visualStyle}`,
-    `- ULTRA-DETAILED, PROFESSIONAL FILM PRODUCTION LAYOUT`,
-    `- High-end typography, no text errors, no image breaks, no facial breakdown`,
-    `- Aspect ratio ${aspect}, compatible with SEEDANCE 2.0 video generation pipeline`,
+        ]
+      : []),
+    // ─── Module 4: Character × prop relative-size diagram ───
+    ...(hasCharacters && hasProps
+      ? [
+          `## ${next()}. Character × prop relative-size diagram`,
+          `Render each prop alongside ${characters[0]!.name} as the size reference — same scale across all pairings.`,
+          `Locks prop scale so subsequent shots match (e.g. hand-sized vs body-sized).`,
+          `Props:`,
+          ...propListLines,
+          `Size reference character: ${characters[0]!.name}.`,
+          ``,
+        ]
+      : []),
+    // ─── Module 5: Spatial floor plan with numbered legend ───
+    ...(hasSpatialNeed
+      ? [
+          `## ${next()}. Spatial floor plan (top-down, numbered)`,
+          `Render a clean top-down floor plan of this shot's location.`,
+          `- Mark every character and prop with a small numbered circle (①②③…) at its position.`,
+          `- Show staging cues: 180° axis line, character movement arrows, eye-line / prop relationships.`,
+          `- Below the plan, print the numbered legend exactly as listed; do NOT renumber:`,
+          ...floorPlanLegendLines,
+          `Locks blocking + spatial relationships for the downstream video generation step.`,
+          ``,
+        ]
+      : []),
+    // ─── Reference legend (image inputs the model receives) ───
+    ...(legendLines.length
+      ? [
+          `## Reference image legend`,
+          `Use the supplied reference images as labeled below. Maintain character + scene consistency across all modules.`,
+          ...legendLines,
+          ``,
+        ]
+      : []),
+    // ─── Quality bar (kept minimal) ───
+    `## Quality bar`,
+    `- 4K ultra-high definition; ${visualStyle}.`,
+    `- Each module rendered as its own clearly bordered region with subtle gutters between modules.`,
+    `- All panel / diagram labels are crisp; no text errors, no facial drift, no broken anatomy.`,
+    `- Output must be aspect ratio ${aspect}, compatible with the SEEDANCE 2.0 downstream video pipeline.`,
+    // ─── Privacy retry (optional opt-in flag) ───
     req.stylizeFacesFor2D
-      ? `- **3DCG STYLIZATION (privacy retry)**: 把原来人物脸部3DCG风格化，尽量保持面部细节，但可以避免系统误认真人；其他地方保持原来美术风格 / Re-stylize every human face into a 3DCG render — keep the facial structure / expression / lighting cues so the character is still recognizable, but push it just far enough from photoreal that downstream content-safety filters no longer flag it as a real person. Composition, palette, lighting, props, and the rest of the frame stay identical to a non-stylized render.`
+      ? `\n## 3DCG STYLIZATION (privacy retry)\n把原来人物脸部3DCG风格化，尽量保持面部细节，但可以避免系统误认真人；其他地方保持原来美术风格 / Re-stylize every human face into a 3DCG render — keep the facial structure / expression / lighting cues so the character is still recognizable, but push it just far enough from photoreal that downstream content-safety filters no longer flag it as a real person. Composition, palette, lighting, props, and the rest of the frame stay identical to a non-stylized render.`
       : '',
-    ``,
-    legendLines.length
-      ? `## REFERENCE IMAGES (use them as labeled, maintain character + scene consistency)`
-      : '',
-    ...legendLines,
   ]
     .filter((line) => line !== '')
     .join('\n')
