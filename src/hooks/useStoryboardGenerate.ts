@@ -9,14 +9,14 @@ import { useProjectDB } from '@/stores/project-db'
 import { useLibtvTasksStore } from '@/stores/libtv-tasks-store'
 import type { StoryboardRow, ElementSlot } from '@/types/storyboard'
 import type { AssetType } from '@/types/asset'
-import { generateKeyframe as directorGenerateKeyframe } from '@/lib/agents/director-agent'
+import { generateKeyframe as directorGenerateKeyframe, critiqueVideoConsistency as directorCritiqueVideo } from '@/lib/agents/director-agent'
 import type {
   GenerateKeyframeRequest,
   KeyframeCharacterRef,
   KeyframePropRef,
   KeyframeSceneRef,
 } from '@/lib/agents/director-agent'
-import { shoot as cinematographerShoot, shootMultiStrategy as cinematographerShootMultiStrategy } from '@/lib/agents/cinematographer-agent'
+import { shoot as cinematographerShoot, revise as cinematographerRevise, shootMultiStrategy as cinematographerShootMultiStrategy } from '@/lib/agents/cinematographer-agent'
 import type { BeatVideoContextRef } from '@/lib/agents/cinematographer-agent'
 import { runAgentWithChatBridge } from '@/lib/agents/chat-bridge'
 import { createMemoryContext } from '@/lib/agents/_shared/context/memory'
@@ -685,6 +685,80 @@ export function useStoryboardGenerate() {
         result = await attemptShoot(keyframeUrl)
         } // end if (digitalAssetSucceeded) else
       }
+
+      // ─── Auto-revise loop: shoot → critique → revise (max 1 retry) ─
+      // director-agent's storyboard-qc vision pass compares the rendered
+      // video against the row's expected casting / scene / action / style.
+      // If it flags major-or-blocking issues, cinematographer.revise
+      // rewrites the motion prompt addressing each note and re-shoots
+      // once. All progress events (critique findings, revise plan,
+      // re-roll status) surface in the chat panel via runAgentWithChat-
+      // Bridge so the user can watch the loop play out.
+      //
+      // Silently skipped if critique itself errors (no API key, vision
+      // capability rate-limited, etc.) — the user already has a usable
+      // first-pass video; no need to fail the whole pipeline over a QC
+      // miss. Cost guardrail: exactly one revise pass per shot.
+      try {
+        const critiqueCtx = createMemoryContext({ llm: createCapabilityLLM() })
+        const issues = await runAgentWithChatBridge(
+          'director-agent',
+          directorCritiqueVideo(
+            { videoUrl: result.url, expectedRow: row, keyframeUrl },
+            critiqueCtx,
+          ),
+          { verb: `critique-video ${row.shot_number}` },
+        )
+        const blockers = issues.filter(
+          (i) => i.severity === 'major' || i.severity === 'blocking',
+        )
+        if (blockers.length > 0) {
+          const dbAR = useProjectDB.getState()
+          const visualStyleAR = getArtStyle({
+            customStyle: dbAR.artDirection.customStyle,
+            stylePreset: dbAR.artDirection.stylePreset,
+          })
+          const reviseCtx = createMemoryContext({ llm: createCapabilityLLM() })
+          const revised = await runAgentWithChatBridge(
+            'cinematographer-agent',
+            cinematographerRevise(
+              {
+                previous: {
+                  url: result.url,
+                  prompt: result.prompt,
+                  durationSeconds: row.duration ?? 5,
+                  keyframeUrl,
+                  contextRefs: [],
+                },
+                feedback: blockers,
+                row,
+                visualStyle: visualStyleAR,
+                keyframeUrl,
+                contextRefs: [],
+                aspect: '16:9',
+                resolution: '480p',
+              },
+              reviseCtx,
+            ),
+            { verb: `revise ${row.shot_number}` },
+          )
+          result = {
+            url: revised.url,
+            prompt: revised.prompt,
+            voiceAudioUrls: result.voiceAudioUrls,
+          }
+          toast.success(`Beat Video ${row.shot_number} 自动修订完成`, {
+            description: `Director 发现 ${blockers.length} 处主要问题，已用 cinematographer.revise 重拍`,
+          })
+        }
+      } catch (critiqueErr) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          '[useStoryboardGenerate] auto-revise skipped:',
+          (critiqueErr as Error).message,
+        )
+      }
+
       const url = result.url
 
       // Create beat video node on canvas, connected to keyframe

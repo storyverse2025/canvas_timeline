@@ -36,7 +36,14 @@ export type CanvasItemRole =
   | 'style'
   | 'system'
   | 'keyframe'
+  /** Single cinematic frame variant of the director keyframe — paired
+   *  with a regular 'keyframe' item that holds the multi-panel sheet. */
+  | 'keyframe-clean'
   | 'beat-video'
+  /** Non-primary beat-video variant from shootMultiStrategy. The primary
+   *  variant uses 'beat-video' so existing adopt / display logic still
+   *  finds it; alternates sit next to it on canvas for user comparison. */
+  | 'beat-video-alternate'
   | 'voice'
   | 'character'
   | 'character-bio'

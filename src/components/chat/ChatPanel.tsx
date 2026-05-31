@@ -113,6 +113,7 @@ export function ChatPanel() {
   const { generateKeyframe, generateBeatVideo } = useStoryboardGenerate()
   const [input, setInput] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
+  const bottomSentinelRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   // Deps bundle reused by both QuickAction clicks and PM action dispatch.
@@ -311,11 +312,15 @@ export function ChatPanel() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [addMessage, generateKeyframe, generateBeatVideo])
 
+  // Auto-scroll to the newest message. Setting scrollTop on the radix
+  // ScrollArea root is a no-op because the actual scrollable element is
+  // its inner [data-radix-scroll-area-viewport]. We use a sentinel div
+  // at the bottom of the message list and scrollIntoView on it — this
+  // works for both the radix wrapper AND any pendingQuestion or live
+  // skill-progress block that grows below the messages.
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-    }
-  }, [messages])
+    bottomSentinelRef.current?.scrollIntoView({ block: 'end', behavior: 'auto' })
+  }, [messages, pendingQuestion, isLoading, skillProgress])
 
   async function processResponse(fullText: string) {
     const assetStore = useAssetStore.getState()
@@ -647,6 +652,10 @@ export function ChatPanel() {
               <span>Processing...</span>
             </div>
           )}
+          {/* Auto-scroll target — kept after every dynamic block so
+              scrollIntoView lands on the literal bottom of the message
+              list, not mid-stream. */}
+          <div ref={bottomSentinelRef} aria-hidden="true" />
         </div>
       </ScrollArea>
 
