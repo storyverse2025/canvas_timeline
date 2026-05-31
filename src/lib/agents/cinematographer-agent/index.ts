@@ -59,6 +59,36 @@ function clampDuration(seconds: number): number {
   return Math.min(Math.max(Math.round(seconds), MIN_DURATION), MAX_DURATION)
 }
 
+// Rough TTS duration heuristic — we don't actually synthesize audio here,
+// just estimate how long the dialogue will take so the video clip is long
+// enough not to clip the line. Conservative natural speaking rates:
+//   Mandarin ~3.5 chars/sec (~210 chars/min)
+//   English  ~2.5 words/sec (~150 wpm)
+// Returns 0 when dialogue is empty so callers can max() against it safely.
+export function predictDialogueDurationSeconds(dialogue: string | undefined): number {
+  if (!dialogue || !dialogue.trim()) return 0
+  const chineseChars = (dialogue.match(/\p{Script=Han}/gu) ?? []).length
+  const stripped = dialogue.replace(/\p{Script=Han}/gu, ' ')
+  const englishWords = (stripped.match(/[A-Za-z]+/g) ?? []).length
+  return chineseChars / 3.5 + englishWords / 2.5
+}
+
+// Buffer after the predicted dialogue end for breath / fade / final composition
+// hold. Keeps the last syllable from getting clipped by the video tail.
+const DIALOGUE_TAIL_BUFFER_SECONDS = 0.8
+
+// Pick a duration that's long enough for the dialogue line, falling back to
+// the user / row request when the dialogue is short. Returns the post-clamp
+// integer seconds the Seedance call should use.
+export function resolveEffectiveDurationSeconds(opts: {
+  userRequested: number
+  dialogue: string | undefined
+}): number {
+  const ttsFloor = predictDialogueDurationSeconds(opts.dialogue)
+  const floor = ttsFloor > 0 ? ttsFloor + DIALOGUE_TAIL_BUFFER_SECONDS : 0
+  return clampDuration(Math.max(opts.userRequested, floor))
+}
+
 function buildContextRefLine(contextRefs: BeatVideoContextRef[]): string {
   // Context refs (character/scene/prop descriptions) are intentionally NOT
   // baked into the motion text any more — they bias Seedance away from
@@ -245,7 +275,10 @@ export async function* shoot(
   ctx: ProjectContext,
 ): AgentGenerator<BeatVideoResult> {
   const shot = req.row.shot_number ?? '?'
-  const durationSeconds = clampDuration(req.durationSecondsOverride ?? req.row.duration ?? MIN_DURATION)
+  const durationSeconds = resolveEffectiveDurationSeconds({
+    userRequested: req.durationSecondsOverride ?? req.row.duration ?? MIN_DURATION,
+    dialogue: req.row.dialogue,
+  })
   const aspect = req.aspect ?? '16:9'
   const resolution = req.resolution ?? SHOOT_RESOLUTION_DEFAULT
 
@@ -337,7 +370,10 @@ export async function* revise(
   ctx: ProjectContext,
 ): AgentGenerator<BeatVideoResult> {
   const shot = req.row.shot_number ?? '?'
-  const durationSeconds = clampDuration(req.durationSecondsOverride ?? req.row.duration ?? MIN_DURATION)
+  const durationSeconds = resolveEffectiveDurationSeconds({
+    userRequested: req.durationSecondsOverride ?? req.row.duration ?? MIN_DURATION,
+    dialogue: req.row.dialogue,
+  })
   const aspect = req.aspect ?? '16:9'
   const resolution = req.resolution ?? SHOOT_RESOLUTION_DEFAULT
 
