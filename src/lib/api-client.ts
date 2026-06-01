@@ -324,7 +324,10 @@ export const api = {
       taskCategory?: string;
       taskType?: 't2i' | 'i2i' | 't2v' | 'i2v' | 'v2v';
       modelName?: string;
+      outputMediaType?: 'image' | 'video';
     }): Promise<{
+      corpus_count?: number;
+      source_path?: string;
       hits: Array<{
         id: string;
         prompt: string;
@@ -347,6 +350,7 @@ export const api = {
           task_category: data.taskCategory ?? null,
           task_type: data.taskType ?? null,
           model_name: data.modelName ?? null,
+          output_media_type: data.outputMediaType ?? null,
         }),
       });
       if (!res.ok) {
