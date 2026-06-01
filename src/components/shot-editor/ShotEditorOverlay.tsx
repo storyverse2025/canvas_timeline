@@ -10,6 +10,8 @@ import { InpaintPanel } from './InpaintPanel'
 import { AssociationPanel } from './AssociationPanel'
 import { MultiAnglePanel } from './MultiAnglePanel'
 import { ReplacePanel } from './ReplacePanel'
+import { applyEditResult } from './apply-edit-result'
+import { collectKeyframeHistory } from './keyframe-history'
 
 const MODES: { id: EditMode; label: string; icon: React.ElementType }[] = [
   { id: 'dialog', label: '对话修图', icon: MessageSquare },
@@ -26,7 +28,6 @@ export function ShotEditorOverlay() {
   const setEditMode = useShotEditorStore((s) => s.setEditMode)
   const closeEditor = useShotEditorStore((s) => s.closeEditor)
   const rows = useStoryboardStore((s) => s.rows)
-  const updateRow = useStoryboardStore((s) => s.updateRow)
   const allItems = useCanvasItemStore((s) => s.items)
 
   if (!isOpen || !rowId) return null
@@ -39,28 +40,14 @@ export function ShotEditorOverlay() {
   const hasPrev = rowIdx > 0
   const hasNext = rowIdx < rows.length - 1
 
-  // Pull every historical keyframe for this row off the canvas item store.
-  // Both the multi-panel grid (role='keyframe') and the clean single-frame
-  // variant (role='keyframe-clean') are eligible. We match by name prefix
-  // so iteration variants (KF-S1, KF-S1-clean, KF-S1-iter2, …) all show
-  // up regardless of which path generated them.
-  const namePrefix = `KF-${row.shot_number}`
-  const keyframeVersions = Object.values(allItems)
-    .filter((it) => {
-      if (it.kind !== 'image') return false
-      if (it.role !== 'keyframe' && it.role !== 'keyframe-clean') return false
-      const n = it.name ?? ''
-      return n === namePrefix || n.startsWith(`${namePrefix}-`) || n.startsWith(`${namePrefix} `)
-    })
-    .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))
+  // Pull every historical keyframe for this row off the canvas item store,
+  // including both sibling KF-* items and versions[] inside the adopted
+  // keyframe item. Generated-but-not-applied candidates live in versions[].
+  const keyframeVersions = collectKeyframeHistory(row, allItems)
 
-  const adoptVersion = (itemId: string, url: string) => {
-    updateRow(row.id, {
-      keyframeUrl: url,
-      reference_image: url,
-      keyframeNodeId: row.keyframeNodeId, // node id stays on the original — adoption is by URL, not node
-    })
-    toast.success(`已采用版本 ${itemId.slice(0, 8)} 作为当前 keyframe`)
+  const adoptVersion = (versionId: string, url: string) => {
+    applyEditResult(row.id, url, '历史版本')
+    toast.success(`已采用版本 ${versionId.slice(0, 8)} 作为当前 keyframe`)
   }
 
   const goTo = (idx: number) => {

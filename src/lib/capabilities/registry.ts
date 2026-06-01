@@ -248,7 +248,7 @@ export const CAPABILITIES: CapabilitySpec[] = [
     description: '根据文本描述生成视频',
     inputKinds: ['text'],
     outputKind: 'video',
-    nodeTypes: ['text', 'image'],
+    nodeTypes: ['text', 'image', 'video'],
     params: [
       { key: 'duration', label: '时长(秒)', type: 'select', default: '5', options: [
         { value: '4', label: '4s' }, { value: '5', label: '5s' }, { value: '6', label: '6s' },
@@ -302,7 +302,7 @@ export const CAPABILITIES: CapabilitySpec[] = [
     description: '图片+视频+音频组合生成视频',
     inputKinds: ['image', 'video', 'audio', 'text'],
     outputKind: 'video',
-    nodeTypes: ['image'],
+    nodeTypes: ['image', 'video'],
     params: [
       { key: 'duration', label: '时长(秒)', type: 'select', default: '5', options: [
         { value: '4', label: '4s' }, { value: '5', label: '5s' }, { value: '6', label: '6s' },
@@ -325,7 +325,7 @@ export const CAPABILITIES: CapabilitySpec[] = [
     description: '提升视频分辨率和画质',
     inputKinds: ['video'],
     outputKind: 'video',
-    nodeTypes: ['image'],
+    nodeTypes: ['video'],
     params: [
       { key: 'scale', label: '放大倍数', type: 'select', default: '2', options: [
         { value: '2', label: '2x' }, { value: '4', label: '4x' },
@@ -339,7 +339,7 @@ export const CAPABILITIES: CapabilitySpec[] = [
     description: '让视频中的人物口型匹配音频',
     inputKinds: ['video', 'audio'],
     outputKind: 'video',
-    nodeTypes: ['image'],
+    nodeTypes: ['video'],
   },
   {
     id: 'motion-imitation',
@@ -348,7 +348,7 @@ export const CAPABILITIES: CapabilitySpec[] = [
     description: '让目标人物模仿参考视频中的动作（需要参考视频 + 目标人物图）',
     inputKinds: ['video', 'image'],
     outputKind: 'video',
-    nodeTypes: ['image'],
+    nodeTypes: ['video'],
     params: [
       { key: 'mode', label: '质量模式', type: 'select', default: 'std', options: [
         { value: 'std', label: '标准' }, { value: 'pro', label: '高质量' },
@@ -362,7 +362,7 @@ export const CAPABILITIES: CapabilitySpec[] = [
     description: '按场景或时间切分视频为多个片段',
     inputKinds: ['video'],
     outputKind: 'video',
-    nodeTypes: ['image'],
+    nodeTypes: ['video'],
   },
   {
     id: 'video-style-transfer',
@@ -371,7 +371,7 @@ export const CAPABILITIES: CapabilitySpec[] = [
     description: '将视频风格转换为指定艺术风格',
     inputKinds: ['video', 'text'],
     outputKind: 'video',
-    nodeTypes: ['image'],
+    nodeTypes: ['video'],
     params: [
       { key: 'style', label: '风格', type: 'select', options: [
         { value: 'anime', label: '动漫' }, { value: 'oil-painting', label: '油画' },

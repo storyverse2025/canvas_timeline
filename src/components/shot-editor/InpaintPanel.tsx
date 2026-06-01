@@ -2,7 +2,7 @@ import { useRef, useState, useEffect } from 'react'
 import { Loader2, Paintbrush, Eraser } from 'lucide-react'
 import { toast } from 'sonner'
 import { runCapability } from '@/lib/capabilities/client'
-import { applyEditResult } from './apply-edit-result'
+import { applyEditResult, appendKeyframeHistoryVersion } from './apply-edit-result'
 
 interface Props { rowId: string; imageUrl: string }
 
@@ -119,6 +119,7 @@ export function InpaintPanel({ rowId, imageUrl }: Props) {
       })
       const url = r.outputs[0]?.url
       if (url) {
+        appendKeyframeHistoryVersion(rowId, url)
         setResultUrl(url)
         toast.success('标记修图完成')
       }

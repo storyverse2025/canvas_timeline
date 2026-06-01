@@ -89,11 +89,23 @@ describe('input extraction logic', () => {
 })
 
 describe('capability-node type mapping', () => {
-  it('image node gets image editing + video gen capabilities', () => {
+  it('image node gets image editing + image-to-video creation, but not video-post capabilities', () => {
     const imageCaps = CAPABILITIES.filter((c) => c.nodeTypes.includes('image'))
-    const categories = new Set(imageCaps.map((c) => c.category))
-    expect(categories.has('image')).toBe(true)
-    expect(categories.has('video')).toBe(true)
+    const ids = imageCaps.map((c) => c.id)
+    expect(ids).toContain('text-to-video')
+    expect(ids).toContain('first-last-frame')
+    expect(ids).not.toContain('upscale-video')
+    expect(ids).not.toContain('lip-sync')
+    expect(ids).not.toContain('video-split')
+  })
+
+  it('video node gets capabilities that require current video input', () => {
+    const videoCaps = CAPABILITIES.filter((c) => c.nodeTypes.includes('video'))
+    const ids = videoCaps.map((c) => c.id)
+    expect(ids).toContain('upscale-video')
+    expect(ids).toContain('lip-sync')
+    expect(ids).toContain('video-split')
+    expect(ids).toContain('video-style-transfer')
   })
 
   it('text node gets agent + generation + audio capabilities', () => {

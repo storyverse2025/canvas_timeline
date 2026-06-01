@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Loader2, Sparkles } from 'lucide-react'
 import { toast } from 'sonner'
 import { runCapability } from '@/lib/capabilities/client'
-import { applyEditResult } from './apply-edit-result'
+import { applyEditResult, appendKeyframeHistoryVersion } from './apply-edit-result'
 
 interface Props { rowId: string; imageUrl: string }
 
@@ -31,6 +31,7 @@ export function AssociationPanel({ rowId, imageUrl }: Props) {
         .map((r) => r.value.outputs[0]?.url)
         .filter((u): u is string => !!u)
       setResults(urls)
+      urls.forEach((url) => appendKeyframeHistoryVersion(rowId, url))
       if (urls.length > 0) toast.success(`生成 ${urls.length} 个联想分镜`)
     } catch (e) {
       toast.error('联想失败', { description: String((e as Error).message).slice(0, 200) })

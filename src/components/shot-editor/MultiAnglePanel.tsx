@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Loader2, RotateCcw } from 'lucide-react'
 import { toast } from 'sonner'
 import { runCapability } from '@/lib/capabilities/client'
-import { applyEditResult } from './apply-edit-result'
+import { applyEditResult, appendKeyframeHistoryVersion } from './apply-edit-result'
 import { cn } from '@/lib/utils'
 
 const ANGLES = [
@@ -32,6 +32,7 @@ export function MultiAnglePanel({ rowId, imageUrl }: Props) {
       })
       const url = r.outputs[0]?.url
       if (url) {
+        appendKeyframeHistoryVersion(rowId, url)
         setResultUrl(url)
         toast.success('多角度生成完成')
       }

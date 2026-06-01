@@ -5,7 +5,7 @@ import { runCapability } from '@/lib/capabilities/client'
 import { api } from '@/lib/api-client'
 import { useStoryboardStore } from '@/stores/storyboard-store'
 import { cn } from '@/lib/utils'
-import { applyEditResult } from './apply-edit-result'
+import { applyEditResult, appendKeyframeHistoryVersion } from './apply-edit-result'
 
 interface Props { rowId: string; imageUrl: string }
 
@@ -59,6 +59,7 @@ export function DialogEditPanel({ rowId, imageUrl }: Props) {
       })
       const url = r.outputs[0]?.url
       if (url) {
+        appendKeyframeHistoryVersion(rowId, url)
         setResultUrl(url)
         toast.success('编辑完成')
       }

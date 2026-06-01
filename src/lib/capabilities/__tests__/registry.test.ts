@@ -8,8 +8,8 @@ import {
 import type { CapabilitySpec } from '../types'
 
 describe('CAPABILITIES registry', () => {
-  it('has all 30 capabilities', () => {
-    expect(CAPABILITIES.length).toBe(30)
+  it('has all 33 capabilities', () => {
+    expect(CAPABILITIES.length).toBe(33)
   })
 
   it('has unique ids', () => {
@@ -32,7 +32,7 @@ describe('CAPABILITIES registry', () => {
   it('categories have expected counts', () => {
     const counts = { agent: 0, image: 0, video: 0, audio: 0 }
     for (const c of CAPABILITIES) counts[c.category]++
-    expect(counts.agent).toBe(6)
+    expect(counts.agent).toBe(9)
     expect(counts.image).toBe(11)
     expect(counts.video).toBe(9)
     expect(counts.audio).toBe(4)
@@ -67,7 +67,7 @@ describe('getCapability', () => {
 describe('getCapabilitiesByCategory', () => {
   it('returns only agent capabilities', () => {
     const caps = getCapabilitiesByCategory('agent')
-    expect(caps.length).toBe(6)
+    expect(caps.length).toBe(9)
     expect(caps.every((c) => c.category === 'agent')).toBe(true)
   })
 
@@ -101,7 +101,7 @@ describe('getCapabilitiesForNodeType', () => {
     expect(caps.every((c) => c.nodeTypes.includes('text'))).toBe(true)
   })
 
-  it('image node has image editing capabilities', () => {
+  it('image node has image editing and image-to-video creation capabilities, not video-post capabilities', () => {
     const caps = getCapabilitiesForNodeType('image')
     const ids = caps.map((c) => c.id)
     expect(ids).toContain('smart-edit')
@@ -109,6 +109,22 @@ describe('getCapabilitiesForNodeType', () => {
     expect(ids).toContain('outpaint')
     expect(ids).toContain('text-to-video')
     expect(ids).toContain('multi-angle')
+    expect(ids).not.toContain('upscale-video')
+    expect(ids).not.toContain('lip-sync')
+    expect(ids).not.toContain('video-split')
+    expect(ids).not.toContain('video-style-transfer')
+  })
+
+  it('video node owns video-post capabilities that require current video input', () => {
+    const caps = getCapabilitiesForNodeType('video')
+    const ids = caps.map((c) => c.id)
+    expect(ids).toContain('upscale-video')
+    expect(ids).toContain('lip-sync')
+    expect(ids).toContain('video-split')
+    expect(ids).toContain('video-style-transfer')
+    expect(ids).toContain('universal-video')
+    expect(ids).not.toContain('smart-edit')
+    expect(ids).not.toContain('upscale-image')
   })
 
   it('text node has agent and generation capabilities', () => {

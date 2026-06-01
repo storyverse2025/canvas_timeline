@@ -38,12 +38,15 @@ export function useCapability() {
       const inputs: CapabilityInput[] = []
 
       // Source node content
-      if (item.kind === 'image' && item.content) {
-        if (/\.(mp4|webm|mov)(\?|$)/i.test(item.content)) {
+      if ((item.kind === 'image' || item.kind === 'video') && item.content) {
+        if (item.kind === 'video' || /\.(mp4|webm|mov)(\?|$)/i.test(item.content)) {
           inputs.push({ kind: 'video', url: item.content })
         } else {
           inputs.push({ kind: 'image', url: item.content })
         }
+      }
+      if (item.kind === 'audio' && item.content) {
+        inputs.push({ kind: 'audio', url: item.content })
       }
       if (item.kind === 'text' && item.content) {
         inputs.push({ kind: 'text', text: item.content })
