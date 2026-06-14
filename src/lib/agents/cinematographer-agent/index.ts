@@ -182,27 +182,46 @@ async function describeKeyframeCinematography(opts: {
 }
 
 /**
- * The image legend lists ONLY the keyframe — omni-reference (全能参考) mode
- * means a single image input. Character / scene / prop info goes into the
- * motion text via buildContextRefLine.
+ * The image legend.
+ *
+ * Both images travel to Seedance as reference_image (omni-reference / 全能参考
+ * mode — the only way Seedance accepts two images alongside dialogue audio;
+ * it rejects mixing a literal first_frame role with reference_image). Since
+ * neither carries the API-level first_frame role, the prompt itself spells out
+ * the intended roles: image1 (the clean frame) should anchor the opening
+ * composition / first frame, and image2 (the multi-panel grid) is the
+ * director's storyboard "thinking diagram" — read staging / blocking / pacing
+ * from it but never render its panels, borders, or labels.
+ *
+ * Single-image (no grid) keeps the original one-line legend.
  */
-function buildImageLegend(_keyframeUrl: string): string {
-  void _keyframeUrl
+function buildImageLegend(_keyframeUrl: string, hasStoryboardRef = false): string {
+  if (!hasStoryboardRef) {
+    return [
+      '【REFERENCE IMAGE / 参考图】 (omni-reference / 全能参考):',
+      '- image1 / @图片1 = Keyframe (the director storyboard sheet — read casting, scene, blocking, lighting from it; do NOT shoot the sheet itself).',
+    ].join('\n')
+  }
   return [
-    '【REFERENCE IMAGE / 参考图】 (omni-reference / 全能参考):',
-    '- image1 / @图片1 = Keyframe (the director storyboard sheet — read casting, scene, blocking, lighting from it; do NOT shoot the sheet itself).',
+    '【REFERENCE IMAGES / 参考图】 (全能参考 / omni-reference，两张都是参考图):',
+    '- image1 / @图片1 = 首帧图 / clean first frame —— 以这张作为视频的开场首帧与主构图，casting、场景、配色、光线都以它为准。',
+    '- image2 / @图片2 = 导演思维图 / director storyboard sheet —— 仅作导演调度参考：读取走位、调度、节奏、多拍动作演进。严禁把图板的分格、边框、箭头、时间标签、文字渲染进画面；画面长相以 @图片1 为准。',
   ].join('\n')
 }
 
 function assembleShootPrompt(req: {
   row: BeatVideoRow
   keyframeUrl: string
+  storyboardRefUrl?: string
   contextRefs?: BeatVideoContextRef[]
   visualStyle?: string
   cinematography?: string
 }): string {
   const dialogueAndSfx = buildMotionDescription(req)
-  const legend = buildImageLegend(req.keyframeUrl)
+  const hasStoryboardRef = Boolean(
+    req.storyboardRefUrl?.trim() && req.storyboardRefUrl.trim() !== req.keyframeUrl,
+  )
+  const legend = buildImageLegend(req.keyframeUrl, hasStoryboardRef)
   const cinematographyBlock = req.cinematography?.trim()
     ? `【镜头语言 / CINEMATOGRAPHY】（基于 @图片1 / image1 的分析）\n${req.cinematography.trim()}`
     : ''
@@ -253,16 +272,29 @@ async function callFirstLastFrame(opts: {
 async function callSeedance(opts: {
   prompt: string
   keyframeUrl: string
+  storyboardRefUrl?: string
   voiceAudioUrls?: string[]
   durationSeconds: number
   aspect: '16:9' | '9:16' | '1:1' | '4:3'
   resolution: '480p' | '720p' | '1080p'
   invitedImageAssetIds?: string[]
 }): Promise<string> {
-  // ONE image input: the keyframe (omni-reference / 全能参考). We deliberately
-  // don't ship character / scene / prop asset images alongside — the model
-  // reads casting, scene, blocking, lighting from the keyframe itself.
-  //
+  // Image inputs. Both the clean keyframe and the director storyboard grid
+  // ride along as reference_image (全能参考 / omni-reference). Seedance forbids
+  // tagging one image as the literal first_frame while another is a
+  // reference_image ("first/last frame content cannot be mixed with reference
+  // media content"), so we ship BOTH as references and let the PROMPT spell
+  // out the intended roles instead: @图片1 = 首帧 / 开场构图, @图片2 = 导演思维图
+  // (see buildImageLegend). mode:'reference' forces reference-to-video for the
+  // image-only case; when dialogue audio is present the dispatcher promotes to
+  // universal-to-video, which also tags every image reference_image.
+  const storyboardRef = opts.storyboardRefUrl?.trim()
+  const hasStoryboardRef = Boolean(storyboardRef && storyboardRef !== opts.keyframeUrl)
+  const imageInputs = [
+    { kind: 'image' as const, url: opts.keyframeUrl },
+    ...(hasStoryboardRef ? [{ kind: 'image' as const, url: storyboardRef! }] : []),
+  ]
+
   // PER-CHARACTER voice files travel as audio inputs (when dialogue exists)
   // so Seedance can match each spoken line to its corresponding 音色N
   // reference. The capability dispatcher auto-routes audios → universal-to-
@@ -280,7 +312,7 @@ async function callSeedance(opts: {
     capability: 'text-to-video',
     inputs: [
       { kind: 'text', text: opts.prompt },
-      { kind: 'image', url: opts.keyframeUrl },
+      ...imageInputs,
       ...voiceInputs,
     ],
     params: {
@@ -289,9 +321,9 @@ async function callSeedance(opts: {
       duration: String(opts.durationSeconds),
       aspect: opts.aspect,
       resolution: opts.resolution,
-      // Hints to the capability plugin to use omni-reference mode if the
-      // provider exposes it as a flag (Doubao Seedance 2.0 supports it).
-      reference_mode: 'omni',
+      // Two images → force reference-to-video (both reference_image). Single
+      // image keeps the legacy omni-reference hint (image-to-video-first).
+      ...(hasStoryboardRef ? { mode: 'reference' as const } : { reference_mode: 'omni' }),
       // Privacy-block fallback: BytePlus digital-asset ids the caller
       // pre-registered. The capability plugin translates these to the
       // Seedance body's `invited_images` field.
@@ -349,6 +381,7 @@ export async function* shoot(
   const basePrompt = assembleShootPrompt({
     row: req.row,
     keyframeUrl: req.keyframeUrl,
+    storyboardRefUrl: req.storyboardRefUrl,
     contextRefs: req.contextRefs,
     visualStyle: req.visualStyle,
     cinematography,
@@ -378,7 +411,8 @@ export async function* shoot(
         durationSeconds, aspect, resolution,
       })
     : await callSeedance({
-        prompt, keyframeUrl: req.keyframeUrl, voiceAudioUrls, durationSeconds, aspect, resolution,
+        prompt, keyframeUrl: req.keyframeUrl, storyboardRefUrl: req.storyboardRefUrl,
+        voiceAudioUrls, durationSeconds, aspect, resolution,
         invitedImageAssetIds: req.invitedImageAssetIds,
       })
 
@@ -535,6 +569,7 @@ export async function* shootMultiStrategy(
   const basePrompt = assembleShootPrompt({
     row: req.row,
     keyframeUrl: req.keyframeUrl,
+    storyboardRefUrl: req.storyboardRefUrl,
     contextRefs: req.contextRefs,
     visualStyle: req.visualStyle,
     cinematography,
@@ -560,6 +595,7 @@ export async function* shootMultiStrategy(
       callSeedance({
         prompt: v.prompt,
         keyframeUrl: req.keyframeUrl,
+        storyboardRefUrl: req.storyboardRefUrl,
         voiceAudioUrls,
         durationSeconds,
         aspect,

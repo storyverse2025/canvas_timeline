@@ -63,6 +63,17 @@ export interface ShootRequest {
    */
   keyframeUrl: string
   /**
+   * Optional second image: the director storyboard grid (multi-panel sheet
+   * with blocking / pacing / multi-beat info). When present it ships to
+   * Seedance as a SECOND reference_image alongside the clean keyframe (全能参考
+   * / omni-reference — both are reference_image, since Seedance rejects mixing
+   * a literal first_frame role with a reference_image). The prompt legend then
+   * designates the roles in text: @图片1 = 首帧 / 开场构图, @图片2 = 导演思维图
+   * (storyboard sheet — read staging, never render its panels). Omit it to keep
+   * the single-image behavior. Ignored in transition (first-last) mode.
+   */
+  storyboardRefUrl?: string
+  /**
    * Optional context — character / scene / prop names + descriptions.
    * Baked into the motion text so the model knows what to look for in
    * the keyframe. NOT passed as additional image inputs.

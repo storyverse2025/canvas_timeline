@@ -519,6 +519,10 @@ export function useStoryboardGenerate() {
       opts: {
         invitedImageAssetIds?: string[]
         transitionFrames?: { firstFrameUrl: string; lastFrameUrl: string }
+        /** Director storyboard grid shipped as a second reference image
+         *  (clean keyframe stays the first frame). Skipped automatically in
+         *  transition mode. */
+        storyboardRefUrl?: string
       } = {},
     ): Promise<{ url: string; prompt: string; voiceAudioUrls: string[] }> => {
       // Track what the augmenter actually attached so we can return it
@@ -616,6 +620,9 @@ export function useStoryboardGenerate() {
             promptPostProcessor,
             invitedImageAssetIds: opts.invitedImageAssetIds,
             transitionFrames: opts.transitionFrames,
+            // First-ref mode: clean keyframe = first frame, grid = reference.
+            // Suppressed under transition mode (first-last uses boundary frames).
+            storyboardRefUrl: opts.transitionFrames ? undefined : opts.storyboardRefUrl,
           },
           agentCtx,
         ),
@@ -642,6 +649,15 @@ export function useStoryboardGenerate() {
       if (!keyframeUrl) {
         throw new Error('缺少 keyframe —— 先生成 keyframe 再拍摄 beat video')
       }
+
+      // When BOTH the clean frame and the storyboard grid exist (and differ),
+      // ship the grid as a second reference image so Seedance also reads
+      // blocking / pacing / multi-beat action from it — the clean frame stays
+      // the literal first frame. Undefined for legacy rows that only have one.
+      const storyboardRefUrl =
+        row.keyframeCleanUrl && row.keyframeUrl && row.keyframeUrl !== row.keyframeCleanUrl
+          ? row.keyframeUrl
+          : undefined
 
       // Transition routing: bridge rows generate via Seedance's first-last-
       // frame mode using their neighbors' boundary frames so the clip
@@ -688,7 +704,7 @@ export function useStoryboardGenerate() {
 
       let result: { url: string; prompt: string; voiceAudioUrls: string[] }
       try {
-        result = await attemptShoot(keyframeUrl, { transitionFrames })
+        result = await attemptShoot(keyframeUrl, { transitionFrames, storyboardRefUrl })
       } catch (firstErr) {
         const msg = String((firstErr as Error).message ?? firstErr)
         if (!isPrivacyBlock(msg)) throw firstErr

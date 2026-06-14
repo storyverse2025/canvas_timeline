@@ -143,6 +143,16 @@ describe('pure helpers', () => {
     expect(legend).not.toContain('image2')
     expect(legend).not.toContain('角色1')
   })
+
+  it('buildImageLegend designates @图片1=首帧 and @图片2=导演思维图 when a grid ref is shipped', () => {
+    const legend = buildImageLegend('https://clean.png', true)
+    expect(legend).toContain('image1 / @图片1')
+    expect(legend).toContain('image2 / @图片2')
+    expect(legend).toContain('首帧图')
+    expect(legend).toContain('导演思维图')
+    // The grid must be reference-only — never rendered into the frame.
+    expect(legend).toContain('严禁')
+  })
 })
 
 describe('buildContextRefLine', () => {
@@ -204,6 +214,71 @@ describe('shoot', () => {
     // as additional image inputs.
     expect(call.inputs).toHaveLength(2)
     expect(call.inputs[1]).toEqual({ kind: 'image', url: 'https://k.png' })
+  })
+
+  it('ships clean + grid as TWO reference images in 全能参考/reference mode and designates roles in the prompt (@图片1=首帧, @图片2=导演思维图)', async () => {
+    mockedRunCapability.mockImplementation(async (...args: unknown[]) => {
+      const req = args[0] as { capability?: string } | undefined
+      if (req?.capability === 'cinematography-describe') {
+        return { outputs: [{ kind: 'text' as const, text: 'slow push-in, soft key light' }] }
+      }
+      return { outputs: [{ kind: 'video' as const, url: 'https://video.mp4' }] }
+    })
+    const ctx = createMemoryContext({ llm: { complete: async () => '' } })
+
+    await driveAuto(
+      shoot(
+        {
+          row: { shot_number: 'S1', duration: 8 },
+          keyframeUrl: 'https://clean.png',
+          storyboardRefUrl: 'https://grid.png',
+        },
+        ctx,
+      ),
+    )
+
+    // The video model gets BOTH images (clean first, grid second), both as
+    // references (mode='reference' → reference-to-video). No literal
+    // first_frame role — that's forbidden alongside a reference_image.
+    const video = mockedRunCapability.mock.calls.find((c) => c[0]!.capability === 'text-to-video')![0]!
+    expect(video.inputs).toHaveLength(3) // text + clean + grid
+    expect(video.inputs[1]).toEqual({ kind: 'image', url: 'https://clean.png' })
+    expect(video.inputs[2]).toEqual({ kind: 'image', url: 'https://grid.png' })
+    expect(video.params?.mode).toBe('reference')
+    expect(video.params?.reference_mode).toBeUndefined()
+
+    // The prompt legend designates the roles in text.
+    const promptText = (video.inputs[0] as { text: string }).text
+    expect(promptText).toContain('@图片1')
+    expect(promptText).toContain('@图片2')
+    expect(promptText).toContain('首帧')
+    expect(promptText).toContain('导演思维图')
+
+    // describe step still reads only the clean keyframe (text + 1 image).
+    const describe = mockedRunCapability.mock.calls.find((c) => c[0]!.capability === 'cinematography-describe')![0]!
+    expect(describe.inputs).toHaveLength(2)
+    expect(describe.inputs[1]).toEqual({ kind: 'image', url: 'https://clean.png' })
+  })
+
+  it('does NOT add a 2nd reference image when grid === clean (dedup → single image, omni hint)', async () => {
+    mockedRunCapability.mockImplementation(async (...args: unknown[]) => {
+      const req = args[0] as { capability?: string } | undefined
+      if (req?.capability === 'cinematography-describe') {
+        return { outputs: [{ kind: 'text' as const, text: 'x' }] }
+      }
+      return { outputs: [{ kind: 'video' as const, url: 'https://video.mp4' }] }
+    })
+    const ctx = createMemoryContext({ llm: { complete: async () => '' } })
+    await driveAuto(
+      shoot(
+        { row: { shot_number: 'S1', duration: 5 }, keyframeUrl: 'https://k.png', storyboardRefUrl: 'https://k.png' },
+        ctx,
+      ),
+    )
+    const video = mockedRunCapability.mock.calls.find((c) => c[0]!.capability === 'text-to-video')![0]!
+    expect(video.inputs).toHaveLength(2) // text + single image
+    expect(video.params?.mode).toBeUndefined()
+    expect(video.params?.reference_mode).toBe('omni')
   })
 
   it('transition mode: routes to first-last-frame capability with prev/next boundary images instead of omni-reference text-to-video', async () => {
