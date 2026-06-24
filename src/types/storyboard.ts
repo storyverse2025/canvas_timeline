@@ -44,6 +44,9 @@ export const StoryboardRowSchema = z.object({
   mixing_brief: z.string().default(''),
   /** Dialogue text */
   dialogue: z.string().default(''),
+  /** 相对上一行的衔接设计：场景切换→开头过渡手法 + 结尾 ~1s 留白；
+   *  同场景连续→画面构图衔接（机位/视线/调度如何承接上一行收尾画面）。 */
+  transition_note: z.string().default(''),
   storyboard_prompts: z.string().default(''),
   motion_prompts: z.string().default(''),
   /** BGM description/tag */

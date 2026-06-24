@@ -7,6 +7,7 @@ import {
   buildRagGlobalArtStyleContext,
   buildRagQueries,
   buildRagQueryExtractionPrompt,
+  buildRagRowPatchDiffMessage,
   buildRagRowRewritePrompt,
   EMPTY_RAG_SELECTION,
   parseRagExtractedQueries,
@@ -136,16 +137,88 @@ describe('rag row rewrite helpers', () => {
     expect(prompt).toContain('motion_prompts 应综合动作参考 + 镜头参考')
   })
 
-  it('parses only safe row patch fields from AI JSON', () => {
+  it('parses every editable text column while blocking media, identity, and timing fields', () => {
     const patch = parseRagRowPatch(JSON.stringify({
+      visual_description: 'new visual description',
+      visual_anchor: 'new visual anchor',
+      shot_size: 'new shot size',
+      character_actions: 'new action',
+      emotion_mood: 'new mood',
+      emotion_atmosphere: 'new emotion atmosphere',
+      character_motivation: 'new motivation',
+      character_psychology: 'new psychology',
+      performance_guidance: 'new performance guidance',
+      lighting_atmosphere: 'new lighting',
+      dialogue: 'new dialogue',
+      transition_note: 'new transition note',
+      sound_effects: 'new sfx',
+      mixing_brief: 'new mix',
       storyboard_prompts: 'new art/camera prompt',
       motion_prompts: 'new action/camera prompt',
+      bgm: 'new bgm',
       keyframeUrl: 'must-not-change',
+      beatVideoUrl: 'must-not-change',
+      shot_number: 'S999',
       duration: 99,
     }))
     expect(patch).toEqual({
+      visual_description: 'new visual description',
+      visual_anchor: 'new visual anchor',
+      shot_size: 'new shot size',
+      character_actions: 'new action',
+      emotion_mood: 'new mood',
+      emotion_atmosphere: 'new emotion atmosphere',
+      character_motivation: 'new motivation',
+      character_psychology: 'new psychology',
+      performance_guidance: 'new performance guidance',
+      lighting_atmosphere: 'new lighting',
+      dialogue: 'new dialogue',
+      transition_note: 'new transition note',
+      sound_effects: 'new sfx',
+      mixing_brief: 'new mix',
       storyboard_prompts: 'new art/camera prompt',
       motion_prompts: 'new action/camera prompt',
+      bgm: 'new bgm',
     })
+  })
+
+  it('accepts Chinese table column labels for RAG patch fields', () => {
+    const patch = parseRagRowPatch(JSON.stringify({
+      '画面描述': '中文画面',
+      '视觉锚点': '中文锚点',
+      '角色动作': '中文动作',
+      '表演指导': '中文表演',
+      '光影氛围': '中文光影',
+      '分镜提示词': '中文分镜 prompt',
+      '视频运动提示词': '中文视频运动 prompt',
+      '参考/KF': 'must-not-change',
+      'Beat Video': 'must-not-change',
+    }))
+    expect(patch).toEqual({
+      visual_description: '中文画面',
+      visual_anchor: '中文锚点',
+      character_actions: '中文动作',
+      performance_guidance: '中文表演',
+      lighting_atmosphere: '中文光影',
+      storyboard_prompts: '中文分镜 prompt',
+      motion_prompts: '中文视频运动 prompt',
+    })
+  })
+
+  it('builds a chat-panel diff message for the fields changed by RAG rewrite', () => {
+    const message = buildRagRowPatchDiffMessage(row, {
+      visual_description: '女孩在冷蓝金属更衣室前停住',
+      storyboard_prompts: 'new art/camera prompt',
+      motion_prompts: 'old motion',
+    })
+
+    expect(message).toContain('RAG 已改写镜头 S1')
+    expect(message).toContain('visual_description')
+    expect(message).toContain('- 女孩进入更衣室')
+    expect(message).toContain('+ 女孩在冷蓝金属更衣室前停住')
+    expect(message).toContain('storyboard_prompts')
+    expect(message).toContain('- old storyboard')
+    expect(message).toContain('+ new art/camera prompt')
+    expect(message).not.toContain('motion_prompts')
   })
 })

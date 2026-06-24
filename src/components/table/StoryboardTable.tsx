@@ -32,6 +32,7 @@ const COLUMNS: Col[] = [
   { key: 'shot_number',         label: '镜号',          width: 'w-20',  type: 'text' },
   { key: 'duration',            label: '时长(秒)',      width: 'w-20',  type: 'number' },
   { key: 'visual_description',  label: '画面描述',      width: 'w-56',  type: 'multiline' },
+  { key: 'transition_note',     label: '前后衔接',      width: 'w-56',  type: 'multiline' },
   { key: 'visual_anchor',       label: '视觉锚点',      width: 'w-40',  type: 'multiline' },
   { key: 'reference_image',     label: '参考/KF',       width: 'w-28',  type: 'media-image' },
   { key: 'shot_size',           label: '景别',          width: 'w-24',  type: 'text' },
@@ -485,6 +486,10 @@ export function StoryboardTable() {
                     {/* 画面描述 */}
                     <td className="px-2 py-2 border-b border-zinc-900">
                       <TextCell multiline value={r.visual_description} onChange={(v) => updateRow(r.id, { visual_description: v })} />
+                    </td>
+                    {/* 前后衔接 */}
+                    <td className="px-2 py-2 border-b border-zinc-900">
+                      <TextCell multiline value={r.transition_note} onChange={(v) => updateRow(r.id, { transition_note: v })} />
                     </td>
                     {/* 视觉锚点 */}
                     <td className="px-2 py-2 border-b border-zinc-900">

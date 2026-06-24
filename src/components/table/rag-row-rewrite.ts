@@ -159,16 +159,49 @@ function formatHits(label: string, hits: RagReferenceHit[]): string {
   }).join('\n')
 }
 
-export function buildRagRowRewritePrompt(row: StoryboardRow, groups: RagReferenceGroups, selection: RagSelection, userFeedback: string): string {
-  const picked = selectedRagHits(groups, selection)
-  return `你是分镜表编辑助手。请根据用户手动反馈和 RAG 参考，改写当前分镜 row。\n\n当前 row JSON:\n${JSON.stringify(row, null, 2)}\n\n用户反馈:\n${userFeedback.trim() || '请综合所选参考，提升这一镜的美术、动作、镜头表达。'}\n\n所选 RAG 参考（分别只作为参考，不要照抄专名/图片编号）:\n${formatHits('美术参考', picked.art)}\n\n${formatHits('动作参考', picked.action)}\n\n${formatHits('镜头参考', picked.camera)}\n\n输出要求：只输出 JSON object，不要 markdown。字段只允许包含以下可改字段：visual_description, visual_anchor, shot_size, character_actions, emotion_mood, emotion_atmosphere, character_motivation, character_psychology, performance_guidance, lighting_atmosphere, dialogue, sound_effects, mixing_brief, storyboard_prompts, motion_prompts, bgm。\nstoryboard_prompts 应综合美术参考 + 镜头参考；motion_prompts 应综合动作参考 + 镜头参考。不要改 shot_number/duration/keyframeUrl/beatVideoUrl/角色道具场景图片字段。`
+const EDITABLE_TEXT_COLUMNS = [
+  ['visual_description', '画面描述'],
+  ['visual_anchor', '视觉锚点'],
+  ['shot_size', '景别'],
+  ['character_actions', '角色动作'],
+  ['emotion_mood', '情绪'],
+  ['emotion_atmosphere', '情绪/氛围感'],
+  ['character_motivation', '角色动机'],
+  ['character_psychology', '心理/潜台词'],
+  ['performance_guidance', '表演指导'],
+  ['lighting_atmosphere', '光影氛围'],
+  ['dialogue', '对白文本'],
+  ['transition_note', '前后衔接'],
+  ['sound_effects', '音效'],
+  ['mixing_brief', '混音说明'],
+  ['storyboard_prompts', '分镜提示词'],
+  ['motion_prompts', '视频运动提示词'],
+  ['bgm', 'BGM'],
+] as const satisfies readonly (readonly [keyof StoryboardRow, string])[]
+
+type EditableTextField = typeof EDITABLE_TEXT_COLUMNS[number][0]
+
+const PATCH_FIELD_ALIASES = new Map<string, EditableTextField>(
+  EDITABLE_TEXT_COLUMNS.flatMap(([field, label]) => [
+    [field, field],
+    [label, field],
+  ]),
+)
+
+const EDITABLE_TEXT_FIELD_CONTRACT = EDITABLE_TEXT_COLUMNS
+  .map(([field, label]) => `${field}（${label}）`)
+  .join(', ')
+
+function normalizePatchField(key: string): EditableTextField | null {
+  return PATCH_FIELD_ALIASES.get(key.trim()) ?? null
 }
 
-const ALLOWED_PATCH_FIELDS = new Set([
-  'visual_description', 'visual_anchor', 'shot_size', 'character_actions', 'emotion_mood', 'emotion_atmosphere',
-  'character_motivation', 'character_psychology', 'performance_guidance', 'lighting_atmosphere', 'dialogue',
-  'sound_effects', 'mixing_brief', 'storyboard_prompts', 'motion_prompts', 'bgm',
-])
+export function buildRagRowRewritePrompt(row: StoryboardRow, groups: RagReferenceGroups, selection: RagSelection, userFeedback: string): string {
+  const picked = selectedRagHits(groups, selection)
+  return `你是分镜表编辑助手。请根据用户手动反馈和 RAG 参考，改写当前分镜 row。\n\n当前 row JSON:\n${JSON.stringify(row, null, 2)}\n\n用户反馈:\n${userFeedback.trim() || '请综合所选参考，提升这一镜的美术、动作、镜头表达。'}\n\n所选 RAG 参考（分别只作为参考，不要照抄专名/图片编号）:\n${formatHits('美术参考', picked.art)}\n\n${formatHits('动作参考', picked.action)}\n\n${formatHits('镜头参考', picked.camera)}\n\n输出要求：只输出 JSON object，不要 markdown。理论上所有可编辑文字 column 都可以改；字段只允许包含以下可改字段（括号内为表格中文列名）：${EDITABLE_TEXT_FIELD_CONTRACT}。\nstoryboard_prompts 应综合美术参考 + 镜头参考；motion_prompts 应综合动作参考 + 镜头参考。不要改 shot_number/duration/reference_image/keyframeUrl/beatVideoUrl/keyframeNodeId/beatVideoNodeId/角色道具场景图片字段。`
+}
+
+const EDITABLE_TEXT_FIELD_SET = new Set<EditableTextField>(EDITABLE_TEXT_COLUMNS.map(([field]) => field))
 
 export function parseRagRowPatch(text: string): Partial<StoryboardRow> {
   const raw = text.trim()
@@ -176,8 +209,42 @@ export function parseRagRowPatch(text: string): Partial<StoryboardRow> {
   const parsed = JSON.parse(match ? match[0] : raw) as Record<string, unknown>
   const patch: Partial<StoryboardRow> = {}
   for (const [key, value] of Object.entries(parsed)) {
-    if (!ALLOWED_PATCH_FIELDS.has(key)) continue
-    ;(patch as Record<string, string>)[key] = typeof value === 'string' ? value : String(value ?? '')
+    const normalizedKey = normalizePatchField(key)
+    if (!normalizedKey) continue
+    ;(patch as Record<string, string>)[normalizedKey] = typeof value === 'string' ? value : String(value ?? '')
   }
   return patch
+}
+
+function compactDiffValue(value: unknown): string {
+  const text = typeof value === 'string' ? value : String(value ?? '')
+  const normalized = text.replace(/\s+/g, ' ').trim()
+  if (!normalized) return '（空）'
+  return normalized.length > 360 ? `${normalized.slice(0, 357)}...` : normalized
+}
+
+export function buildRagRowPatchDiffMessage(row: StoryboardRow, patch: Partial<StoryboardRow>): string {
+  const changed = Object.entries(patch)
+    .filter(([key]) => EDITABLE_TEXT_FIELD_SET.has(key as EditableTextField))
+    .map(([key, value]) => {
+      const before = compactDiffValue((row as unknown as Record<string, unknown>)[key])
+      const after = compactDiffValue(value)
+      return { key, before, after }
+    })
+    .filter((entry) => entry.before !== entry.after)
+
+  if (changed.length === 0) {
+    return `RAG 已检查镜头 ${row.shot_number || row.id}，没有产生文本字段变化。`
+  }
+
+  return [
+    `RAG 已改写镜头 ${row.shot_number || row.id}，修改前后 diff：`,
+    '',
+    ...changed.flatMap(({ key, before, after }) => [
+      `字段：${key}`,
+      `- ${before}`,
+      `+ ${after}`,
+      '',
+    ]),
+  ].join('\n').trimEnd()
 }

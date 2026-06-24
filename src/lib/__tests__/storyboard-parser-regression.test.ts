@@ -21,6 +21,19 @@ describe('storyboard parser retry regressions', () => {
     expect(result.rows?.[0].shot_number).toBe('S1')
   })
 
+  it('defaults transition_note to empty string and round-trips a provided value', () => {
+    const response = JSON.stringify([
+      validRow,
+      { ...validRow, shot_number: 'S2', transition_note: '匹配剪辑承接上一镜门把手，结尾留白1s' },
+    ], null, 2)
+
+    const result = parseAndValidateStoryboard(response)
+
+    expect(result.ok).toBe(true)
+    expect(result.rows?.[0].transition_note).toBe('')
+    expect(result.rows?.[1].transition_note).toBe('匹配剪辑承接上一镜门把手，结尾留白1s')
+  })
+
   it('parses the storyboard array when node references contain square brackets inside strings', () => {
     const response = JSON.stringify([
       {
