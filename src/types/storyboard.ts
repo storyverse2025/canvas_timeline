@@ -84,6 +84,23 @@ export interface StoryboardRow extends StoryboardRowInput {
   beatVideoNodeId?: string;
   beatVideoUrl?: string;
   /**
+   * 角色身份版 (character identity sheets), one per character slot. A 16:9
+   * model sheet locking the character: full-body anchor + 7 auxiliary views
+   * + 3 silhouettes + 3 expressions + 3 detail close-ups + ID block, relit
+   * with THIS row's scene lighting and scale-locked against the row's props.
+   * Ships to Seedance as the FIRST reference images (角色→场景→分镜→机位).
+   */
+  identitySheet1Url?: string;
+  identitySheet1NodeId?: string;
+  identitySheet2Url?: string;
+  identitySheet2NodeId?: string;
+  /**
+   * Canvas node ID of the text node holding the LLM-derived 黑白手绘故事板
+   * prompt (结构模板+参考图+主题 → 提示词). Wired upstream of the storyboard
+   * image node so the derivation chain is visible and editable.
+   */
+  storyboardPromptNodeId?: string;
+  /**
    * Marks a row inserted by the storyboard-bridge pipeline as a transition
    * clip between its neighbors. When true, generateBeatVideo extracts the
    * prev row's last frame + the next row's first frame and calls Seedance

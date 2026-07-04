@@ -6,6 +6,7 @@ import { useStoryboardStore } from '@/stores/storyboard-store'
 import { skills } from './skill-executor'
 import { runDirectorPipeline, runDirectorStage, type PipelineState } from './director-assistant'
 import { parseAndValidateStoryboard } from './storyboard-parser'
+import { mergeSameSceneRows } from './storyboard-merge'
 
 export interface Intent {
   skill: string
@@ -72,8 +73,11 @@ export async function executeIntent(intent: Intent, projectId: string, userInput
   const applyStoryboardResult = (json: string) => {
     const result = parseAndValidateStoryboard(json)
     if (result.ok && result.rows) {
-      useStoryboardStore.getState().replaceAll(result.rows)
-      chatStore.addMessage('system', `✓ 分镜表已更新：${result.rows.length} 行`)
+      const merged = mergeSameSceneRows(result.rows)
+      useStoryboardStore.getState().replaceAll(merged.rows)
+      chatStore.addMessage('system', merged.mergedAway > 0
+        ? `✓ 分镜表已更新：${result.rows.length} 行 → 合并同场景后 ${merged.rows.length} 行（单条更接近 15s）`
+        : `✓ 分镜表已更新：${merged.rows.length} 行`)
     } else {
       // Include a peek at the raw response so the user can diagnose whether
       // the LLM returned prose, partial JSON, or junk. Without this, when

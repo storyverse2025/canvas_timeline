@@ -34,5 +34,7 @@ describe('RAG reference picker UI contract', () => {
     expect(tableContext).toContain("capability: 'freeform-text'")
     expect(tableContext).toContain('parseRagRowPatch')
     expect(tableContext).toContain('updateRow(targetRow.id, patch)')
+    expect(tableContext).toContain('useChatStore.getState().addMessage')
+    expect(tableContext).toContain('buildRagRowPatchDiffMessage')
   })
 })

@@ -17,6 +17,7 @@ import { useAssetStore } from '@/stores/asset-store'
 import { useCanvasStore } from '@/stores/canvas-store'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import type { StoryboardRow, ElementSlot } from '@/types/storyboard'
+import { computeMergeGroups, mergeRowGroup } from '@/lib/storyboard-merge'
 import { thumb } from '@/lib/thumb'
 
 interface Col {
@@ -34,7 +35,8 @@ const COLUMNS: Col[] = [
   { key: 'visual_description',  label: '画面描述',      width: 'w-56',  type: 'multiline' },
   { key: 'transition_note',     label: '前后衔接',      width: 'w-56',  type: 'multiline' },
   { key: 'visual_anchor',       label: '视觉锚点',      width: 'w-40',  type: 'multiline' },
-  { key: 'reference_image',     label: '参考/KF',       width: 'w-28',  type: 'media-image' },
+  { key: 'reference_image',     label: '黑白故事板',    width: 'w-28',  type: 'media-image' },
+  { key: 'keyframe_clean',      label: '开场构图',      width: 'w-28',  type: 'media-image' },
   { key: 'shot_size',           label: '景别',          width: 'w-24',  type: 'text' },
   { key: 'character1',          label: '角色1',         width: 'w-40',  type: 'element' },
   { key: 'character2',          label: '角色2',         width: 'w-40',  type: 'element' },
@@ -134,9 +136,20 @@ function MediaCell({ url, onPick, onGenerate, busy, kind }: {
   )
 }
 
-function ElementCell({ slot: rawSlot, onChange }: {
+function ElementCell({ slot: rawSlot, onChange, identity }: {
   slot: ElementSlot | Record<string, unknown>
   onChange: (patch: Partial<ElementSlot>) => void
+  /**
+   * 角色 slots only: the 角色身份版 strip under the slot. The identity sheet
+   * derives from this slot's asset image (edge on canvas: 角色节点 → 身份版
+   * 节点), so it lives inside the character cell instead of its own column.
+   */
+  identity?: {
+    url?: string
+    busy?: boolean
+    onGenerate: () => void
+    onPick: (node: PickedNode) => void
+  }
 }) {
   // Normalize: slot might be a plain object from Zod defaults or persisted data
   const slot: ElementSlot = {
@@ -145,6 +158,8 @@ function ElementCell({ slot: rawSlot, onChange }: {
     nodeId: String((rawSlot as ElementSlot)?.nodeId ?? ''),
   }
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [idPickerOpen, setIdPickerOpen] = useState(false)
+  const showIdentity = identity && (slot.image || slot.description || identity.url)
   return (
     <div className="flex flex-col gap-1">
       <div className="relative w-full h-[40px] rounded bg-zinc-800/70 border border-zinc-700 overflow-hidden flex items-center justify-center group">
@@ -169,6 +184,45 @@ function ElementCell({ slot: rawSlot, onChange }: {
         onChange={(e) => onChange({ description: e.target.value })}
         placeholder="描述…"
       />
+      {showIdentity && (
+        <div
+          className="relative w-full h-[32px] rounded bg-zinc-800/40 border border-dashed border-zinc-700 overflow-hidden flex items-center justify-center group/id"
+          title="角色身份版：全身锚点+多视角+表情+细节+ID块，场景光刷光；生成视频时作为该角色的第一参考图"
+        >
+          {identity.busy && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/60">
+              <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            </div>
+          )}
+          {identity.url ? (
+            <img src={thumb(identity.url, 256)} alt="" loading="lazy" decoding="async" className="w-full h-full object-cover" />
+          ) : (
+            <span className="text-[9px] text-zinc-600">身份版</span>
+          )}
+          <div className="absolute inset-0 opacity-0 group-hover/id:opacity-100 transition bg-black/60 flex items-center justify-center gap-1">
+            <button
+              title="AI 生成角色身份版"
+              className="p-1 rounded bg-primary/80 hover:bg-primary text-primary-foreground"
+              onClick={identity.onGenerate}
+            >
+              <Wand2 className="w-3 h-3" />
+            </button>
+            <button
+              title="从画布选取身份版图片"
+              className="p-1 rounded bg-zinc-700 hover:bg-zinc-600 text-zinc-100"
+              onClick={() => setIdPickerOpen(true)}
+            >
+              <FolderInput className="w-3 h-3" />
+            </button>
+          </div>
+          <CanvasNodePickerDialog
+            open={idPickerOpen}
+            kind="image"
+            onClose={() => setIdPickerOpen(false)}
+            onPick={identity.onPick}
+          />
+        </div>
+      )}
       <CanvasNodePickerDialog
         open={pickerOpen}
         kind="image"
@@ -185,7 +239,7 @@ export function StoryboardTable() {
   const clear = useStoryboardStore((s) => s.clear)
   const setActiveTab = useViewStore((s) => s.setActiveTab)
   const setPlayhead = useTimelineStore((s) => s.setPlayheadTime)
-  const { generateKeyframe, generateBeatVideo } = useStoryboardGenerate()
+  const { generateKeyframe, generateBeatVideo, generateIdentitySheets } = useStoryboardGenerate()
   const tasks = useLibtvTasksStore((s) => s.tasks)
   const [ctxMenu, setCtxMenu] = useState<TableMenuState | null>(null)
 
@@ -195,6 +249,8 @@ export function StoryboardTable() {
     Object.values(tasks).some((t) => t.itemId === rowId && t.nodeId.startsWith('sb-kf-') && (t.status === 'pending' || t.status === 'polling'))
   const busyForBv = (rowId: string) =>
     Object.values(tasks).some((t) => t.itemId === rowId && t.nodeId.startsWith('sb-bv-') && (t.status === 'pending' || t.status === 'polling'))
+  const busyForId = (rowId: string) =>
+    Object.values(tasks).some((t) => t.itemId === rowId && t.nodeId.startsWith('sb-id-') && (t.status === 'pending' || t.status === 'polling'))
 
   const jumpToTimeline = (rowIdx: number) => {
     const start = rows.slice(0, rowIdx).reduce((s, r) => s + (Number(r.duration) || 0), 0)
@@ -388,6 +444,29 @@ export function StoryboardTable() {
     }
   }, [updateRow])
 
+  // 合并相邻同场景分镜到 ≤15s：每组保留第一行（含它的 keyframe / 视频 /
+  // 画布引用），其余行删除（它们已生成的画布节点不动）。文本字段按时间段
+  // 重排（【0-4s】…），让长 beat 满足 Seedance ≥8s 的分时段要求。
+  const mergeSameScene = useCallback(() => {
+    const all = useStoryboardStore.getState().rows
+    const groups = computeMergeGroups(all).filter((g) => g.length > 1)
+    if (groups.length === 0) {
+      toast.message('没有可合并的相邻同场景分镜', {
+        description: '条件：相邻行场景相同、合计 ≤15s、角色/道具并集不超过 2 个槽位',
+      })
+      return
+    }
+    const away = groups.reduce((s, g) => s + g.length - 1, 0)
+    if (!confirm(`合并 ${groups.length} 组相邻同场景分镜（减少 ${away} 行，单条 beat video 更接近 15s 上限）？\n每组保留第一行已生成的 keyframe/视频；被合并行的画布节点不会删除。`)) return
+    const store = useStoryboardStore.getState()
+    for (const g of groups) {
+      const groupRows = g.map((i) => all[i]!)
+      store.updateRow(groupRows[0]!.id, mergeRowGroup(groupRows))
+      for (const r of groupRows.slice(1)) store.removeRow(r.id)
+    }
+    toast.success(`已合并 ${groups.length} 组同场景分镜（-${away} 行）`)
+  }, [])
+
   const handleRowContextMenu = (e: React.MouseEvent, rowId: string) => {
     e.preventDefault()
     setCtxMenu({ rowId, x: e.clientX, y: e.clientY })
@@ -406,6 +485,12 @@ export function StoryboardTable() {
           disabled={rows.length === 0}
           title="同步：把每一行的角色/道具/场景图片刷新成画布上对应资产的最新图（在画布重新生成后，点这里让分镜表跟上）；没有 nodeId 的槽位则按名称/描述回填"
         >同步画布图片</button>
+        <button
+          className="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-800 text-zinc-300 shrink-0"
+          onClick={mergeSameScene}
+          disabled={rows.length === 0}
+          title="把相邻的同场景分镜合并成一条 ≤15s 的长 beat（Seedance 单条时长上限），动作/运镜按时间段重排"
+        >合并同场景</button>
         <button
           className="text-xs px-2 py-1 rounded border border-zinc-700 hover:bg-zinc-800 text-zinc-300 shrink-0"
           onClick={() => { if (confirm('清空分镜表？')) clear() }}
@@ -437,6 +522,7 @@ export function StoryboardTable() {
               {rows.map((r, idx) => {
                 const kfBusy = busyForKf(r.id)
                 const bvBusy = busyForBv(r.id)
+                const idBusy = busyForId(r.id)
                 return (
                   <tr
                     key={r.id}
@@ -495,25 +581,56 @@ export function StoryboardTable() {
                     <td className="px-2 py-2 border-b border-zinc-900">
                       <TextCell multiline value={r.visual_anchor} onChange={(v) => updateRow(r.id, { visual_anchor: v })} />
                     </td>
-                    {/* 参考 / Keyframe */}
+                    {/* 黑白故事板 (multi-panel grid keyframe) */}
                     <td className="px-2 py-2 border-b border-zinc-900">
                       <MediaCell kind="image" url={r.keyframeUrl || r.reference_image} busy={kfBusy}
                         onPick={(picked) => updateRow(r.id, { reference_image: picked.url, keyframeUrl: picked.url, keyframeNodeId: picked.nodeId })}
+                        onGenerate={() => generateKeyframe(r)} />
+                    </td>
+                    {/* 开场构图 (clean keyframe — 视频的开场机位/首帧标准; 生成时
+                        与故事板成对产出: 故事板先渲染, 开场构图引用其第1格构图) */}
+                    <td className="px-2 py-2 border-b border-zinc-900">
+                      <MediaCell kind="image" url={r.keyframeCleanUrl} busy={kfBusy}
+                        onPick={(picked) => updateRow(r.id, { keyframeCleanUrl: picked.url, keyframeCleanNodeId: picked.nodeId })}
                         onGenerate={() => generateKeyframe(r)} />
                     </td>
                     {/* 景别 */}
                     <td className="px-2 py-2 border-b border-zinc-900">
                       <TextCell value={r.shot_size} onChange={(v) => updateRow(r.id, { shot_size: v })} />
                     </td>
-                    {/* 角色1 */}
+                    {/* 角色1（含身份版条：生成后画布上 角色节点 → 身份版节点 连边） */}
                     <td className="px-2 py-2 border-b border-zinc-900">
                       <ElementCell slot={r.character1 ?? { image: '', description: '', nodeId: '' }}
-                        onChange={(p) => updateRow(r.id, { character1: { ...(r.character1 ?? { image: '', description: '', nodeId: '' }), ...p } })} />
+                        onChange={(p) => updateRow(r.id, { character1: { ...(r.character1 ?? { image: '', description: '', nodeId: '' }), ...p } })}
+                        identity={{
+                          url: r.identitySheet1Url,
+                          busy: idBusy,
+                          onGenerate: () => generateIdentitySheets(r, 1),
+                          onPick: (picked) => {
+                            updateRow(r.id, { identitySheet1Url: picked.url, identitySheet1NodeId: picked.nodeId })
+                            // Manually-picked sheets get the same canvas provenance
+                            // as generated ones: character asset node → sheet node.
+                            if (r.character1?.nodeId && picked.nodeId) {
+                              useCanvasStore.getState().addEdge(r.character1.nodeId, picked.nodeId)
+                            }
+                          },
+                        }} />
                     </td>
                     {/* 角色2 */}
                     <td className="px-2 py-2 border-b border-zinc-900">
                       <ElementCell slot={r.character2 ?? { image: '', description: '', nodeId: '' }}
-                        onChange={(p) => updateRow(r.id, { character2: { ...(r.character2 ?? { image: '', description: '', nodeId: '' }), ...p } })} />
+                        onChange={(p) => updateRow(r.id, { character2: { ...(r.character2 ?? { image: '', description: '', nodeId: '' }), ...p } })}
+                        identity={{
+                          url: r.identitySheet2Url,
+                          busy: idBusy,
+                          onGenerate: () => generateIdentitySheets(r, 2),
+                          onPick: (picked) => {
+                            updateRow(r.id, { identitySheet2Url: picked.url, identitySheet2NodeId: picked.nodeId })
+                            if (r.character2?.nodeId && picked.nodeId) {
+                              useCanvasStore.getState().addEdge(r.character2.nodeId, picked.nodeId)
+                            }
+                          },
+                        }} />
                     </td>
                     {/* 道具1 */}
                     <td className="px-2 py-2 border-b border-zinc-900">

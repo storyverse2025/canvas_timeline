@@ -47,8 +47,10 @@ import {
   type CritiqueKeyframeRequest,
   type CritiqueKeyframeResult,
   type CritiqueVideoConsistencyRequest,
+  type GenerateIdentitySheetRequest,
   type GenerateKeyframeRequest,
   type GenerateStoryboardTableRequest,
+  type IdentitySheetResult,
   type KeyframeResult,
   type ProposeBridgeRowRequest,
   type SearchAndRewriteNodeResult,
@@ -408,8 +410,20 @@ function buildKeyframePrompt(req: GenerateKeyframeRequest): string {
   const next = () => ++modIdx
 
   return [
-    `# Director storyboard sheet — pre-production reference, NOT a final filmed frame.`,
-    `Shot duration: ${req.shotDurationSeconds}s. Aspect: ${aspect}. Style: ${visualStyle}.`,
+    `# BLACK-AND-WHITE HAND-DRAWN director storyboard sheet (黑白手绘故事板) — pre-production reference, NOT a final filmed frame.`,
+    `Shot duration: ${req.shotDurationSeconds}s. Aspect: ${aspect}.`,
+    ``,
+    `## Rendering style (hard constraint)`,
+    `- 黑白手绘 storyboard: pencil / ink line-art with grayscale tonal shading on white paper. Loose, confident professional storyboard-artist linework.`,
+    `- **绝对禁止写实渲染 / NO photorealistic or fully-painted color rendering** — photoreal storyboards break the downstream video step; the B&W hand-drawn look is what keeps 图→视频 stable.`,
+    `- The ONLY color on the sheet is the annotation arrow system below. Everything else is black / white / gray.`,
+    `- Project style context (for costume, hair, silhouette, world flavor only — expressed through B&W linework): ${visualStyle}.`,
+    ``,
+    `## Colored annotation arrows (the ONLY color allowed)`,
+    `- **橙色箭头 / ORANGE arrows = 轮廓光方向 (rim-light direction)** — draw one per panel showing where the key/rim light comes from; write the exposure intent next to it (e.g. "逆光高对比", "顶光低曝").`,
+    `- **红色箭头 / RED arrows = 人物动作 (character action paths)** — trace each character's movement inside the panel.`,
+    `- **蓝色箭头 / BLUE arrows = 摄影机运动 (camera movement)** — push-in / pan / tilt / track, drawn with the camera-move name written along the arrow.`,
+    `- 曝光与运镜必须提前写进规划：every panel carries its lighting/exposure plan (orange) and camera move (blue) as drawn annotations, not as an afterthought.`,
     ``,
     ...(req.feedbackNote?.trim()
       ? [
@@ -423,24 +437,25 @@ function buildKeyframePrompt(req: GenerateKeyframeRequest): string {
     ...(hasScene
       ? [
           `## ${next()}. Scene reference (cropped from 360° panorama)`,
-          `**The scene reference image is a 360° equirectangular PANORAMA covering the full sphere.** Do NOT render the whole panorama. Pick the camera direction that matches this shot's framing and crop only the portion you need. Use the panorama for environment fidelity — lighting, architecture, props in view, color palette — never for literal frame composition.`,
+          `**The scene reference image is a 360° equirectangular PANORAMA covering the full sphere.** Do NOT render the whole panorama. Pick the camera direction that matches this shot's framing and crop only the portion you need. Use the panorama for environment fidelity — architecture, props in view, light direction — translated into B&W linework, never for literal frame composition.`,
           `Scene: ${sceneLabel}.`,
           ``,
         ]
       : []),
     // ─── Module 2: Storyboard panel grid (always the primary content) ───
     `## ${next()}. Storyboard panel grid (primary content)`,
-    `Render a multi-panel director storyboard grid covering this shot's action arc.`,
+    `Render a multi-panel hand-drawn storyboard grid covering this shot's action arc.`,
     `- Panel count: choose 3–6 panels based on the ${req.shotDurationSeconds}s duration and the density of the action below; denser action → more panels.`,
     `- **Each panel carries a TIME-SLICE LABEL at the top-left of that panel** (e.g. "0–1.5s", "1.5–3.0s"). The time labels must sum to exactly ${req.shotDurationSeconds}s with no gaps or overlaps.`,
-    `- Panels show **progressive action** across the shot. Do NOT print camera angles / focal lengths / lighting / style names as text — let the rendered visuals carry composition and mood.`,
+    `- **Each panel carries a 4-line handwritten annotation strip under it**: 主体 (subject), 场景 (scene), 摄像机运动 (camera move), 灯光 (lighting/exposure). Keep each line short; these labels are what the video model matches against, so they must agree with the drawing.`,
+    `- Panels show **progressive action** across the shot, with the RED action arrows, BLUE camera arrows, ORANGE light arrows drawn inside each panel.`,
     `- Action guidance: ${r.storyboard_prompts || r.visual_description || '(use the visual_description from this row)'}`,
     ``,
     // ─── Module 3: Multi-character height comparison strip ───
     ...(hasMultipleCharacters
       ? [
           `## ${next()}. Character height comparison strip`,
-          `Side-by-side strip of all ${characters.length} characters standing at consistent scale: frontal pose, neutral expression, full body, plain background.`,
+          `Side-by-side strip of all ${characters.length} characters standing at consistent scale: frontal pose, neutral expression, full body, plain background. B&W line-art.`,
           `Locks relative heights so subsequent shots stay consistent.`,
           `Characters (left-to-right):`,
           ...characterListLines,
@@ -451,7 +466,7 @@ function buildKeyframePrompt(req: GenerateKeyframeRequest): string {
     ...(hasCharacters && hasProps
       ? [
           `## ${next()}. Character × prop relative-size diagram`,
-          `Render each prop alongside ${characters[0]!.name} as the size reference — same scale across all pairings.`,
+          `Render each prop alongside ${characters[0]!.name} as the size reference — same scale across all pairings. B&W line-art.`,
           `Locks prop scale so subsequent shots match (e.g. hand-sized vs body-sized).`,
           `Props:`,
           ...propListLines,
@@ -465,7 +480,7 @@ function buildKeyframePrompt(req: GenerateKeyframeRequest): string {
           `## ${next()}. Spatial floor plan (top-down, numbered)`,
           `Render a clean top-down floor plan of this shot's location.`,
           `- Mark every character and prop with a small numbered circle (①②③…) at its position.`,
-          `- Show staging cues: 180° axis line, character movement arrows, eye-line / prop relationships.`,
+          `- Show staging cues: 180° axis line, RED character movement arrows, BLUE camera path, eye-line / prop relationships.`,
           `- Below the plan, print the numbered legend exactly as listed; do NOT renumber:`,
           ...floorPlanLegendLines,
           `Locks blocking + spatial relationships for the downstream video generation step.`,
@@ -476,17 +491,17 @@ function buildKeyframePrompt(req: GenerateKeyframeRequest): string {
     ...(legendLines.length
       ? [
           `## Reference image legend`,
-          `Use the supplied reference images as labeled below. Maintain character + scene consistency across all modules.`,
+          `Use the supplied reference images as labeled below. Keep每个角色的身份特征 (face structure, hair, costume silhouette) recognizable in the B&W linework across all modules.`,
           ...legendLines,
           ``,
         ]
       : []),
     // ─── Quality bar (kept minimal) ───
     `## Quality bar`,
-    `- 4K ultra-high definition; ${visualStyle}.`,
+    `- Crisp hand-drawn linework, high scan quality; grayscale values readable at a glance.`,
     `- Each module rendered as its own clearly bordered region with subtle gutters between modules.`,
     `- All panel / diagram labels are crisp; no text errors, no facial drift, no broken anatomy.`,
-    `- Output must be aspect ratio ${aspect}, compatible with the SEEDANCE 2.0 downstream video pipeline.`,
+    `- Output must be aspect ratio ${aspect}, compatible with the SEEDANCE 2.0 downstream video pipeline (读取调度用，不入画).`,
     // ─── Privacy retry (optional opt-in flag) ───
     req.stylizeFacesFor2D
       ? `\n## 3DCG STYLIZATION (privacy retry)\n把原来人物脸部3DCG风格化，尽量保持面部细节，但可以避免系统误认真人；其他地方保持原来美术风格 / Re-stylize every human face into a 3DCG render — keep the facial structure / expression / lighting cues so the character is still recognizable, but push it just far enough from photoreal that downstream content-safety filters no longer flag it as a real person. Composition, palette, lighting, props, and the rest of the frame stay identical to a non-stylized render.`
@@ -505,14 +520,15 @@ function buildKeyframePrompt(req: GenerateKeyframeRequest): string {
  * Uses the same character/scene/prop references as the grid build so the
  * casting / location / props stay consistent across the two variants.
  */
-function buildCleanKeyframePrompt(req: GenerateKeyframeRequest): string {
+function buildCleanKeyframePrompt(req: GenerateKeyframeRequest, extraRefs: OrderedImageRef[] = []): string {
   const r = req.row
   const aspect = req.aspect ?? '16:9'
   const visualStyle = req.visualStyle ?? '冷调写实电影质感 / cold-toned filmic'
-  const orderedRefs = collectOrderedRefs(req)
+  const orderedRefs = [...collectOrderedRefs(req), ...extraRefs]
   const legendLines = orderedRefs.map((ref, i) =>
     `- image${i + 1} = ${ref.role}${ref.description ? ` (${ref.description})` : ''}`,
   )
+  const hasStoryboardRef = extraRefs.length > 0
 
   const sceneLabel = req.scene
     ? `${req.scene.name ? `${req.scene.name} — ` : ''}${req.scene.description ?? ''}`.trim() || '(scene from row visual_description)'
@@ -536,7 +552,14 @@ function buildCleanKeyframePrompt(req: GenerateKeyframeRequest): string {
     r.emotion_atmosphere ? `Atmosphere: ${r.emotion_atmosphere}` : '',
     ``,
     `## Composition`,
-    `Render ONE continuous cinematic frame — the most visually important beat of this shot (typically the climax / hero moment). Full-bleed; the frame fills the entire output.`,
+    ...(hasStoryboardRef
+      ? [
+          `**开场构图 / OPENING FRAME**: render the FIRST panel (第1格) of the supplied 黑白手绘分镜图 as ONE full-color cinematic frame — same camera position, same framing, same blocking, same light direction as that panel plans. This image is the literal opening composition the video starts on.`,
+          `The storyboard is a B&W hand-drawn PLAN — read its 机位/构图/调度/光向, but the output is a finished full-color cinematic frame in the project style, NOT a drawing. Never copy its arrows, annotations, panel borders, or grayscale look.`,
+        ]
+      : [
+          `Render ONE continuous cinematic frame — the most visually important beat of this shot (typically the climax / hero moment). Full-bleed; the frame fills the entire output.`,
+        ]),
     `Maintain character + scene + prop fidelity from the supplied reference images.`,
     ``,
     `## Scene`,
@@ -564,6 +587,66 @@ function buildCleanKeyframePrompt(req: GenerateKeyframeRequest): string {
   ]
     .filter((line) => line !== '')
     .join('\n')
+}
+
+/**
+ * LLM pre-pass for the B&W storyboard: feed 故事板结构模板 (the structure
+ * template from buildKeyframePrompt) + 分镜参考 (the row's storyboard/visual
+ * text) + 人物/场景/道具参考图 + 主题 (project type/tone/genre/style) into a
+ * text step and let the model derive the final 黑白手绘故事板 prompt. The
+ * derived prompt is what actually goes to the image model, and the caller
+ * drops it on the canvas as a text node so the chain 模板+参考→提示词→故事板
+ * is visible and editable.
+ *
+ * Failure handling: returns '' — generateKeyframe falls back to the raw
+ * structure template, which is a complete prompt on its own.
+ */
+async function deriveStoryboardPrompt(
+  req: GenerateKeyframeRequest,
+  structureTemplate: string,
+  orderedRefs: OrderedImageRef[],
+): Promise<string> {
+  const themeLines = [
+    req.projectType ? `项目类型：${req.projectType}` : '',
+    req.projectTone ? `项目情绪：${req.projectTone}` : '',
+    req.genre ? `题材：${req.genre}` : '',
+    req.visualStyle ? `美术风格：${req.visualStyle}` : '',
+  ].filter(Boolean)
+  const refLines = orderedRefs.map(
+    (ref, i) => `- image${i + 1} = ${ref.role}${ref.description ? ` (${ref.description})` : ''}`,
+  )
+  const instruction = [
+    '你是资深分镜画师的提示词导演。根据下面的【故事板结构模板】+【主题】+【参考图】，推导出最终交给图像模型的黑白手绘故事板提示词。',
+    '',
+    ...(themeLines.length ? ['【主题】', ...themeLines, ''] : []),
+    ...(refLines.length ? ['【参考图】（按顺序对应你收到的图片输入）', ...refLines, ''] : []),
+    '【故事板结构模板】',
+    structureTemplate,
+    '',
+    '推导要求：',
+    '- 保留模板的全部硬约束：黑白手绘、禁止写实、时间段标签、每格 主体/场景/摄像机运动/灯光 标注、橙=轮廓光方向 / 红=人物动作 / 蓝=摄影机运动 的彩色箭头体系、模块结构、参考图 legend。',
+    '- 结合参考图里真实可见的人物长相、服装、场景结构、道具形态，把模板里的占位描述替换成具体、可画的画面指令（每格画什么、箭头怎么标、曝光写什么）。',
+    '- 曝光与运镜必须逐格写明，不许留空。',
+    '- 直接输出最终提示词全文，不要解释、不要 markdown 围栏。',
+  ].join('\n')
+
+  try {
+    const out = await runCapability({
+      capability: 'freeform-text',
+      inputs: [
+        { kind: 'text', text: instruction },
+        ...orderedRefs.map((ref) => ({ kind: 'image' as const, url: ref.imageUrl })),
+      ],
+    })
+    const text = (out.outputs[0]?.text ?? '').trim()
+    // Guard against degenerate outputs (a one-line answer can't carry the
+    // structure the image model needs — fall back to the template).
+    return text.length >= 200 ? text : ''
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn(`[director-agent] deriveStoryboardPrompt failed (${(e as Error).message}); using structure template directly`)
+    return ''
+  }
 }
 
 async function callKeyframeCapability(opts: {
@@ -594,8 +677,8 @@ export async function* generateKeyframe(
   req: GenerateKeyframeRequest,
   ctx: ProjectContext,
 ): AgentGenerator<KeyframeResult> {
-  yield { type: 'progress', message: 'director: composing visual development board prompt' }
-  const prompt = buildKeyframePrompt(req)
+  yield { type: 'progress', message: 'director: composing B&W storyboard structure template' }
+  const structureTemplate = buildKeyframePrompt(req)
   const cleanPrompt = buildCleanKeyframePrompt(req)
   const orderedRefs = collectOrderedRefs(req)
 
@@ -608,28 +691,64 @@ export async function* generateKeyframe(
   void ctx
   yield {
     type: 'progress',
-    message: `director: rendering grid + clean keyframes in parallel via ${KEYFRAME_PROVIDER}/${KEYFRAME_MODEL}`,
+    message: 'director: deriving 黑白手绘故事板 prompt from 结构模板 + 参考图 + 主题',
+  }
+  const derivedPrompt = await deriveStoryboardPrompt(req, structureTemplate, orderedRefs)
+  const prompt = derivedPrompt || structureTemplate
+  if (derivedPrompt) {
+    yield {
+      type: 'progress',
+      message: `director: derived storyboard prompt (${derivedPrompt.length} chars) — rendering`,
+    }
   }
 
   const aspect = req.aspect ?? '16:9'
-  // Parallel: grid (UI pacing reference) + clean (Seedance omni-reference).
-  // 2x image cost per keyframe; user accepted this in the planning interview
-  // (chose the 双 keyframe option vs alternatives). If the clean call fails
-  // but the grid succeeds we still return the grid so downstream Seedance
-  // calls can fall back to it — and vice versa.
-  const [gridResult, cleanResult] = await Promise.allSettled([
-    callKeyframeCapability({ prompt, orderedRefs, aspect }),
-    callKeyframeCapability({ prompt: cleanPrompt, orderedRefs, aspect }),
-  ])
 
-  if (gridResult.status === 'rejected' && cleanResult.status === 'rejected') {
-    throw gridResult.reason instanceof Error
-      ? gridResult.reason
-      : new Error(String(gridResult.reason))
+  // SEQUENTIAL, not parallel: 黑白故事板 first, then 开场构图 referencing it.
+  // The clean frame is the literal opening composition — rendering it from
+  // the storyboard's first panel (extra ref image + Composition instruction)
+  // keeps 机位/构图/光向 consistent between plan and opening frame. Costs
+  // one round-trip of latency vs the old parallel fire; buys the chain
+  // 身份版 → 故事板 → 开场构图 the user asked for. Either call failing
+  // still returns the other (fallback semantics unchanged).
+  yield {
+    type: 'progress',
+    message: `director: rendering 黑白故事板 via ${KEYFRAME_PROVIDER}/${KEYFRAME_MODEL}`,
+  }
+  let gridUrl: string | undefined
+  let gridErr: unknown
+  try {
+    gridUrl = await callKeyframeCapability({ prompt, orderedRefs, aspect })
+  } catch (e) {
+    gridErr = e
   }
 
-  const gridUrl = gridResult.status === 'fulfilled' ? gridResult.value : undefined
-  const cleanUrl = cleanResult.status === 'fulfilled' ? cleanResult.value : undefined
+  const cleanExtraRefs: OrderedImageRef[] = gridUrl
+    ? [{
+        role: '黑白手绘分镜图（构图参考）',
+        description: '开场构图以其第1格的机位/构图/调度/光向为准；输出成片质感，禁止手绘风与任何标注',
+        imageUrl: gridUrl,
+      }]
+    : []
+  const cleanPromptFinal = gridUrl ? buildCleanKeyframePrompt(req, cleanExtraRefs) : cleanPrompt
+  yield {
+    type: 'progress',
+    message: gridUrl
+      ? 'director: rendering 开场构图 (referencing 故事板第1格)'
+      : 'director: 故事板 failed — rendering 开场构图 from base refs only',
+  }
+  let cleanUrl: string | undefined
+  try {
+    cleanUrl = await callKeyframeCapability({
+      prompt: cleanPromptFinal,
+      orderedRefs: [...orderedRefs, ...cleanExtraRefs],
+      aspect,
+    })
+  } catch (e) {
+    if (!gridUrl) {
+      throw gridErr instanceof Error ? gridErr : e instanceof Error ? e : new Error(String(e))
+    }
+  }
 
   // Prefer grid for `url` (back-compat: callers and persisted rows expect
   // the multi-panel sheet there). If the grid call failed, fall back to
@@ -644,13 +763,155 @@ export async function* generateKeyframe(
       prompt,
       imageRefs: orderedRefs,
       cleanUrl,
-      cleanPrompt: cleanUrl ? cleanPrompt : undefined,
+      cleanPrompt: cleanUrl ? cleanPromptFinal : undefined,
+      promptDerived: Boolean(derivedPrompt),
+      // Grid failed but clean saved the run: url === cleanUrl above. Tell
+      // the caller so it doesn't store the clean frame as a 故事板 (which
+      // made both table columns show the same image, silently).
+      gridFailReason: gridUrl
+        ? undefined
+        : gridErr instanceof Error
+          ? gridErr.message
+          : String(gridErr ?? '黑白故事板生成失败（未知原因）'),
     },
   }
 }
 
+// ─── Verb: generateIdentitySheet ──────────────────────────────────
+//
+// 角色身份版 — one 16:9 sheet per character: 1 full-body anchor + 7
+// auxiliary views + 3 silhouettes + 3 expressions + 3 detail close-ups +
+// 1 ID block. Identity comes from the character's existing asset images;
+// lighting comes from the row's scene image (刷光); the prop strip locks
+// the character↔prop scale.
+
+/**
+ * Ref order for the identity sheet — intentionally DIFFERENT from
+ * keyframes (where scene=image1 anchors style): here the character asset
+ * images come first because identity is the primary contract; props
+ * follow for the scale strip; the scene ref rides LAST and is labeled a
+ * lighting source only, so the model doesn't paint it as a backdrop.
+ */
+function collectIdentitySheetRefs(req: GenerateIdentitySheetRequest): OrderedImageRef[] {
+  const out: OrderedImageRef[] = []
+  const charUrls = (req.character.imageUrls ?? []).filter((u): u is string => Boolean(u))
+  charUrls.forEach((url, i) => {
+    out.push({
+      role: labelWithIndex(`Character identity — ${req.character.name}`, i, charUrls.length),
+      description: req.character.description,
+      imageUrl: url,
+    })
+  })
+  for (const p of req.props ?? []) {
+    const urls = (p.imageUrls ?? []).filter((u): u is string => Boolean(u))
+    urls.forEach((url, i) => {
+      out.push({
+        role: labelWithIndex(`Prop (scale lock) — ${p.name}`, i, urls.length),
+        description: p.description,
+        imageUrl: url,
+      })
+    })
+  }
+  const sceneUrls = (req.scene?.imageUrls ?? []).filter((u): u is string => Boolean(u))
+  const sceneRole = req.scene?.name ? `Scene LIGHTING source — ${req.scene.name}` : 'Scene LIGHTING source'
+  sceneUrls.forEach((url, i) => {
+    out.push({
+      role: labelWithIndex(sceneRole, i, sceneUrls.length),
+      description: req.scene?.description,
+      imageUrl: url,
+    })
+  })
+  return out
+}
+
+function buildIdentitySheetPrompt(req: GenerateIdentitySheetRequest): string {
+  const aspect = req.aspect ?? '16:9'
+  const visualStyle = req.visualStyle ?? '冷调写实电影质感 / cold-toned filmic'
+  const c = req.character
+  const props = req.props ?? []
+  const orderedRefs = collectIdentitySheetRefs(req)
+  const legendLines = orderedRefs.map((ref, i) =>
+    `- image${i + 1} = ${ref.role}${ref.description ? ` (${ref.description})` : ''}`,
+  )
+  const hasScene = orderedRefs.some((r) => r.role.includes('LIGHTING source'))
+
+  return [
+    `# 角色身份版 / CHARACTER IDENTITY SHEET — ${c.name}. ONE ${aspect} model sheet that locks this character for every downstream shot.`,
+    `Style: ${visualStyle}. Clean neutral studio background (light gray), organized model-sheet layout with thin dividers.`,
+    ``,
+    `## Character`,
+    `${c.name}${c.description ? ` — ${c.description}` : ''}`,
+    `**Identity is NON-NEGOTIABLE**: face structure, hairstyle, body proportions, costume must match the character reference images exactly in every view on this sheet. Same person, ${1 + 7 + 3 + 3 + 3} times.`,
+    ``,
+    `## Sheet layout (all on ONE ${aspect} image)`,
+    `1. **全身锚点 / Full-body anchor (×1)** — largest figure on the sheet, left side: neutral standing pose, front-facing, full body head-to-toe.`,
+    `2. **辅助视角 / Auxiliary views (×7)** — a row of smaller full-body views: 正面 front, 背面 back, 左侧 left profile, 右侧 right profile, 3/4侧 three-quarter, 仰视 low-angle (looking up at the character), 俯视 high-angle (looking down). Consistent scale across all 7.`,
+    `3. **轮廓剪影 / Silhouettes (×3)** — solid-black silhouettes in three distinct readable poses (standing / action / signature gesture). Pure shape, no interior detail.`,
+    `4. **表情 / Expressions (×3)** — head-and-shoulders close-ups: ${req.coreEmotion ? `centered on 核心情绪「${req.coreEmotion}」plus two contrasting states` : 'three distinct emotional states covering the character\'s dramatic range'}.`,
+    `5. **细节 / Detail close-ups (×3)** — the three most identity-critical details (e.g. face/eyes, hands or signature prop grip, costume/${req.visualMark ? `视觉标志「${req.visualMark}」` : 'distinctive costume element'}).`,
+    `6. **ID 块 / ID block (×1)** — bottom-right card, cleanly hand-lettered: 名字「${c.name}」· 身份/${'dramatic role'}${c.description ? `「${c.description.split(/[，,。\n]/)[0]}」` : ''} · 核心情绪${req.coreEmotion ? `「${req.coreEmotion}」` : ''} · 视觉标志${req.visualMark ? `「${req.visualMark}」` : '（该角色最具辨识度的一个视觉元素）'}.`,
+    ...(props.length
+      ? [
+          `7. **角色×道具比例条 / Prop scale strip** — ${c.name} standing full-height as the ruler, each prop beside them at TRUE relative scale. This strip FIXES the character↔prop 比例 for all later shots:`,
+          ...props.map((p, i) => `   - ${i + 1}. ${p.name}${p.description ? ` — ${p.description}` : ''}`),
+        ]
+      : []),
+    ``,
+    `## Lighting (刷光)`,
+    hasScene
+      ? `**Relight the ENTIRE sheet with the scene reference's light**: copy its light direction, color temperature, contrast ratio and ambient bounce onto every view, so the character sits photometrically inside that scene. Use the scene image ONLY as the light source — do NOT paint the scene as a backdrop; background stays a neutral studio sweep lit by that same light.`
+      : `Neutral soft key light with gentle rim; consistent across every view.`,
+    ``,
+    ...(legendLines.length
+      ? [
+          `## Reference image legend`,
+          ...legendLines,
+          ``,
+        ]
+      : []),
+    `## Quality bar`,
+    `- 4K ultra-high definition; ${visualStyle}; aspect ratio ${aspect}.`,
+    `- Every view is the SAME character — zero identity drift, zero costume drift.`,
+    `- Clean model-sheet composition; crisp hand-lettered labels; no text errors.`,
+    req.stylizeFacesFor2D
+      ? `\n## 3DCG STYLIZATION (privacy retry)\n把人物脸部3DCG风格化，尽量保持面部细节，但避免系统误认真人；其他保持原美术风格。`
+      : '',
+  ]
+    .filter((line) => line !== '')
+    .join('\n')
+}
+
+export async function* generateIdentitySheet(
+  req: GenerateIdentitySheetRequest,
+  ctx: ProjectContext,
+): AgentGenerator<IdentitySheetResult> {
+  void ctx
+  if (!req.character?.name?.trim()) {
+    throw new Error('director-agent: identity sheet requires a character name')
+  }
+  yield {
+    type: 'progress',
+    message: `director: composing 角色身份版 for ${req.character.name}`,
+  }
+  const prompt = buildIdentitySheetPrompt(req)
+  const orderedRefs = collectIdentitySheetRefs(req)
+  yield {
+    type: 'progress',
+    message: `director: rendering identity sheet via ${KEYFRAME_PROVIDER}/${KEYFRAME_MODEL} (${orderedRefs.length} ref image${orderedRefs.length === 1 ? '' : 's'})`,
+  }
+  const url = await callKeyframeCapability({
+    prompt,
+    orderedRefs,
+    aspect: req.aspect ?? '16:9',
+  })
+  yield {
+    type: 'result',
+    payload: { url, prompt, imageRefs: orderedRefs },
+  }
+}
+
 // Pure helpers, exported for tests + reuse by the caller.
-export { buildKeyframePrompt, buildCleanKeyframePrompt, collectOrderedRefs }
+export { buildKeyframePrompt, buildCleanKeyframePrompt, collectOrderedRefs, buildIdentitySheetPrompt, collectIdentitySheetRefs }
 
 // ─── Verb: critiqueKeyframe ───────────────────────────────────────
 //
@@ -1124,6 +1385,7 @@ export const directorAgent = {
   critiqueTimeline,
   applyTimelineFixes,
   generateKeyframe,
+  generateIdentitySheet,
   critiqueKeyframe,
   critiqueVideoConsistency,
   searchAndRewrite,
@@ -1145,6 +1407,8 @@ export type {
   CritiqueTimelineRequest,
   ApplyTimelineFixesRequest,
   GenerateKeyframeRequest,
+  GenerateIdentitySheetRequest,
+  IdentitySheetResult,
   CritiqueKeyframeRequest,
   CritiqueKeyframeResult,
   CritiqueVideoConsistencyRequest,

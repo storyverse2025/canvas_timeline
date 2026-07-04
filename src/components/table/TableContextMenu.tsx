@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Trash2, Plus, Film, Image as ImageIcon, Drama, Music2, Layers, Library, Repeat } from 'lucide-react'
 import { toast } from 'sonner'
 import { useStoryboardStore } from '@/stores/storyboard-store'
+import { useChatStore } from '@/stores/chat-store'
 import { useProjectDB } from '@/stores/project-db'
 import { useStoryboardGenerate } from '@/hooks/useStoryboardGenerate'
 import { runCapability } from '@/lib/capabilities/client'
@@ -16,6 +17,7 @@ import {
   buildRagGlobalArtStyleContext,
   buildRagQueries,
   buildRagQueryExtractionPrompt,
+  buildRagRowPatchDiffMessage,
   buildRagRowRewritePrompt,
   EMPTY_RAG_SELECTION,
   parseRagExtractedQueries,
@@ -390,6 +392,7 @@ function RagReferenceModal({
       const patch = parseRagRowPatch(text)
       if (Object.keys(patch).length === 0) throw new Error('AI 没有返回可写入的 row 字段')
       updateRow(targetRow.id, patch)
+      useChatStore.getState().addMessage('assistant', buildRagRowPatchDiffMessage(targetRow, patch))
       toast.success(`RAG 参考已改写镜头 ${targetRow.shot_number}`)
       setModal(null)
     } catch (e) {

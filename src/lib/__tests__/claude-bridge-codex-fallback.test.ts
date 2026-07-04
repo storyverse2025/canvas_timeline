@@ -8,11 +8,13 @@ const bridgePath = path.join(repoRoot, 'claude-bridge.mjs')
 describe('Hermes bridge Codex fallback', () => {
   const bridge = () => readFileSync(bridgePath, 'utf8')
 
-  it('uses hermes chat -p as the primary assistant bridge', () => {
+  it('uses hermes chat in quiet single-query mode as the primary assistant bridge', () => {
     const source = bridge()
 
     expect(source).toContain('const HERMES_BIN =')
-    expect(source).toContain("['chat', '-p', prompt]")
+    // Quiet single-query mode with a hard turn cap + source tag (the old
+    // bare `chat -p` form was replaced when the bridge moved to -Q/-q).
+    expect(source).toContain("['chat', '-Q', '-q', prompt, '--max-turns', '30', '--source', 'director-bridge']")
     expect(source).toContain('spawn(HERMES_BIN')
     expect(source).not.toContain('CLAUDE_BIN')
     expect(source).not.toContain('--dangerously-skip-permissions')

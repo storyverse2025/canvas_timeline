@@ -5,6 +5,7 @@ import { NodeFloatingToolbar } from '../NodeFloatingToolbar'
 import { ImageIcon, Upload, Link as LinkIcon, User, MapPin, Package, Film, Mic, Star } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
+import { useCanvasStore } from '@/stores/canvas-store'
 import { useLibtvTasksStore } from '@/stores/libtv-tasks-store'
 import { useAssetStore } from '@/stores/asset-store'
 import { useStoryboardStore } from '@/stores/storyboard-store'
@@ -105,6 +106,37 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
       })
       toast.success(`已设为镜号 ${shotNumber} 的采用 beat video`)
     }
+  }, [item, nodeId])
+
+  // 虚拟取景 (panorama 截机位): persist the captured 16:9 camera plate as its
+  // own canvas node, edge-wired from this scene so the provenance is visible
+  // (场景全景 → 机位截图). Staggered right of the scene node; multiple
+  // captures line up side by side.
+  const captureSceneView = useCallback((dataUrl: string) => {
+    if (!item) return
+    const canvas = useCanvasStore.getState()
+    const selfNode = canvas.nodes.find((n) => n.id === nodeId)
+    const baseX = (selfNode?.position.x ?? 0) + (selfNode?.width ?? 360) + 40
+    const baseY = selfNode?.position.y ?? 0
+    const siblings = Object.values(useCanvasItemStore.getState().items).filter(
+      (it) => it.role === 'scene-view' && it.name.startsWith(`${item.name}-机位`),
+    ).length
+    const viewItemId = useCanvasItemStore.getState().addItem({
+      kind: 'image',
+      name: `${item.name}-机位${siblings + 1}`,
+      content: dataUrl,
+      prompt: `机位截图（虚拟取景 16:9）from 场景全景「${item.name}」`,
+      role: 'scene-view',
+    })
+    const viewNodeId = canvas.addItemNode(
+      viewItemId, 'image',
+      { x: baseX, y: baseY + siblings * 200 },
+      { width: 280, height: 158 },
+    )
+    canvas.addEdge(nodeId, viewNodeId)
+    toast.success(`机位${siblings + 1} 已截取`, {
+      description: '已落到画布并与场景全景连边；可在分镜行中选作场景/参考图',
+    })
   }, [item, nodeId])
   const [promptOpen, setPromptOpen] = useState(false)
   const [regenerating, setRegenerating] = useState<{ intent: string } | null>(null)
@@ -334,7 +366,9 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
           // equirectangular panoramas. Render through the draggable
           // PanoramaViewer so the user can pan to different viewpoints inside
           // the canvas node. Non-scene image assets stay as plain <img>.
-          <PanoramaViewer src={item.content} alt={item.name} />
+          // onCapture = 虚拟取景: the 截机位 button exports the current view
+          // direction as a flat 16:9 camera plate node wired to this scene.
+          <PanoramaViewer src={item.content} alt={item.name} onCapture={captureSceneView} />
         ) : (
           <img src={thumb(item.content, 512)} alt={item.name} loading="lazy" decoding="async" className="w-full h-full object-contain bg-black/40" />
         )

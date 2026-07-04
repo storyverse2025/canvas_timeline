@@ -2,6 +2,7 @@ import { toast } from 'sonner'
 import { useShotEditorStore, type EditMode } from '@/stores/shot-editor-store'
 import { useStoryboardStore } from '@/stores/storyboard-store'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
+import { useCanvasStore } from '@/stores/canvas-store'
 import { X, MessageSquare, Paintbrush, Sparkles, RotateCcw, Upload, ChevronLeft, ChevronRight, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { thumb } from '@/lib/thumb'
@@ -11,7 +12,7 @@ import { AssociationPanel } from './AssociationPanel'
 import { MultiAnglePanel } from './MultiAnglePanel'
 import { ReplacePanel } from './ReplacePanel'
 import { applyEditResult } from './apply-edit-result'
-import { collectKeyframeHistory } from './keyframe-history'
+import { collectBeatVideoHistory, collectKeyframeHistory } from './keyframe-history'
 
 const MODES: { id: EditMode; label: string; icon: React.ElementType }[] = [
   { id: 'dialog', label: '对话修图', icon: MessageSquare },
@@ -44,10 +45,48 @@ export function ShotEditorOverlay() {
   // including both sibling KF-* items and versions[] inside the adopted
   // keyframe item. Generated-but-not-applied candidates live in versions[].
   const keyframeVersions = collectKeyframeHistory(row, allItems)
+  const beatVideoVersions = collectBeatVideoHistory(row, allItems)
 
   const adoptVersion = (versionId: string, url: string) => {
     applyEditResult(row.id, url, '历史版本')
     toast.success(`已采用版本 ${versionId.slice(0, 8)} 作为当前 keyframe`)
+  }
+
+  const adoptBeatVideoVersion = (versionId: string, url: string, sourceItemId?: string) => {
+    const canvas = useCanvasStore.getState()
+    const node = sourceItemId
+      ? canvas.nodes.find((n) => (n.data?.itemId as string | undefined) === sourceItemId)
+      : undefined
+
+    if (sourceItemId) {
+      const item = useCanvasItemStore.getState().items[sourceItemId]
+      if (item?.kind === 'video' && item.content !== url) {
+        useCanvasItemStore.setState((state) => {
+          const target = state.items[sourceItemId]
+          if (!target) return
+          target.versions = [
+            {
+              content: target.content,
+              prompt: target.prompt,
+              refImages: target.refImages,
+              refAudios: target.refAudios,
+              provider: target.provider,
+              model: target.model,
+              timestamp: Date.now(),
+            },
+            ...(target.versions ?? []),
+          ]
+          target.content = url
+          target.role = target.role ?? 'beat-video'
+        })
+      }
+    }
+
+    useStoryboardStore.getState().updateRow(row.id, {
+      beatVideoUrl: url,
+      ...(node?.id ? { beatVideoNodeId: node.id } : {}),
+    })
+    toast.success(`已采用版本 ${versionId.slice(0, 8)} 作为当前 Beat Video`)
   }
 
   const goTo = (idx: number) => {
@@ -110,12 +149,14 @@ export function ShotEditorOverlay() {
       <div className="flex-1 flex overflow-hidden">
         {/* Left: Image viewer + version history strip */}
         <div className="flex-1 flex flex-col bg-black/90">
-          <div className="flex-1 flex items-center justify-center p-4 overflow-hidden">
-            {imageUrl ? (
-              <img src={imageUrl} alt={row.shot_number} className="max-w-full max-h-full object-contain rounded" />
-            ) : (
-              <div className="text-zinc-500 text-sm">无参考图 — 请先生成 Keyframe</div>
-            )}
+          <div className="flex-1 flex flex-col gap-3 items-center justify-center p-4 overflow-hidden">
+            <div className="min-h-0 flex-1 flex items-center justify-center w-full">
+              {imageUrl ? (
+                <img src={imageUrl} alt={row.shot_number} className="w-full h-auto max-h-[40vh] object-contain rounded" />
+              ) : (
+                <div className="text-zinc-500 text-sm">无参考图 — 请先生成 Keyframe</div>
+              )}
+            </div>
           </div>
 
           {/* History strip — every historical KF-{shot}* item is shown
@@ -168,6 +209,63 @@ export function ShotEditorOverlay() {
                           clean
                         </div>
                       )}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {row.beatVideoUrl && (
+            <div className="shrink-0 border-t border-border bg-zinc-950/80 px-3 py-2">
+              <div className="mb-1.5 text-[10px] uppercase text-muted-foreground">当前采用 Beat Video</div>
+              <video
+                src={row.beatVideoUrl}
+                controls
+                preload="metadata"
+                className="w-full h-auto max-h-[40vh] rounded bg-black object-contain"
+              />
+            </div>
+          )}
+
+          {beatVideoVersions.length > 0 && (
+            <div className="shrink-0 border-t border-border bg-zinc-950/80 px-3 py-2">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[10px] uppercase text-muted-foreground">
+                  Beat Video 历史版本 ({beatVideoVersions.length})
+                </span>
+                <span className="text-[10px] text-muted-foreground/60">
+                  点击视频采用
+                </span>
+              </div>
+              <div className="flex gap-1.5 overflow-x-auto pb-1">
+                {beatVideoVersions.map((it) => {
+                  const isAdopted = it.content === row.beatVideoUrl
+                  return (
+                    <button
+                      key={it.id}
+                      onClick={() => adoptBeatVideoVersion(it.id, it.content, it.sourceItemId)}
+                      className={cn(
+                        'relative shrink-0 rounded border-2 overflow-hidden transition-all hover:scale-105 bg-black',
+                        isAdopted ? 'border-emerald-400' : 'border-zinc-700 hover:border-zinc-500',
+                      )}
+                      style={{ width: 128, height: 72 }}
+                      title={`${it.name}${it.isRowOnly ? ' (row)' : ''} — ${new Date(it.createdAt ?? 0).toLocaleString('zh-CN')}`}
+                    >
+                      <video
+                        src={it.content}
+                        preload="metadata"
+                        muted
+                        className="w-full h-full object-cover pointer-events-none"
+                      />
+                      {isAdopted && (
+                        <div className="absolute top-0.5 right-0.5 bg-emerald-500 rounded-full p-0.5">
+                          <Check className="w-2.5 h-2.5 text-white" />
+                        </div>
+                      )}
+                      <div className="absolute bottom-0.5 left-0.5 text-[8px] px-1 bg-black/60 text-pink-200 rounded">
+                        video
+                      </div>
                     </button>
                   )
                 })}

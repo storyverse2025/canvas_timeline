@@ -38,7 +38,7 @@ describe('art-director-agent: meta', () => {
 })
 
 describe('extractElements', () => {
-  beforeEach(() => mockedRunCapability.mockReset())
+  beforeEach(() => { mockedRunCapability.mockReset() })
 
   it('parses characters, scenes, props into an ExtractionResult', async () => {
     const { llm } = llmReturning(
@@ -96,7 +96,7 @@ describe('extractElements', () => {
 })
 
 describe('generateAssetImages', () => {
-  beforeEach(() => mockedRunCapability.mockReset())
+  beforeEach(() => { mockedRunCapability.mockReset() })
 
   it('fills img_url and generation_prompt for elements without an existing URL', async () => {
     let call = 0
@@ -184,9 +184,30 @@ describe('generateAssetImages', () => {
     expect(sentPrompt).toContain('Seamless seam-free wraparound')
     // Global art style threaded in.
     expect(sentPrompt).toContain('cinematic')
-    // Capability params request HD + 4K for scene assets.
+    // Capability params request HD + a TRUE 2:1 equirectangular canvas
+    // (虚拟影棚 workflow) — 3840x1920 is the largest 2:1 gpt-image-2 permits.
+    // The old 16:9 3840x2160 contradicted the prompt's "2:1 aspect ratio
+    // canvas" and produced fake panoramas.
     expect(call.params?.quality).toBe('hd')
     expect(call.params?.resolution).toBe('4k')
+    expect(call.params?.size).toBe('3840x1920')
+  })
+
+  it('extract-scenes prompt demands a full 360° space expansion, not a flat 16:9 establishing shot', async () => {
+    const { readFileSync } = await import('node:fs')
+    const tpl = readFileSync('src/lib/agents/art-director-agent/prompts/extract-scenes.md', 'utf8')
+    // Article workflow step 2 (super-i.cn/info-2753): the LLM must fill in
+    // the space the script never describes — behind the camera, overhead,
+    // the ground — so the panorama closes into one coherent sphere.
+    expect(tpl).toContain('360°')
+    expect(tpl).toContain('摄像机背后')
+    expect(tpl).toContain('头顶')
+    expect(tpl).toContain('地面')
+    expect(tpl).toContain('虚拟影棚')
+    // The old flat-framing language must be gone — it fought the panorama
+    // template and produced wide establishing shots instead of spheres.
+    expect(tpl).not.toContain('wide establishing shot，适合')
+    expect(tpl).not.toContain('16:9 比例"')
   })
 
   it('falls back to the prop-turnaround template when prop.image_prompt is empty', async () => {

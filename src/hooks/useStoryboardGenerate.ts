@@ -9,21 +9,85 @@ import { useProjectDB } from '@/stores/project-db'
 import { useLibtvTasksStore } from '@/stores/libtv-tasks-store'
 import type { StoryboardRow, ElementSlot } from '@/types/storyboard'
 import type { AssetType } from '@/types/asset'
-import { generateKeyframe as directorGenerateKeyframe, critiqueVideoConsistency as directorCritiqueVideo, critiqueKeyframe as directorCritiqueKeyframe, formatKeyframeFeedbackForNext } from '@/lib/agents/director-agent'
+import { generateKeyframe as directorGenerateKeyframe, generateIdentitySheet as directorGenerateIdentitySheet, critiqueVideoConsistency as directorCritiqueVideo, critiqueKeyframe as directorCritiqueKeyframe, formatKeyframeFeedbackForNext } from '@/lib/agents/director-agent'
 import type { CritiqueKeyframeResult } from '@/lib/agents/director-agent'
 import type {
+  GenerateIdentitySheetRequest,
   GenerateKeyframeRequest,
   KeyframeCharacterRef,
   KeyframePropRef,
   KeyframeSceneRef,
 } from '@/lib/agents/director-agent'
 import { shoot as cinematographerShoot, revise as cinematographerRevise, shootMultiStrategy as cinematographerShootMultiStrategy } from '@/lib/agents/cinematographer-agent'
-import type { BeatVideoContextRef } from '@/lib/agents/cinematographer-agent'
+import type { BeatVideoContextRef, ReferencePackImage } from '@/lib/agents/cinematographer-agent'
+import { buildReferencePack } from '@/lib/reference-pack'
+import { fetchByteplusAssets, matchAssetsToCharacters, mergeAvatarRefs } from '@/lib/byteplus-asset-library'
+import type { VirtualAvatarShootRef } from '@/lib/agents/cinematographer-agent'
 import { runAgentWithChatBridge } from '@/lib/agents/chat-bridge'
 import { createMemoryContext } from '@/lib/agents/_shared/context/memory'
 import { createCapabilityLLM } from '@/lib/agents/_shared/llm/capability'
 import { getArtStyle } from '@/lib/canvas-elements'
+import { resolveAvatarsForCharacters, canonicalCharacterName } from '@/lib/virtual-avatar-library'
 import { extractFirstFrame, extractLastFrame } from '@/lib/video-frame'
+
+/**
+ * Build the virtual-avatar shoot refs for a row when a 真人 / live-action style
+ * is selected: auto-match each character slot to an approved avatar and emit
+ * its `asset://<id>` URI. Returns [] for non-real-person styles or when no
+ * avatar matches (caller keeps the normal photoreal path). See
+ * src/lib/virtual-avatar-library.
+ */
+function buildVirtualAvatarRefs(
+  row: StoryboardRow,
+  db: ReturnType<typeof useProjectDB.getState>,
+): Array<{ assetUri: string; characterName: string; slotLabel: string }> {
+  return resolveAvatarsForCharacters({
+    characters: [
+      { slotLabel: '角色1', name: row.character1?.description },
+      { slotLabel: '角色2', name: row.character2?.description },
+    ],
+    castingCards: db.script.castingCards ?? [],
+    stylePreset: db.artDirection.stylePreset,
+    bindings: db.script.characterAvatarBindings,
+  }).map((r) => ({
+    assetUri: r.avatar.id.startsWith('asset://') ? r.avatar.id : `asset://${r.avatar.id}`,
+    characterName: r.characterName,
+    slotLabel: r.slotLabel,
+  }))
+}
+
+/**
+ * Resolve the full avatar-ref set for a shoot: characters matched to the
+ * account's 开白真人资产 (BytePlus private digital assets, Status=Active)
+ * FIRST, then virtual-avatar-library picks for anyone left. Registered
+ * assets ship on EVERY shoot — whitelisting is not transitive, so waiting
+ * for a privacy block and retrying was always one shoot too late. List
+ * fetch is best-effort (cached ~5min server-listed via AK/SK): on IAM /
+ * network errors we fall back to the library refs alone and surface why.
+ */
+async function resolveShootAvatarRefs(
+  row: StoryboardRow,
+  db: ReturnType<typeof useProjectDB.getState>,
+): Promise<{ refs: VirtualAvatarShootRef[]; byteplusMatched: VirtualAvatarShootRef[] }> {
+  const libraryRefs = buildVirtualAvatarRefs(row, db)
+  let byteplusMatched: VirtualAvatarShootRef[] = []
+  try {
+    byteplusMatched = matchAssetsToCharacters(
+      [
+        { slotLabel: '角色1', name: row.character1?.description },
+        { slotLabel: '角色2', name: row.character2?.description },
+      ],
+      await fetchByteplusAssets(),
+    )
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn('[useStoryboardGenerate] 开白资产列表不可用:', (e as Error).message)
+    toast.message('开白资产列表不可用（本次仅用虚拟人像库）', {
+      description: String((e as Error).message).slice(0, 160),
+    })
+  }
+  return { refs: mergeAvatarRefs(byteplusMatched, libraryRefs), byteplusMatched }
+}
 
 /**
  * Resolve a slot to the canvas node that should feed the keyframe.
@@ -168,8 +232,12 @@ export function useStoryboardGenerate() {
   /**
    * Core keyframe-generation logic. Used by:
    *   - generateKeyframe (public, user-triggered from the table)
-   *   - generateBeatVideo's privacy-block retry (programmatic, with
-   *     stylizeFacesFor2D: true so faces survive Seedance's safety filter)
+   *   - generateKeyframesIterative (N candidates with an AI judge between)
+   *
+   * The stylizeFacesFor2D opt survives for callers that want a 3DCG-face
+   * keyframe up front; the old beat-video privacy auto-retry that used it
+   * is gone — real-person shots now ship pre-registered 开白资产 asset://
+   * refs on every attempt instead (see resolveShootAvatarRefs).
    *
    * Returns the new keyframe URL on success. Throws on failure. Side
    * effects: new canvas item + node (role='keyframe'), edges from refs,
@@ -340,11 +408,20 @@ export function useStoryboardGenerate() {
     // now; the agent's API is ready for the day a slot grows to N angles.
     const characters: KeyframeCharacterRef[] = resolved
       .filter((r) => r.slotKey === 'character1' || r.slotKey === 'character2')
-      .map((r) => ({
-        name: r.slot.description?.split(/[，,。\n]/)[0]?.trim() || r.role,
-        description: r.description,
-        imageUrls: r.imageUrl ? [r.imageUrl] : [],
-      }))
+      .map((r) => {
+        // 角色身份版 leads when present: the sheet (full-body anchor + views
+        // + expressions, relit with this row's scene light) is a stronger
+        // identity contract than the single slot image — this is the
+        // 身份版 → 故事板 → 开场构图 chain. The raw slot image rides along
+        // as a second angle.
+        const sheetUrl = r.slotKey === 'character1' ? row.identitySheet1Url : row.identitySheet2Url
+        const urls = [sheetUrl, r.imageUrl].filter((u): u is string => Boolean(u))
+        return {
+          name: r.slot.description?.split(/[，,。\n]/)[0]?.trim() || r.role,
+          description: r.description,
+          imageUrls: [...new Set(urls)],
+        }
+      })
     const sceneSlot = resolved.find((r) => r.slotKey === 'scene')
     const scene: KeyframeSceneRef | undefined = sceneSlot
       ? {
@@ -374,6 +451,37 @@ export function useStoryboardGenerate() {
     const visualStyle = getArtStyle({ customStyle: artDir.customStyle, stylePreset: artDir.stylePreset })
     const brief = db.script.creativeBrief
 
+    // 真人 style: render each matched character's face from the approved virtual
+    // avatar so the keyframe's first_frame — the actual privacy-filter trigger —
+    // already shows the compliant persona (not just the video step). We REPLACE
+    // the character's identity ref with the avatar portrait (styling/clothing
+    // still comes from the slot description). Gated on the avatar exposing an
+    // image `uri`: platform avatars addressable only via asset:// can't feed the
+    // image model, so those rely on the video-step asset:// ref alone.
+    // Resolve avatars from the row's RAW slots — the exact same inputs
+    // buildVirtualAvatarRefs feeds the video step. Resolving from the
+    // `resolved`-node subset re-ordered the greedy auto-match (a slot with
+    // no canvas node dropped out, its neighbor got first pick), so keyframe
+    // and beat video could lock DIFFERENT avatars for the same character.
+    // Keyed by canonical name so full-description vs first-segment naming
+    // differences can't miss.
+    const avatarUriByName = new Map<string, string>()
+    for (const ra of resolveAvatarsForCharacters({
+      characters: [
+        { slotLabel: '角色1', name: row.character1?.description },
+        { slotLabel: '角色2', name: row.character2?.description },
+      ],
+      castingCards: db.script.castingCards ?? [],
+      stylePreset: artDir.stylePreset,
+      bindings: db.script.characterAvatarBindings,
+    })) {
+      if (ra.avatar.uri) avatarUriByName.set(canonicalCharacterName(ra.characterName), ra.avatar.uri)
+    }
+    const charactersForKeyframe = characters.map((c) => {
+      const uri = avatarUriByName.get(canonicalCharacterName(c.name))
+      return uri ? { ...c, imageUrls: [uri] } : c
+    })
+
     const req: GenerateKeyframeRequest = {
       row,
       shotDurationSeconds: Math.max(1, Math.round(row.duration ?? 5)),
@@ -382,7 +490,7 @@ export function useStoryboardGenerate() {
       projectTone: brief?.tone,
       genre: brief?.genre,
       visualStyle,
-      characters: characters.slice(0, 2),
+      characters: charactersForKeyframe.slice(0, 2),
       scene,
       props,
       // DO NOT pass row.reference_image as a ref. After the first batch
@@ -405,19 +513,18 @@ export function useStoryboardGenerate() {
       directorGenerateKeyframe(req, agentCtx),
       { verb: stylizeFacesFor2D ? 'generate-keyframe (2D-stylized retry)' : 'generate-keyframe' },
     )
-    const url = result.url
-
-    // Tag with role='keyframe' so ImageCanvasNode can flag the adopted
-    // one with a ⭐ badge. Each regenerate creates a NEW item (old
-    // keyframes stay on the canvas), and the row's keyframeUrl is the
-    // single source of truth for which item is currently adopted.
-    const kfItemId = useCanvasItemStore.getState().addItem({
-      kind: 'image',
-      name: `KF-${row.shot_number}`,
-      content: url,
-      prompt: result.prompt,
-      role: 'keyframe',
-    })
+    // Grid failed but clean succeeded: result.url falls back to cleanUrl
+    // (back-compat), so storing it as the 故事板 would put the SAME clean
+    // frame in both table columns and ship a fake "storyboard" in the
+    // video reference pack. Leave the 黑白故事板 cell empty instead (its
+    // ⚡ button retries) and tell the user why.
+    const gridFailed = Boolean(result.gridFailReason)
+    const gridUrl = gridFailed ? undefined : result.url
+    if (gridFailed) {
+      toast.warning(`镜号 ${row.shot_number} 黑白故事板生成失败，仅生成了开场构图`, {
+        description: `${String(result.gridFailReason).slice(0, 160)} — 可点击该行黑白故事板列的 ⚡ 重试`,
+      })
+    }
 
     // Stagger regenerated keyframes horizontally so they don't stack on
     // the original (every new node would otherwise land at the same
@@ -427,19 +534,51 @@ export function useStoryboardGenerate() {
     // match (KF-S1 etc.) and offset by (count × (width + gap)).
     const KF_WIDTH = 280
     const KF_GAP = 24
-    const existingItems = useCanvasItemStore.getState().items
-    const siblingCount = Object.values(existingItems).filter(
-      (it) =>
-        it.id !== kfItemId &&
-        it.role === 'keyframe' &&
-        it.name === `KF-${row.shot_number}`,
+    const siblingCount = Object.values(useCanvasItemStore.getState().items).filter(
+      (it) => it.role === 'keyframe' && it.name === `KF-${row.shot_number}`,
     ).length
     const kfX = baseX + siblingCount * (KF_WIDTH + KF_GAP)
-    const kfNodeId = useCanvasStore.getState().addItemNode(
-      kfItemId, 'image',
-      { x: kfX, y: baseY },
-      { width: KF_WIDTH, height: 180 },
-    )
+
+    // Tag with role='keyframe' so ImageCanvasNode can flag the adopted
+    // one with a ⭐ badge. Each regenerate creates a NEW item (old
+    // keyframes stay on the canvas), and the row's keyframeUrl is the
+    // single source of truth for which item is currently adopted.
+    let kfNodeId: string | undefined
+    if (gridUrl) {
+      const kfItemId = useCanvasItemStore.getState().addItem({
+        kind: 'image',
+        name: `KF-${row.shot_number}`,
+        content: gridUrl,
+        prompt: result.prompt,
+        role: 'keyframe',
+      })
+      kfNodeId = useCanvasStore.getState().addItemNode(
+        kfItemId, 'image',
+        { x: kfX, y: baseY },
+        { width: KF_WIDTH, height: 180 },
+      )
+    }
+
+    // The LLM-derived 黑白手绘故事板 prompt lands on the canvas as a TEXT
+    // node upstream of the storyboard image, so the chain
+    // 结构模板+参考图+主题 → 提示词 → 故事板 is visible and the user can
+    // read / edit the derivation. Only for derived prompts — the raw
+    // template fallback is deterministic and would just be noise.
+    let sbPromptNodeId: string | undefined
+    if (result.promptDerived && kfNodeId) {
+      const sbPromptItemId = useCanvasItemStore.getState().addItem({
+        kind: 'text',
+        name: `SB-Prompt-${row.shot_number}`,
+        content: result.prompt,
+        role: 'storyboard-prompt',
+      })
+      sbPromptNodeId = useCanvasStore.getState().addItemNode(
+        sbPromptItemId, 'text',
+        { x: kfX - 240, y: baseY + 200 },
+        { width: 220, height: 140 },
+      )
+      useCanvasStore.getState().addEdge(sbPromptNodeId, kfNodeId)
+    }
 
     // If director-agent returned a clean keyframe variant (single
     // cinematic frame, no panel borders — see #75), drop it on the
@@ -458,7 +597,8 @@ export function useStoryboardGenerate() {
       })
       kfCleanNodeId = useCanvasStore.getState().addItemNode(
         kfCleanItemId, 'image',
-        { x: kfX + KF_WIDTH + KF_GAP, y: baseY },
+        // Right of the grid; when the grid failed, take its slot instead.
+        { x: kfNodeId ? kfX + KF_WIDTH + KF_GAP : kfX, y: baseY },
         { width: KF_WIDTH, height: 180 },
       )
     }
@@ -469,22 +609,156 @@ export function useStoryboardGenerate() {
     const updatedSlots: Partial<Pick<StoryboardRow, 'character1' | 'character2' | 'prop1' | 'prop2' | 'scene'>> = {}
     for (const r of resolved) {
       if (!r.nodeId) continue
-      useCanvasStore.getState().addEdge(r.nodeId, kfNodeId)
+      if (kfNodeId) useCanvasStore.getState().addEdge(r.nodeId, kfNodeId)
       if (kfCleanNodeId) useCanvasStore.getState().addEdge(r.nodeId, kfCleanNodeId)
       updatedSlots[r.slotKey] = { ...r.slot, nodeId: r.nodeId, image: r.imageUrl || r.slot.image }
     }
 
     updateRow(row.id, {
-      keyframeUrl: url,
-      reference_image: url,
+      // Grid-fail run: clear the storyboard fields (a stale grid from a
+      // previous run would pair wrong with the fresh clean frame) — the
+      // empty 黑白故事板 cell is the retry affordance.
+      keyframeUrl: gridUrl,
+      reference_image: gridUrl,
       keyframeNodeId: kfNodeId,
       keyframeCleanUrl: result.cleanUrl,
       keyframeCleanNodeId: kfCleanNodeId,
+      storyboardPromptNodeId: sbPromptNodeId,
       status: 'done',
       ...updatedSlots,
     })
-    return url
+    return result.url
   }, [updateRow])
+
+  // ─── 角色身份版 (character identity sheets) ─────────────────────────
+  //
+  // One 16:9 sheet per character slot: full-body anchor + 7 auxiliary views
+  // + 3 silhouettes + 3 expressions + 3 details + ID block, relit with THIS
+  // row's scene lighting (刷光) and scale-locked against the row's props.
+  // The sheet becomes the row's first video reference (角色→场景→分镜→机位).
+  //
+  // `which` limits generation to one slot (the table's per-slot ⚡ button);
+  // omitted = every populated character slot, sequentially (shared scene
+  // lighting, predictable cost).
+  const generateIdentitySheets = useCallback(async (row: StoryboardRow, which?: 1 | 2) => {
+    const slots: Array<{ n: 1 | 2; slot: StoryboardRow['character1'] }> = []
+    if ((which ?? 1) === 1 && (row.character1?.image || row.character1?.description)) {
+      slots.push({ n: 1, slot: row.character1 })
+    }
+    if ((which ?? 2) === 2 && (row.character2?.image || row.character2?.description)) {
+      slots.push({ n: 2, slot: row.character2 })
+    }
+    if (slots.length === 0) {
+      toast.error('该行没有可生成身份版的角色（角色1/角色2 均为空）')
+      return
+    }
+
+    const rows = useStoryboardStore.getState().rows
+    const rowIdx = rows.findIndex((r) => r.id === row.id)
+    const baseX = 400
+    const baseY = rowIdx * 300
+
+    const db = useProjectDB.getState()
+    const artDir = db.artDirection
+    const visualStyle = getArtStyle({ customStyle: artDir.customStyle, stylePreset: artDir.stylePreset })
+    const castingCards = db.script.castingCards ?? []
+
+    // 真人 style: identity comes from the approved avatar portrait, same
+    // substitution rule as keyframes (see _doKeyframeGen).
+    const avatarUriByName = new Map<string, string>()
+    for (const ra of resolveAvatarsForCharacters({
+      characters: [
+        { slotLabel: '角色1', name: row.character1?.description },
+        { slotLabel: '角色2', name: row.character2?.description },
+      ],
+      castingCards,
+      stylePreset: artDir.stylePreset,
+      bindings: db.script.characterAvatarBindings,
+    })) {
+      if (ra.avatar.uri) avatarUriByName.set(canonicalCharacterName(ra.characterName), ra.avatar.uri)
+    }
+
+    for (const { n, slot } of slots) {
+      const name = slot?.description?.split(/[，,。\n]/)[0]?.trim() || `角色${n}`
+      const taskId = uuid()
+      startTask({ id: taskId, nodeId: `sb-id-${row.id}`, itemId: row.id, prompt: `身份版 ${name}` })
+      updateTask(taskId, { status: 'polling' })
+      try {
+        // Resolve the character + this row's props + scene to canvas nodes so
+        // the sheet visibly derives from them and the URLs are live.
+        const charRes = resolveSlotNode(slot!, ['character'], `${name}-身份版`, baseX - 300, baseY - 140 + (n - 1) * 70)
+        const propRes = [
+          { key: 'prop1' as const, slot: row.prop1, off: 70 },
+          { key: 'prop2' as const, slot: row.prop2, off: 140 },
+        ]
+          .filter((p) => p.slot?.image || p.slot?.description)
+          .map((p) => ({ ...p, res: resolveSlotNode(p.slot!, ['prop'], `${p.key}-${row.shot_number}`, baseX - 300, baseY + p.off) }))
+        const sceneRes = (row.scene?.image || row.scene?.description)
+          ? resolveSlotNode(row.scene!, ['scene', 'keyframe'], `场景-${row.shot_number}`, baseX - 300, baseY)
+          : undefined
+
+        const card = castingCards.find((c) => canonicalCharacterName(c.name) === canonicalCharacterName(name))
+        const avatarUri = avatarUriByName.get(canonicalCharacterName(name))
+        const req: GenerateIdentitySheetRequest = {
+          character: {
+            name,
+            description: slot?.description || card?.appearance_for_image || undefined,
+            imageUrls: avatarUri ? [avatarUri] : charRes.imageUrl ? [charRes.imageUrl] : [],
+          },
+          props: propRes.map((p) => ({
+            name: p.slot?.description?.split(/[，,。\n]/)[0]?.trim() || p.key,
+            description: p.slot?.description,
+            imageUrls: p.res.imageUrl ? [p.res.imageUrl] : [],
+          })),
+          scene: sceneRes
+            ? {
+                name: row.scene?.description?.split(/[，,。\n]/)[0]?.trim() || '场景',
+                description: row.scene?.description,
+                imageUrls: sceneRes.imageUrl ? [sceneRes.imageUrl] : [],
+              }
+            : undefined,
+          visualStyle,
+          coreEmotion: card?.appearance_pillars?.expression || undefined,
+          visualMark: card?.appearance_pillars?.features || undefined,
+          aspect: '16:9',
+        }
+
+        const agentCtx = createMemoryContext({ llm: createCapabilityLLM() })
+        const result = await runAgentWithChatBridge(
+          'director-agent',
+          directorGenerateIdentitySheet(req, agentCtx),
+          { verb: `generate-identity-sheet ${name}` },
+        )
+
+        const itemId = useCanvasItemStore.getState().addItem({
+          kind: 'image',
+          name: `ID-${row.shot_number}-${name}`,
+          content: result.url,
+          prompt: result.prompt,
+          role: 'identity-sheet',
+        })
+        const nodeId = useCanvasStore.getState().addItemNode(
+          itemId, 'image',
+          { x: baseX - 640, y: baseY + (n - 1) * 210 },
+          { width: 280, height: 180 },
+        )
+        if (charRes.nodeId) useCanvasStore.getState().addEdge(charRes.nodeId, nodeId)
+        for (const p of propRes) if (p.res.nodeId) useCanvasStore.getState().addEdge(p.res.nodeId, nodeId)
+        if (sceneRes?.nodeId) useCanvasStore.getState().addEdge(sceneRes.nodeId, nodeId)
+
+        updateRow(row.id, n === 1
+          ? { identitySheet1Url: result.url, identitySheet1NodeId: nodeId }
+          : { identitySheet2Url: result.url, identitySheet2NodeId: nodeId })
+        updateTask(taskId, { status: 'done', resultUrl: result.url, resultKind: 'image' })
+        toast.success(`角色身份版「${name}」生成完成`, {
+          description: '已用本行场景光刷光，并锁定角色×道具比例；生成视频时将作为第一参考图',
+        })
+      } catch (e) {
+        updateTask(taskId, { status: 'failed', error: String((e as Error).message ?? e) })
+        toast.error(`角色身份版「${name}」生成失败`, { description: String((e as Error).message).slice(0, 200) })
+      }
+    }
+  }, [startTask, updateTask, updateRow])
 
   const generateBeatVideo = useCallback(async (row: StoryboardRow) => {
     const hasMotion = Boolean(
@@ -509,6 +783,11 @@ export function useStoryboardGenerate() {
     const isPrivacyBlock = (msg: string): boolean =>
       msg.includes('InputImageSensitiveContentDetected.PrivacyInformation')
 
+    // Avatar refs for this row (开白真人资产 matches + library avatars),
+    // resolved once per generateBeatVideo call inside the try block below;
+    // attemptShoot closes over it.
+    let shootAvatarRefs: VirtualAvatarShootRef[] = []
+
     /** Run cinematographer.shoot once with a specific keyframe URL.
      *  Returns the shoot result PLUS the resolved voice audio URLs that
      *  were actually shipped to Seedance as `kind: 'audio'` inputs — the
@@ -517,12 +796,15 @@ export function useStoryboardGenerate() {
     const attemptShoot = async (
       keyframeUrl: string,
       opts: {
-        invitedImageAssetIds?: string[]
         transitionFrames?: { firstFrameUrl: string; lastFrameUrl: string }
         /** Director storyboard grid shipped as a second reference image
          *  (clean keyframe stays the first frame). Skipped automatically in
          *  transition mode. */
         storyboardRefUrl?: string
+        /** Ordered multi-reference pack (角色身份版→道具→场景→分镜→机位).
+         *  Non-empty → replaces the keyframe+grid pair as image inputs.
+         *  Skipped automatically in transition mode. */
+        referencePack?: ReferencePackImage[]
       } = {},
     ): Promise<{ url: string; prompt: string; voiceAudioUrls: string[] }> => {
       // Track what the augmenter actually attached so we can return it
@@ -542,6 +824,9 @@ export function useStoryboardGenerate() {
 
       const db = useProjectDB.getState()
       const visualStyle = getArtStyle({ customStyle: db.artDirection.customStyle, stylePreset: db.artDirection.stylePreset })
+      // shootAvatarRefs (closure): 开白真人资产 + 虚拟人像库, resolved once
+      // in generateBeatVideo before the first attempt.
+      const virtualAvatarRefs = shootAvatarRefs
 
       // actor-agent post-processor: appends per-character voice file URLs
       // + dialogue lines so Seedance sees a 音色文件 reference for every
@@ -618,18 +903,23 @@ export function useStoryboardGenerate() {
             row, visualStyle, keyframeUrl, contextRefs, aspect: '16:9',
             resolution: '480p',
             promptPostProcessor,
-            invitedImageAssetIds: opts.invitedImageAssetIds,
             transitionFrames: opts.transitionFrames,
             // First-ref mode: clean keyframe = first frame, grid = reference.
             // Suppressed under transition mode (first-last uses boundary frames).
             storyboardRefUrl: opts.transitionFrames ? undefined : opts.storyboardRefUrl,
+            // 多参考输入合成 — suppressed in transition mode (Seedance can't
+            // mix reference media with first/last frames).
+            referencePack: opts.transitionFrames ? undefined : opts.referencePack,
+            // 真人 avatar refs ride as asset:// reference images. Suppressed in
+            // transition mode (Seedance can't mix reference media with first/last).
+            virtualAvatarRefs: opts.transitionFrames ? undefined : virtualAvatarRefs,
           },
           agentCtx,
         ),
         { verb: opts.transitionFrames
           ? 'shoot (first-last-frame transition)'
-          : opts.invitedImageAssetIds?.length
-            ? 'shoot (with digital-asset whitelist)'
+          : shootAvatarRefs.length
+            ? `shoot (${shootAvatarRefs.length} asset refs)`
             : 'shoot' },
       )
       return { ...shootResult, voiceAudioUrls: attachedVoiceAudioUrls }
@@ -645,9 +935,23 @@ export function useStoryboardGenerate() {
       // gutters + time labels don't leak into the generated video. Falls
       // back to the grid URL for rows generated before the dual-keyframe
       // build, and finally to reference_image.
-      let keyframeUrl = row.keyframeCleanUrl || row.keyframeUrl || row.reference_image || ''
+      const keyframeUrl = row.keyframeCleanUrl || row.keyframeUrl || row.reference_image || ''
       if (!keyframeUrl) {
         throw new Error('缺少 keyframe —— 先生成 keyframe 再拍摄 beat video')
+      }
+
+      // 开白真人资产: match this row's characters against the account's
+      // registered (Active) digital assets and attach them as asset://
+      // references on every attempt. This is the documented whitelist
+      // mechanism — the moderator only accepts real-person likenesses that
+      // arrive via an approved asset URI, so the refs must be on the FIRST
+      // shoot, not bolted on after a privacy block.
+      const resolved = await resolveShootAvatarRefs(row, useProjectDB.getState())
+      shootAvatarRefs = resolved.refs
+      if (resolved.byteplusMatched.length > 0) {
+        toast.message(`已附带 ${resolved.byteplusMatched.length} 个开白真人资产`, {
+          description: resolved.byteplusMatched.map((r) => `${r.slotLabel} ${r.characterName}`).join(' · '),
+        })
       }
 
       // When BOTH the clean frame and the storyboard grid exist (and differ),
@@ -658,6 +962,17 @@ export function useStoryboardGenerate() {
         row.keyframeCleanUrl && row.keyframeUrl && row.keyframeUrl !== row.keyframeCleanUrl
           ? row.keyframeUrl
           : undefined
+
+      // 多参考输入合成: 角色身份版 → 场景图 → 黑白分镜图 → 机位截图, each
+      // @-pointed at its subject in the prompt legend. Empty when the row
+      // has no identity sheets / scene image — the legacy keyframe(+grid)
+      // path then runs unchanged.
+      const referencePack = buildReferencePack(row)
+      if (referencePack.length > 0) {
+        toast.message(`多参考输入 ×${referencePack.length}`, {
+          description: referencePack.map((p, i) => `图${i + 1} ${p.label}`).join(' · '),
+        })
+      }
 
       // Transition routing: bridge rows generate via Seedance's first-last-
       // frame mode using their neighbors' boundary frames so the clip
@@ -704,86 +1019,23 @@ export function useStoryboardGenerate() {
 
       let result: { url: string; prompt: string; voiceAudioUrls: string[] }
       try {
-        result = await attemptShoot(keyframeUrl, { transitionFrames, storyboardRefUrl })
+        result = await attemptShoot(keyframeUrl, { transitionFrames, storyboardRefUrl, referencePack })
       } catch (firstErr) {
         const msg = String((firstErr as Error).message ?? firstErr)
-        if (!isPrivacyBlock(msg)) throw firstErr
-
-        // ── Fallback 1: BytePlus digital-asset 开白 ────────────────────
-        // Register each character ref image as a BytePlus digital asset.
-        // Once they reach Active, reshoot the SAME keyframe with the asset
-        // ids attached as invited_images. The intent: the moderator sees
-        // the characters as approved/owned references and stops flagging.
-        // See skills/byteplus-seedance-digital-asset-open-whitelist.
-        let digitalAssetSucceeded = false
-        const characterRefUrls = [row.character1?.image, row.character2?.image]
-          .filter((u): u is string => Boolean(u && /^https?:\/\//i.test(u)))
-        if (characterRefUrls.length > 0) {
-          toast.info('Seedance 隐私检测拒绝了 keyframe — 尝试 BytePlus 数字资产开白', {
-            description: `注册 ${characterRefUrls.length} 张角色参考图到 digital asset，审核通过后用 invited_images 重试`,
+        // Privacy block → no auto-retry (the 2D-redraw and runtime-开白
+        // fallbacks are gone by request: the sanctioned path is a
+        // pre-registered Active asset shipped as asset:// on the first
+        // attempt, which already happened above). Explain exactly what
+        // shipped and what to fix, then fail the row.
+        if (isPrivacyBlock(msg)) {
+          const matched = resolved.byteplusMatched
+          toast.error('Seedance 隐私风控拒绝了输入图（含真人）', {
+            description: matched.length > 0
+              ? `本次已附带开白资产：${matched.map((r) => r.characterName).join('、')}。仍被拒 → 某张输入图里的真人不在开白范围（检查 keyframe/身份版/场景图里出现的其他人物），或该资产状态不是 Active。`
+              : '没有角色匹配到已开白资产。请确认：① 资产库里该角色的资产 Name 与分镜表角色名一致；② 资产状态为 Active；③ BYTEPLUS_ACCESS_KEY 拥有 ark:ListAssets 权限（控制台 IAM 附加资产库策略）。',
           })
-          try {
-            const { registerCharacterRefs } = await import('@/lib/byteplus-digital-asset')
-            const { approved, rejected } = await registerCharacterRefs(characterRefUrls)
-            if (approved.length > 0) {
-              if (rejected.length > 0) {
-                toast.message(
-                  `数字资产部分通过 (${approved.length} 通过 / ${rejected.length} 拒绝)`,
-                  { description: rejected[0]?.reason?.slice(0, 200) ?? '' },
-                )
-              } else {
-                toast.success(`数字资产开白通过 (${approved.length} 张)`)
-              }
-              try {
-                result = await attemptShoot(keyframeUrl, { invitedImageAssetIds: approved })
-                digitalAssetSucceeded = true
-              } catch (assetShootErr) {
-                const assetMsg = String((assetShootErr as Error).message ?? assetShootErr)
-                if (!isPrivacyBlock(assetMsg)) throw assetShootErr
-                toast.warning('数字资产重试仍被隐私检测拒绝 — 回退到 2D 风格化', {
-                  description: assetMsg.slice(0, 200),
-                })
-              }
-            } else {
-              toast.warning(`数字资产全部被拒 — 回退到 2D 风格化`, {
-                description: rejected[0]?.reason?.slice(0, 200) ?? '',
-              })
-            }
-          } catch (registerErr) {
-            // Endpoint 401/404, ARK_API_KEY missing, BytePlus needs AK/SK, etc.
-            // Don't surface as a hard error — just degrade to stylization
-            // and log so the user knows why this path didn't help.
-            // eslint-disable-next-line no-console
-            console.warn('[useStoryboardGenerate] BytePlus digital-asset registration failed:', (registerErr as Error).message)
-            toast.message('BytePlus 数字资产开白失败 — 回退到 2D 风格化', {
-              description: String((registerErr as Error).message).slice(0, 200),
-            })
-          }
         }
-
-        if (digitalAssetSucceeded) {
-          // Skip the 2D-stylize fallback; `result` already holds the
-          // successful reshoot.
-        } else {
-        // ── Fallback 2: 2D-stylized keyframe ──────────────────────────
-        // Director re-renders the keyframe with 3DCG faces so the safety
-        // filter no longer reads it as a real person. New keyframe lands
-        // as its own canvas node and becomes the row's adopted ⭐.
-        toast.info('Seedance 隐私检测拒绝了当前 keyframe — 让 director 重画 2D 风格化版本', {
-          description: '保留原 keyframe，新版会成为表格采用的 keyframe',
-        })
-        const freshRow = useStoryboardStore.getState().rows.find((r) => r.id === row.id) ?? row
-        const newKfUrl = await runKeyframeGeneration(freshRow, {
-          stylizeFacesFor2D: true,
-          taskLabel: 'Keyframe (2D-stylized for Seedance privacy retry)',
-        })
-        keyframeUrl = newKfUrl
-        toast.info('重新拍摄 Beat Video …', { description: '使用 2D 风格化 keyframe 重试' })
-        // Re-read the row in case generateKeyframe mutated other fields.
-        // Reassign (don't Object.assign) — the store-backed row is frozen by Immer.
-        row = useStoryboardStore.getState().rows.find((r) => r.id === row.id) ?? row
-        result = await attemptShoot(keyframeUrl)
-        } // end if (digitalAssetSucceeded) else
+        throw firstErr
       }
 
       // ─── Auto-revise loop: shoot → critique → revise (max 1 retry) ─
@@ -837,6 +1089,14 @@ export function useStoryboardGenerate() {
                 contextRefs: [],
                 aspect: '16:9',
                 resolution: '480p',
+                // Reshoot with the SAME reference set as the original shoot —
+                // dropping these made revise lose the storyboard staging and
+                // fail outright on 真人 shots (avatar refs were the only
+                // reason the privacy filter passed). shootAvatarRefs already
+                // includes the matched 开白资产 + library avatars.
+                storyboardRefUrl: transitionFrames ? undefined : storyboardRefUrl,
+                referencePack: transitionFrames ? undefined : buildReferencePack(row),
+                virtualAvatarRefs: transitionFrames ? undefined : shootAvatarRefs,
               },
               reviseCtx,
             ),
@@ -879,7 +1139,11 @@ export function useStoryboardGenerate() {
         name: `BV-${row.shot_number}`,
         content: url,
         prompt: finalPrompt,
-        refImages: [keyframeUrl],
+        // The EXACT ordered image inputs Seedance received: the reference
+        // pack in pack mode, else keyframe (+grid).
+        refImages: referencePack.length > 0
+          ? referencePack.map((p) => p.url)
+          : [keyframeUrl, ...(storyboardRefUrl ? [storyboardRefUrl] : [])],
         refAudios: result.voiceAudioUrls,
       })
       const vidNodeId = useCanvasStore.getState().addItemNode(
@@ -896,6 +1160,13 @@ export function useStoryboardGenerate() {
       }
       if (row.keyframeCleanNodeId && row.keyframeCleanNodeId !== row.keyframeNodeId) {
         useCanvasStore.getState().addEdge(row.keyframeCleanNodeId, vidNodeId)
+      }
+      // Pack mode: identity sheets are real inputs too — show them in the
+      // provenance graph alongside the keyframes.
+      if (referencePack.length > 0) {
+        for (const idNodeId of [row.identitySheet1NodeId, row.identitySheet2NodeId]) {
+          if (idNodeId) useCanvasStore.getState().addEdge(idNodeId, vidNodeId)
+        }
       }
 
       updateRow(row.id, { beatVideoUrl: url, beatVideoNodeId: vidNodeId })
@@ -931,6 +1202,9 @@ export function useStoryboardGenerate() {
 
       const db = useProjectDB.getState()
       const visualStyle = getArtStyle({ customStyle: db.artDirection.customStyle, stylePreset: db.artDirection.stylePreset })
+      // Same avatar-ref policy as generateBeatVideo: matched 开白资产 first,
+      // library avatars for anyone left, on every variant.
+      const { refs: virtualAvatarRefs } = await resolveShootAvatarRefs(row, db)
 
       const agentCtx = createMemoryContext({ llm: createCapabilityLLM() })
       const result = await runAgentWithChatBridge(
@@ -939,6 +1213,8 @@ export function useStoryboardGenerate() {
           {
             row, visualStyle, keyframeUrl, contextRefs,
             aspect: '16:9', resolution: '480p', variants,
+            virtualAvatarRefs,
+            referencePack: buildReferencePack(row),
           },
           agentCtx,
         ),
@@ -1006,5 +1282,5 @@ export function useStoryboardGenerate() {
     }
   }, [updateRow, startTask, updateTask])
 
-  return { generateKeyframe, generateKeyframesIterative, generateBeatVideo, generateBeatVideoMultiStrategy }
+  return { generateKeyframe, generateKeyframesIterative, generateIdentitySheets, generateBeatVideo, generateBeatVideoMultiStrategy }
 }

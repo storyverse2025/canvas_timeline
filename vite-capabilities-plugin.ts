@@ -2,7 +2,7 @@ import type { Plugin } from 'vite'
 import type { IncomingMessage, ServerResponse } from 'http'
 import { writeFileSync, mkdirSync, existsSync, statSync, createReadStream } from 'fs'
 import { join } from 'path'
-import { randomUUID } from 'crypto'
+import { randomUUID, createHash, createHmac } from 'crypto'
 import sharp from 'sharp'
 
 interface CapInput { kind: string; url?: string; text?: string }
@@ -575,6 +575,40 @@ async function freeformText(req: CapReq): Promise<CapRes> {
   return { outputs: [{ kind: 'text', text: result }] }
 }
 
+/**
+ * storyboard-generation: dedicated handler for director-agent's
+ * generate-storyboard-table / apply-timeline-fixes verbs.
+ *
+ * Like freeform-text it injects NO competing domain task — the default
+ * `element-extraction` handler's "提取角色/场景/道具/情绪/色彩/构图，输出 JSON"
+ * system used to hijack this call, so the model returned an element
+ * breakdown object instead of a storyboard array and the 分镜表 came up
+ * empty. The system here only REINFORCES the output contract the agent's
+ * own prompt already states (a JSON array, no fences, no prose), so the
+ * client-side validate→retry gate has a clean shape to check.
+ */
+async function storyboardGeneration(req: CapReq): Promise<CapRes> {
+  const text = getText(req.inputs)
+  if (!text) throw new Error('storyboard-generation: text input required')
+  const sys = '你是分镜生成助手。严格遵循用户消息中的完整指令与输出格式，最终只输出一个 JSON 数组（每个分镜一个对象），不要 markdown 围栏、不要解释、不要 emoji、不要把分镜拆成 {角色/场景/道具} 这种元素清单。'
+  const result = await apimartChat(sys, text, undefined, 0.5)
+  return { outputs: [{ kind: 'text', text: result }] }
+}
+
+/**
+ * voice-casting: dedicated handler for actor-agent's cast-voices verb.
+ * Same rationale as storyboard-generation — reinforce the output contract
+ * (a flat {角色名: 音色id} JSON object) without injecting element-extraction's
+ * domain task, which previously hijacked this call into a 元素拆解 object.
+ */
+async function voiceCasting(req: CapReq): Promise<CapRes> {
+  const text = getText(req.inputs)
+  if (!text) throw new Error('voice-casting: text input required')
+  const sys = '你是选角/音色匹配助手。严格遵循用户消息中的完整指令，最终只输出一个 JSON 对象：键是角色名、值是音色 id 字符串，不要 markdown 围栏、不要解释、不要 emoji、不要返回 {角色/场景/道具} 这种元素清单。'
+  const result = await apimartChat(sys, text, undefined, 0.6)
+  return { outputs: [{ kind: 'text', text: result }] }
+}
+
 // ─── Image capabilities ─────────────────────────────────────────────
 // (apimartImageSize removed 2026-05-23: the new api.apimart.ai image
 // endpoint takes `aspect_ratio` strings directly; per-aspect pixel-size
@@ -929,6 +963,44 @@ async function runFalFluxImage(prompt: string, aspect: string, numImages: number
   return urls
 }
 
+/**
+ * Download an external image URL and persist it to public/uploads/ so the
+ * client always gets a permanent same-origin path.
+ *
+ * Why: Apimart (and FAL) return signed CDN URLs that (a) expire after ~24h
+ * and (b) don't carry CORS headers — so three.js / WebGL can't use them as
+ * textures, and the canvas panorama viewer fails. Saving here (server-side,
+ * no CORS restriction) gives every generated image a stable local URL.
+ *
+ * Best-effort: if the download fails for any reason, falls back to the
+ * original URL so the caller still gets something usable for display.
+ */
+async function persistExternalImageUrl(url: string): Promise<string> {
+  if (!url) return url
+  // Already local: /uploads/, /voices/, data:, blob: — skip.
+  if (url.startsWith('/') || url.startsWith('data:') || url.startsWith('blob:')) return url
+  try {
+    const resp = await fetch(url)
+    if (!resp.ok) {
+      console.warn(`[image] persistExternalImageUrl: fetch failed (${resp.status}) for ${url.slice(0, 80)}`)
+      return url
+    }
+    const contentType = resp.headers.get('content-type') ?? 'image/png'
+    const ext = contentType.includes('jpeg') || contentType.includes('jpg') ? '.jpg'
+      : contentType.includes('webp') ? '.webp'
+      : '.png'
+    const uploadsDir = join(process.cwd(), 'public', 'uploads')
+    mkdirSync(uploadsDir, { recursive: true })
+    const filename = `${randomUUID()}${ext}`
+    const buf = Buffer.from(await resp.arrayBuffer())
+    writeFileSync(join(uploadsDir, filename), buf)
+    return `/uploads/${filename}`
+  } catch (e) {
+    console.warn(`[image] persistExternalImageUrl: error for ${url.slice(0, 80)}: ${(e as Error).message}`)
+    return url
+  }
+}
+
 async function runFluxImage(
   prompt: string,
   aspect: string,
@@ -941,12 +1013,13 @@ async function runFluxImage(
   // Opt back in to FAL with ENABLE_FAL_IMAGE_FALLBACK=1 (off by default).
   try {
     const urls = await runApimartImage(prompt, aspect, numImages, refImages, model, sizeOverride)
-    if (urls.length) return urls
+    if (urls.length) return Promise.all(urls.map(persistExternalImageUrl))
     throw new Error('Apimart 返回空结果')
   } catch (error) {
     if (process.env.ENABLE_FAL_IMAGE_FALLBACK === '1') {
       console.warn(`[image] Apimart failed; FAL fallback enabled: ${(error as Error).message}`)
-      return runFalFluxImage(prompt, aspect, numImages, refImages[0])
+      const urls = await runFalFluxImage(prompt, aspect, numImages, refImages[0])
+      return Promise.all(urls.map(persistExternalImageUrl))
     }
     throw new Error(`图片生成失败 (Apimart): ${(error as Error).message}`)
   }
@@ -1283,7 +1356,10 @@ function detectVideoType(inputs: VideoInputs): VideoGenType {
   if (inputs.videos.length > 0 || inputs.audios.length > 0) return 'universal-to-video'
   const n = inputs.images.length
   if (n === 0) return 'text-to-video'
-  if (n === 1) return 'image-to-video-first'
+  // mode:'reference' forces reference-to-video even for a single image — the
+  // caller appends extra reference media (asset:// avatar refs) that can't mix
+  // with a literal first_frame role. Mirror of src/lib/capabilities/video-types.ts.
+  if (n === 1) return inputs.mode === 'reference' ? 'reference-to-video' : 'image-to-video-first'
   if (n === 2 && inputs.mode !== 'reference') return 'image-to-video-first-last'
   return 'reference-to-video'
 }
@@ -1479,6 +1555,67 @@ function arkBaseUrl(): string {
 }
 
 /**
+ * Signed BytePlus Ark OpenAPI call (HMAC-SHA256, Volc SigV4-style). This is
+ * the control-plane surface (ListAssets / GetAsset / CreateAsset — the
+ * private digital-asset library, see "Private digital assets library" doc):
+ * AK/SK-signed against open.ap-southeast-1.byteplusapi.com, NOT the Bearer
+ * `/api/v3` model gateway. Signing verified live 2026-07-04 (a bad signature
+ * returns a signature error; our probe reached IAM and got a proper
+ * AccessDenied for a key lacking ark:ListAssets).
+ */
+async function callArkOpenApi(action: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const ak = process.env.BYTEPLUS_ACCESS_KEY
+  const sk = process.env.BYTEPLUS_SECRET_KEY
+  if (!ak || !sk) throw new Error('BYTEPLUS_ACCESS_KEY / BYTEPLUS_SECRET_KEY not set (required for asset-library OpenAPI)')
+  const host = process.env.BYTEPLUS_OPENAPI_HOST || 'open.ap-southeast-1.byteplusapi.com'
+  const region = process.env.BYTEPLUS_OPENAPI_REGION || 'ap-southeast-1'
+  const service = 'ark'
+  const version = '2024-01-01'
+
+  const sha256hex = (s: string) => createHash('sha256').update(s).digest('hex')
+  const hmac = (key: Buffer | string, s: string) => createHmac('sha256', key).update(s).digest()
+
+  const xDate = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')
+  const shortDate = xDate.slice(0, 8)
+  const payload = JSON.stringify(body)
+  const payloadHash = sha256hex(payload)
+  const query = `Action=${action}&Version=${version}`
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    host,
+    'x-content-sha256': payloadHash,
+    'x-date': xDate,
+  }
+  const signedKeys = Object.keys(headers).sort()
+  const canonicalRequest = [
+    'POST', '/', query,
+    signedKeys.map((k) => `${k}:${headers[k]}`).join('\n') + '\n',
+    signedKeys.join(';'),
+    payloadHash,
+  ].join('\n')
+  const scope = `${shortDate}/${region}/${service}/request`
+  const stringToSign = ['HMAC-SHA256', xDate, scope, sha256hex(canonicalRequest)].join('\n')
+  const kSigning = hmac(hmac(hmac(hmac(sk, shortDate), region), service), 'request')
+  const signature = createHmac('sha256', kSigning).update(stringToSign).digest('hex')
+
+  const res = await fetch(`https://${host}/?${query}`, {
+    method: 'POST',
+    headers: {
+      ...headers,
+      Authorization: `HMAC-SHA256 Credential=${ak}/${scope}, SignedHeaders=${signedKeys.join(';')}, Signature=${signature}`,
+    },
+    body: payload,
+  })
+  const parsed = (await res.json()) as Record<string, unknown>
+  const meta = parsed.ResponseMetadata as { Error?: { Code?: string; Message?: string } } | undefined
+  if (meta?.Error) {
+    throw new Error(`Ark OpenAPI ${action}: ${meta.Error.Code} — ${meta.Error.Message}`)
+  }
+  if (!res.ok) throw new Error(`Ark OpenAPI ${action}: HTTP ${res.status}`)
+  return parsed
+}
+
+/**
  * Default Seedance model id. Prefers SEEDANCE_MODEL / SEEDANCE_ENDPOINT
  * because BytePlus海外 expects an account-specific endpoint id (e.g.
  * `ep-20260423151341-p2zm9`) rather than the universal model name; the
@@ -1529,6 +1666,7 @@ async function submitSeedanceTaskOnce(opts: {
   generateAudio?: boolean
   seed?: number
   invitedImageAssetIds?: string[]
+  avatarAssetUris?: string[]
 }): Promise<string> {
   // Prefer BYTEPLUS_ARK_API_KEY (海外侧 ark-* Bearer token); fall back to
   // the legacy ARK_API_KEY for envs that haven't been migrated yet. The
@@ -1542,6 +1680,19 @@ async function submitSeedanceTaskOnce(opts: {
   // BytePlus can actually fetch them — it sits in ap-southeast and can't
   // hit our localhost dev server.
   const content = await inlineLocalRefsInContentParts(opts.contentParts)
+
+  // 真人 style: append virtual-avatar refs as reference_image parts using the
+  // `asset://<id>` URI form the Seedance content API requires. Appended AFTER
+  // the keyframe/grid image parts so each avatar's @图片N index (computed in
+  // the cinematographer prompt legend) stays correct — image index counts only
+  // image_url parts in array order, so trailing audio parts don't shift it.
+  // These deliberately bypass inlineLocalRefs / the http-url guard: asset://
+  // is neither a fetchable URL nor a local path.
+  for (const uri of opts.avatarAssetUris ?? []) {
+    const u = uri.trim()
+    if (!u.startsWith('asset://')) continue
+    content.push({ type: 'image_url', role: 'reference_image', image_url: { url: u } })
+  }
 
   const body: Record<string, unknown> = {
     model: resolveSeedanceModel(opts.model ?? defaultSeedanceModel()),
@@ -1589,6 +1740,7 @@ async function submitSeedanceTask(opts: {
   generateAudio?: boolean
   seed?: number
   invitedImageAssetIds?: string[]
+  avatarAssetUris?: string[]
 }): Promise<string> {
   try {
     return await submitSeedanceTaskOnce(opts)
@@ -1656,6 +1808,9 @@ async function textToVideo(req: CapReq): Promise<CapRes> {
     invitedImageAssetIds: Array.isArray(req.params?.invitedImageAssetIds)
       ? (req.params!.invitedImageAssetIds as string[])
       : undefined,
+    avatarAssetUris: Array.isArray(req.params?.avatarAssetUris)
+      ? (req.params!.avatarAssetUris as string[])
+      : undefined,
   })
   return { outputs: [{ kind: 'video', url }] }
 }
@@ -1691,6 +1846,9 @@ async function universalToVideo(req: CapReq): Promise<CapRes> {
     seed: req.params?.seed != null ? Number(req.params.seed) : undefined,
     invitedImageAssetIds: Array.isArray(req.params?.invitedImageAssetIds)
       ? (req.params!.invitedImageAssetIds as string[])
+      : undefined,
+    avatarAssetUris: Array.isArray(req.params?.avatarAssetUris)
+      ? (req.params!.avatarAssetUris as string[])
       : undefined,
   })
   return { outputs: [{ kind: 'video', url }] }
@@ -1931,6 +2089,8 @@ const handlers: Record<string, (req: CapReq) => Promise<CapRes>> = {
   'bridge-row-judge': bridgeRowJudge,
   'cinematography-describe': cinematographyDescribe,
   'freeform-text': freeformText,
+  'storyboard-generation': storyboardGeneration,
+  'voice-casting': voiceCasting,
   'text-to-image': textToImage,
   'batch-image': batchImage,
   'smart-edit': smartEdit,
@@ -2173,6 +2333,33 @@ export function capabilitiesPlugin(): Plugin {
           sendJson(res, 200, { url: `/uploads/${zipName}` })
         } catch (e) {
           sendJson(res, 500, { error: String((e as Error).message ?? e) })
+        }
+      })
+
+      // Private digital-asset library (真人开白资产). Lists the account's
+      // registered assets so the client can name-match storyboard characters
+      // to already-approved asset ids and ship them as asset://<id>
+      // reference_image parts (the documented whitelist mechanism — the
+      // moderator accepts real-person likenesses that arrive via an Active
+      // asset URI). AK/SK-signed control-plane call; the browser never sees
+      // the keys. Requires the key to hold the ark asset-library IAM policy
+      // (ark:ListAssets) — a 403 here means the policy is missing, not that
+      // the code is broken.
+      server.middlewares.use('/capabilities/byteplus-assets', async (req, res) => {
+        if (req.method !== 'GET') { sendJson(res, 405, { error: 'GET only' }); return }
+        try {
+          const parsed = await callArkOpenApi('ListAssets', { PageNumber: 1, PageSize: 100 })
+          const result = (parsed.Result ?? parsed) as { Items?: Array<Record<string, unknown>> }
+          const assets = (result.Items ?? []).map((it) => ({
+            id: String(it.Id ?? ''),
+            name: String(it.Name ?? ''),
+            assetType: String(it.AssetType ?? ''),
+            status: String(it.Status ?? ''),
+            groupId: String(it.GroupId ?? ''),
+          })).filter((a) => a.id)
+          sendJson(res, 200, { assets })
+        } catch (e) {
+          sendJson(res, 502, { error: String((e as Error).message ?? e) })
         }
       })
 

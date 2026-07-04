@@ -164,13 +164,16 @@ export function sceneImageContext(artStyle: string): AssetImageContext {
       return `${s.name}, ${s.location}, ${s.lighting}, ${s.mood}`
     },
     aspect: '16:9',
-    // gpt-image-2 caps long edge at 3840 — verified empirically against
-    // TokenRouter (4096 returns 400 "longest edge must be <= 3840").
-    // 3840x2160 is the 16:9 4K UHD ceiling the model permits; the
-    // capabilities plugin honors `size` and forwards it as-is. Keeping
-    // `resolution: '4k'` as a hint for any downstream that does read it,
-    // even though the active TokenRouter path ignores it.
-    extraParams: { quality: 'hd', resolution: '4k', size: '3840x2160' },
+    // TRUE 2:1 equirectangular canvas (虚拟影棚 workflow, super-i.cn/info-2753):
+    // scenes used to request 16:9 3840x2160, contradicting the prompt body's
+    // "2:1 aspect ratio canvas" — the model returned a wide establishing shot
+    // and every downstream step that assumes a full sphere (keyframe "crop a
+    // direction", PanoramaViewer 机位截取) was working against a fake.
+    // gpt-image-2 caps the long edge at 3840 (4096 returns 400 "longest edge
+    // must be <= 3840"), so 3840x1920 is the largest true 2:1 it permits.
+    // `aspect` stays '16:9' only as the closest enum hint; the capabilities
+    // plugin honors the explicit `size` and forwards it as-is.
+    extraParams: { quality: 'hd', resolution: '4k', size: '3840x1920' },
   }
 }
 export function propImageContext(artStyle: string): AssetImageContext {
@@ -299,21 +302,12 @@ export async function* generateAssetImages(
       message: `art-director: generating 360° 4K panorama for scene ${sc.name}`,
     }
     try {
+      // Reuse sceneImageContext so BOTH scene entry points (this verb and
+      // canvas-elements' background path) request identical geometry —
+      // notably the true 2:1 equirectangular `size` (虚拟影棚 contract).
       const { url, prompt } = await generateOneImage(
         sc,
-        {
-          artStyle: req.artStyle,
-          template: TPL.sceneImage,
-          buildDescription: (e) => {
-            const s = e as ExtractedScene
-            return `${s.name}, ${s.location}, ${s.lighting}, ${s.mood}`
-          },
-          aspect: '16:9',
-          // Scene panoramas request 4K + HD quality. The scene-image.md template
-          // instructs the model to render as a 2:1 equirectangular wrap; the
-          // canvas <PanoramaViewer> reads it as a draggable 360° image.
-          extraParams: { quality: 'hd', resolution: '4k' },
-        },
+        sceneImageContext(req.artStyle),
         ctx,
         ASSET_TIMEOUT_MS.scene,
       )
