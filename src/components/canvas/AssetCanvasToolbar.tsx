@@ -1,14 +1,25 @@
-import { User, MapPin, Package, Film, Trash2, ImageIcon, Type, Sparkles, LayoutGrid, Palette } from 'lucide-react'
+import { useState } from 'react'
+import { User, MapPin, Package, Film, Trash2, ImageIcon, Type, FlaskConical, LayoutGrid, Palette } from 'lucide-react'
 import { useReactFlow } from '@xyflow/react'
 import { toast } from 'sonner'
 import { resolveOverlaps } from '@/lib/canvas-layout'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { useAssetStore } from '@/stores/asset-store'
 import { useCanvasStore } from '@/stores/canvas-store'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { useViewStore } from '@/stores/view-store'
 import { connectStyleToAllAssets } from '@/lib/global-style-node'
+import { GENRE_CASES, type GenreCase } from '@/lib/benchmarks/genre-cases'
+import { GenreCaseRunnerDialog } from '@/components/director/GenreCaseRunnerDialog'
 import type { AssetType } from '@/types/asset'
 
 const ASSET_TYPES: { type: AssetType; label: string; Icon: React.ElementType }[] = [
@@ -28,14 +39,13 @@ function randomPosition() {
 export function AssetCanvasToolbar() {
   const addAsset = useAssetStore((s) => s.addAsset)
   const removeAsset = useAssetStore((s) => s.removeAsset)
-  const addNode = useCanvasStore((s) => s.addNode)
   const addItemNode = useCanvasStore((s) => s.addItemNode)
-  const storeAddEdge = useCanvasStore((s) => s.addEdge)
   const removeNodeByAssetId = useCanvasStore((s) => s.removeNodeByAssetId)
   const addItem = useCanvasItemStore((s) => s.addItem)
   const rf = useReactFlow()
   const selectedAssetIds = useViewStore((s) => s.selectedAssetIds)
   const clearSelection = useViewStore((s) => s.clearSelection)
+  const [runningCase, setRunningCase] = useState<GenreCase | null>(null)
 
   const handleAdd = (type: AssetType, label: string) => {
     // Back every newly-added asset with a canvas-item so the node renders via
@@ -65,38 +75,6 @@ export function AssetCanvasToolbar() {
   const handleAddText = () => {
     const id = addItem({ kind: 'text', name: '文本节点', content: '' })
     addItemNode(id, 'text', randomPosition())
-  }
-
-  const handleLoadSample = async () => {
-    try {
-      const res = await fetch('/samples/manifest.json')
-      const manifest: {
-        images: { libId: string; name: string; file: string; width: number; height: number; x: number; y: number }[];
-        texts: { libId: string; name: string; content: string; width: number; height: number; x: number; y: number }[];
-        edges: { source: string; target: string }[];
-      } = await res.json()
-      const idMap = new Map<string, string>()
-      for (const img of manifest.images) {
-        const itemId = addItem({ kind: 'image', name: img.name, content: img.file })
-        const nodeId = addItemNode(itemId, 'image', { x: img.x, y: img.y }, { width: img.width, height: img.height })
-        idMap.set(img.libId, nodeId)
-      }
-      for (const t of manifest.texts) {
-        const itemId = addItem({ kind: 'text', name: t.name, content: t.content })
-        const nodeId = addItemNode(itemId, 'text', { x: t.x, y: t.y }, { width: t.width, height: t.height })
-        idMap.set(t.libId, nodeId)
-      }
-      for (const e of manifest.edges ?? []) {
-        const s = idMap.get(e.source); const t = idMap.get(e.target)
-        if (s && t) storeAddEdge(s, t)
-      }
-      setTimeout(() => {
-        relayout()
-        rf.fitView({ padding: 0.15, duration: 400 })
-      }, 80)
-    } catch (e) {
-      console.error('load sample failed', e)
-    }
   }
 
   const relayout = () => {
@@ -171,14 +149,27 @@ export function AssetCanvasToolbar() {
           </TooltipTrigger>
           <TooltipContent side="right">全局风格 → 关联所有资产</TooltipContent>
         </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button variant="secondary" size="icon" className="h-8 w-8 shadow-md" onClick={handleLoadSample}>
-              <Sparkles className="w-4 h-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="right">加载 libTV 示例</TooltipContent>
-        </Tooltip>
+        <DropdownMenu>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <DropdownMenuTrigger asChild>
+                <Button variant="secondary" size="icon" className="h-8 w-8 shadow-md">
+                  <FlaskConical className="w-4 h-4" />
+                </Button>
+              </DropdownMenuTrigger>
+            </TooltipTrigger>
+            <TooltipContent side="right">跑 Test Case（30s 题材基准）</TooltipContent>
+          </Tooltip>
+          <DropdownMenuContent side="right" align="start">
+            <DropdownMenuLabel className="text-xs">30s 题材基准用例（Weta 3D CG）</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            {GENRE_CASES.map((c) => (
+              <DropdownMenuItem key={c.id} className="text-xs" onSelect={() => setRunningCase(c)}>
+                {c.title} · {c.genre}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button variant="secondary" size="icon" className="h-8 w-8 shadow-md" onClick={handleRelayout}>
@@ -209,6 +200,10 @@ export function AssetCanvasToolbar() {
           </>
         )}
       </div>
+
+      {runningCase && (
+        <GenreCaseRunnerDialog genreCase={runningCase} onClose={() => setRunningCase(null)} />
+      )}
     </TooltipProvider>
   )
 }

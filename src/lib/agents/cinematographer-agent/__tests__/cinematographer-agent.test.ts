@@ -330,8 +330,8 @@ describe('shoot', () => {
     expect(call.params?.model).toBe('dreamina-seedance-2-0-260128')
     expect(call.params?.duration).toBe('8')
     expect(call.params?.aspect).toBe('16:9')
-    // No caller-supplied resolution → falls back to 480p default.
-    expect(call.params?.resolution).toBe('480p')
+    // No caller-supplied resolution → falls back to 1080p default (full Seedance 2.0 look).
+    expect(call.params?.resolution).toBe('1080p')
     expect(call.params?.reference_mode).toBe('omni')
     // Exactly 1 text + 1 image (the keyframe). Context refs do NOT land
     // as additional image inputs.

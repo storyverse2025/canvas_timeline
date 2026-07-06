@@ -365,10 +365,70 @@ function collectOrderedRefs(req: GenerateKeyframeRequest): OrderedImageRef[] {
   return out
 }
 
+/**
+ * High-intensity action detector for the storyboard grid's panel-count
+ * rule. Fight/chase shots cut on micro-beats (起势→打击→反应), so 3–6
+ * panels reads as slow-motion; they get the classic 12-panel sheet
+ * instead. Keyword test over the row's action-bearing fields — false
+ * positives just mean more panels, which is cheap.
+ */
+const HIGH_ACTION_RE = /打斗|交锋|搏斗|厮杀|对决|决斗|激战|混战|追逐|突袭|反击|格挡|闪避|挥拳|出拳|挥刀|挥剑|拔刀|拔剑|斩|劈|刺出|踢|扑向|摔|锁链|搏击|武打|动作戏|fight|combat|duel|chase|brawl|clash|parry|dodge|punch|kick|slash|strike/i
+
+/**
+ * Dance / 群舞 detector. Choreography is a beat-synced flow of 队形 poses that
+ * reads best as a 16-panel (4×4) 漫画式分镜 — enough panels to carry formation
+ * changes + a music-synced cutting rhythm, but not the 25-panel micro-cut a
+ * fight needs. Keyword test over the row's action-bearing fields.
+ */
+const DANCE_RE = /跳舞|舞蹈|群舞|齐舞|舞团|女团|男团|舞步|舞姿|编舞|舞段|舞台|队形|领舞|伴舞|street\s?dance|dance|dancing|choreograph|k-?pop|girl\s?group|boy\s?group|idol/i
+
+/**
+ * Panels for a dance / 群舞 shot. 16 (4×4) matches the 漫画式分镜 grids the
+ * reference dance-video workflows use (Seedance 2 舞蹈): enough to show
+ * formation flow + beat-synced cuts without over-cutting like a fight.
+ */
+const DANCE_PANEL_COUNT = 16
+
+/**
+ * Panels for a high-intensity action shot. 25 (5×5) gives ~0.4s micro-beats
+ * so a 来回交锋 reads as fast cutting with real weapon-clash rhythm rather than
+ * a slow 6-beat montage. Bump/lower here in one place.
+ */
+const ACTION_PANEL_COUNT = 25
+
+function isHighActionRow(row: GenerateKeyframeRequest['row']): boolean {
+  return HIGH_ACTION_RE.test(
+    [row.character_actions, row.motion_prompts, row.visual_description, row.storyboard_prompts]
+      .filter(Boolean)
+      .join(' '),
+  )
+}
+
+function isDanceRow(row: GenerateKeyframeRequest['row']): boolean {
+  return DANCE_RE.test(
+    [row.character_actions, row.motion_prompts, row.visual_description, row.storyboard_prompts, row.scene_tags]
+      .filter(Boolean)
+      .join(' '),
+  )
+}
+
 function buildKeyframePrompt(req: GenerateKeyframeRequest): string {
   const r = req.row
   const aspect = req.aspect ?? '16:9'
   const visualStyle = req.visualStyle ?? '冷调写实电影质感 / cold-toned filmic'
+  const highAction = isHighActionRow(r)
+  // Dance rows get a 16-panel (4×4) 漫画式分镜 grid. A fight always wins the
+  // panel-count contest (a fight-in-a-club is still cut like a fight), so
+  // dance only applies when the row isn't already high-action.
+  const danceAction = !highAction && isDanceRow(r)
+  // Facial-expression source for the panels: the row's emotional + performance
+  // intent. The storyboard is now the video's #1 reference, so if its panels
+  // draw blank faces the video inherits flat, 出戏 expressions. Feed these cues
+  // in so every panel gets a specific, beat-matched expression.
+  const faceCues = [r.emotion_atmosphere, r.emotion_mood, r.performance_guidance, r.character_psychology]
+    .map((s) => (s ?? '').trim())
+    .filter(Boolean)
+    .join(' / ')
 
   const characters = req.characters ?? []
   const props = req.props ?? []
@@ -445,11 +505,37 @@ function buildKeyframePrompt(req: GenerateKeyframeRequest): string {
     // ─── Module 2: Storyboard panel grid (always the primary content) ───
     `## ${next()}. Storyboard panel grid (primary content)`,
     `Render a multi-panel hand-drawn storyboard grid covering this shot's action arc.`,
-    `- Panel count: choose 3–6 panels based on the ${req.shotDurationSeconds}s duration and the density of the action below; denser action → more panels.`,
+    highAction
+      ? `- Panel count: **${ACTION_PANEL_COUNT}-panel grid（${ACTION_PANEL_COUNT}格，5 columns × 5 rows）** — this is a HIGH-INTENSITY ACTION shot (打斗/交锋). Each panel ≈ ${(req.shotDurationSeconds / ACTION_PANEL_COUNT).toFixed(2)}s of FAST cutting. This is a **TWO-FIGHTER EXCHANGE (来回交锋回合), NOT a montage of separated solo highlights**: initiative ALTERNATES between the two combatants every 1–2 panels — 甲出招 → 乙格挡/招架 → 兵器相击迸火星 → 乙反击 → 甲闪避/换位 → 反转 → 打击定格 → 再起新回合. Across ${ACTION_PANEL_COUNT} panels there must be **multiple full exchange rounds (≥4 个完整来回回合)** and **≥4 力量反转 (power reversals)** so the fight is a 节奏波 (压制→反转→再压制→终结), never a straight line. **At least half (~${Math.round(ACTION_PANEL_COUNT / 2)} 格) must show physical CONTACT / 兵器碰撞** (兵器相击 / 格挡震手 / 擒拿 / 缠斗 / 命中), never one character posing alone. ${ACTION_PANEL_COUNT} 格是快切微节拍——不许合并节拍、不许留白凑数，也不要画成慢动作。`
+      : danceAction
+      ? `- Panel count: **${DANCE_PANEL_COUNT}-panel grid（${DANCE_PANEL_COUNT}格，4 columns × 4 rows）** — this is a DANCE / 群舞 shot (舞蹈/编舞), drawn as a 漫画式分镜 (comic-style storyboard) of the choreography. Each panel ≈ ${(req.shotDurationSeconds / DANCE_PANEL_COUNT).toFixed(2)}s, cut **ON THE MUSICAL BEAT** (每格落在一个节拍/舞步 hit). Panels flow as a continuous 编舞 sequence: **key pose → transition → key pose**, each panel a distinct, readable 舞姿 (arms/legs/hips/head silhouette clearly different from the neighbours), never the same pose repeated. Show the **队形 (formation) evolving** across the grid — 入场亮相 → 队形展开/变换 (箭形↔横排↔斜线↔环形) → 中心交换 → drop 齐舞爆发 → 收势定格. **ALL members appear together in-frame** (群体同框, no member dropped); keep每个成员 face + 发色 + 服装 consistent across every panel.`
+      : `- Panel count: choose 3–6 panels based on the ${req.shotDurationSeconds}s duration and the density of the action below; denser action → more panels.`,
     `- **Each panel carries a TIME-SLICE LABEL at the top-left of that panel** (e.g. "0–1.5s", "1.5–3.0s"). The time labels must sum to exactly ${req.shotDurationSeconds}s with no gaps or overlaps.`,
-    `- **Each panel carries a 4-line handwritten annotation strip under it**: 主体 (subject), 场景 (scene), 摄像机运动 (camera move), 灯光 (lighting/exposure). Keep each line short; these labels are what the video model matches against, so they must agree with the drawing.`,
+    `- **Each panel carries a 5-line handwritten annotation strip under it**: 主体 (subject), 表情 (facial expression — 眼神/眉/嘴/下颌 tension), 场景 (scene), 摄像机运动 (camera move), 灯光 (lighting/exposure). Keep each line short; these labels are what the video model matches against, so they must agree with the drawing.`,
+    `- **面部表情是一等元素 / FACIAL EXPRESSION is first-class**: draw each character's face large and clear enough that eyes, brow and mouth READ, and give EACH panel a SPECIFIC expression that matches that beat — never a blank/neutral face. The expression must change beat-to-beat as the action/emotion escalates (e.g. 蓄力凝神 → 命中爆发 → 受击痛楚 → 反转决绝).${faceCues ? ` 本镜情绪与表演依据 / expression source for the faces：「${faceCues}」——把它落到具体的眼神、眉形、嘴型、下颌张力上，逐格推进。` : ''}`,
     `- Panels show **progressive action** across the shot, with the RED action arrows, BLUE camera arrows, ORANGE light arrows drawn inside each panel.`,
     `- Action guidance: ${r.storyboard_prompts || r.visual_description || '(use the visual_description from this row)'}`,
+    ...(highAction
+      ? [
+          `- ⚠️ **覆盖预烤格数**：上面的 Action guidance 可能只列出少量粗分格（例如 "Panel 1 / Panel 2 … Panel 6"）——**忽略它的格数**。保留它的动作、构图、机位、光线意图，但必须按本模块的 ${ACTION_PANEL_COUNT} 格要求，把那几个粗节拍拆细成 ${ACTION_PANEL_COUNT} 个微节拍分格，节奏是快切。`,
+          `- ⚠️ **不要照搬成"高光集锦"**：如果 Action guidance 从一招直接跳到结果（例如"扑出 → 剑已抵咽喉"，中间的交锋被省略），你必须把被省略的**来回交锋补全成多个连续回合**（甲出招→乙格挡→兵器相击→乙反击→甲换位→反转…），每个回合都要有兵器碰撞与攻防转换。`,
+          `- **六要素/格（学专业分镜，每格精确到这六项）**：①景别（全景/中景/特写/大特写，逐格切换制造节奏）②构图（对角线/中心对称/低仰角/俯冲）③运镜手法（急推/横移/环绕/俯冲/手持晃动，写在蓝箭头上）④画面内容（精确到兵器轨迹、受力/发力方向、毛发与衣摆飘向、火星/血花/雪片溅飞方向、脚步重心转移）⑤光影（光源/色温/过曝位置，写在橙箭头上）⑥打击感（命中格加冲击波+镜头抖动+速度线）。不要只写"两人打斗"这种笼统词。`,
+          `- **匹配剪辑 / MATCH CUT 衔接每一格**：用上一格末尾的惯性动作、运动方向或形状无缝滑入下一格首个动作（例如"剑尖寒芒收束的瞬间"接"锁链破空的速度线"）——禁止硬切、禁止停顿、禁止跳过中间过程（能量弧线连续）。`,
+          `- **能量残留与视觉惯性**：所有高速位移/挥击/闪避都画出运动路径 + 残影（动态模糊/速度线/流体光迹），引导视觉惯性；禁止"瞬移式"PPT 跳格。`,
+          `- **定格-加速-定格节奏**：起手/蓄力用定格慢拍 → 交锋/连击用密集快切加速 → 命中/反转用打击定格（单独一格冻结冲击瞬间）；通过景别与分格疏密的对比造出打击感。`,
+          `- **按角色属性设计运镜**：敏捷型→动力学运镜锁角色后背+动作处镜头晃动；力量型→视角锚点锁定被击飞的一方+冲击波+镜头抖动；持械/远程→镜头贴兵器做跨尺度透视+空气激波。`,
+        ]
+      : []),
+    ...(danceAction
+      ? [
+          `- ⚠️ **覆盖预烤格数**：忽略上面 Action guidance 里可能出现的少量粗分格，保留它的舞段/队形/运镜/情绪意图，但必须按本模块的 ${DANCE_PANEL_COUNT} 格 (4×4) 把编舞拆成 ${DANCE_PANEL_COUNT} 个卡在节拍上的分格。`,
+          `- **每格落拍 / cut on the beat**：每一格对应一个节拍点上的 pose hit；相邻格之间是同一段编舞的连续过渡（上一格的手/脚/重心惯性滑入下一格），不是互不相关的定妆照。`,
+          `- **队形叙事 / formation as story**：把 30s 舞段的队形演变铺满 ${DANCE_PANEL_COUNT} 格——入场亮相剪影 → 队形展开 → 队形变换 (箭形/横排/斜线/环形/V 形互相转换) → C 位与两翼中心交换 → 副歌 drop 全员齐舞爆发 → 收势定格。逐格标注当前队形与 C 位。`,
+          `- **五要素/格（舞蹈版）**：①景别（大全景看队形 / 中景看双人配合 / 特写看表情与手势，逐格切换）②队形与走位（谁在前后、谁在 C 位、移动方向用红箭头）③舞步与身体线条（手臂/腿/胯/头的具体姿态，肌肉发力与延伸方向）④运镜（贴身跟拍/横移扫过队形/环绕/升降摇臂/drop 处急推，写在蓝箭头上）⑤灯光与节拍（顶光/追光/频闪/drop 爆亮，写在橙箭头上，并标当前节拍 beat）。`,
+          `- **群体同框、全员一致**：每一格画出**全部成员**（群体同框，不许漏人、不许只画 C 位）；每个成员的脸型、发色、发型、服装在 ${DANCE_PANEL_COUNT} 格里保持一致，只有姿态和站位在变。`,
+          `- **贴身跟拍范式**：参照 KPOP 打歌舞台的运镜（贴身跟拍推进 + 队形环绕扫描 + drop 处爆点急推），但不复刻整支一镜到底——每格是一个可被 Seedance 当作关键帧的独立 pose。`,
+        ]
+      : []),
     ``,
     // ─── Module 3: Multi-character height comparison strip ───
     ...(hasMultipleCharacters
@@ -624,7 +710,7 @@ async function deriveStoryboardPrompt(
     structureTemplate,
     '',
     '推导要求：',
-    '- 保留模板的全部硬约束：黑白手绘、禁止写实、时间段标签、每格 主体/场景/摄像机运动/灯光 标注、橙=轮廓光方向 / 红=人物动作 / 蓝=摄影机运动 的彩色箭头体系、模块结构、参考图 legend。',
+    '- 保留模板的全部硬约束：黑白手绘、禁止写实、时间段标签、**格数要求（模板写明 12格 就必须 12 格，写 3–6 格就在该区间内）**、每格 主体/场景/摄像机运动/灯光 标注、橙=轮廓光方向 / 红=人物动作 / 蓝=摄影机运动 的彩色箭头体系、模块结构、参考图 legend。',
     '- 结合参考图里真实可见的人物长相、服装、场景结构、道具形态，把模板里的占位描述替换成具体、可画的画面指令（每格画什么、箭头怎么标、曝光写什么）。',
     '- 曝光与运镜必须逐格写明，不许留空。',
     '- 直接输出最终提示词全文，不要解释、不要 markdown 围栏。',
@@ -649,28 +735,56 @@ async function deriveStoryboardPrompt(
   }
 }
 
+// Image-backend fallback chain. Primary is the pinned high-quality model;
+// heavy multi-reference prompts (identity sheets, 12-panel grids) sometimes
+// blow the upstream Apimart 180s task cap. When the primary times out or
+// errors, fall back to Gemini flash-image ("nano-banana") — fast, rarely
+// hits the cap, different safety filter. Single chokepoint: covers the
+// storyboard grid, clean keyframe, AND identity sheet.
+const KEYFRAME_BACKENDS: Array<{ provider: string; model: string }> = [
+  { provider: KEYFRAME_PROVIDER, model: KEYFRAME_MODEL },
+  { provider: 'gemini', model: 'google/gemini-3.1-flash-image-preview' },
+]
+
 async function callKeyframeCapability(opts: {
   prompt: string
   orderedRefs: OrderedImageRef[]
   aspect: '16:9' | '9:16' | '1:1' | '4:3'
 }): Promise<string> {
-  const r = await runCapability({
-    capability: 'text-to-image',
-    inputs: [
-      { kind: 'text', text: opts.prompt },
-      ...opts.orderedRefs.map((ref) => ({ kind: 'image' as const, url: ref.imageUrl })),
-    ],
-    params: {
-      provider: KEYFRAME_PROVIDER,
-      model: KEYFRAME_MODEL,
-      aspect: opts.aspect,
-      quality: 'hd',
-      resolution: '4k',
-    },
-  })
-  const url = r.outputs[0]?.url
-  if (!url) throw new Error('director-agent: keyframe capability returned no url')
-  return url
+  let lastErr: unknown
+  for (let i = 0; i < KEYFRAME_BACKENDS.length; i++) {
+    const backend = KEYFRAME_BACKENDS[i]!
+    try {
+      const r = await runCapability({
+        capability: 'text-to-image',
+        inputs: [
+          { kind: 'text', text: opts.prompt },
+          ...opts.orderedRefs.map((ref) => ({ kind: 'image' as const, url: ref.imageUrl })),
+        ],
+        params: {
+          provider: backend.provider,
+          model: backend.model,
+          aspect: opts.aspect,
+          quality: 'hd',
+          resolution: '4k',
+        },
+      })
+      const url = r.outputs[0]?.url
+      if (!url) throw new Error('director-agent: keyframe capability returned no url')
+      if (i > 0) console.warn(`[director-agent] keyframe used fallback backend ${backend.provider}/${backend.model}`)
+      return url
+    } catch (e) {
+      lastErr = e
+      if (i < KEYFRAME_BACKENDS.length - 1) {
+        console.warn(
+          `[director-agent] keyframe backend ${backend.provider}/${backend.model} failed (${String((e as Error)?.message ?? e).slice(0, 100)}); trying nano-banana fallback`,
+        )
+      }
+    }
+  }
+  throw lastErr instanceof Error
+    ? lastErr
+    : new Error(`director-agent: all keyframe backends failed: ${String(lastErr)}`)
 }
 
 export async function* generateKeyframe(
@@ -802,6 +916,18 @@ function collectIdentitySheetRefs(req: GenerateIdentitySheetRequest): OrderedIma
       imageUrl: url,
     })
   })
+  // Prior sheets ride right after the raw identity anchors: they are the
+  // costume-detail canon. Small accessories (玉佩、绣纹、扣带) live at a
+  // resolution the base asset image can't pin down, so without these the
+  // model re-invents them every row.
+  const priorUrls = (req.priorSheetUrls ?? []).filter(Boolean)
+  priorUrls.forEach((url, i) => {
+    out.push({
+      role: labelWithIndex(`Costume & detail CANON — previous identity sheet of ${req.character.name}`, i, priorUrls.length),
+      description: 'Copy every costume detail EXACTLY: accessories, pendants (玉佩), embroidery, fastenings, trims. Do NOT re-invent any detail.',
+      imageUrl: url,
+    })
+  })
   for (const p of req.props ?? []) {
     const urls = (p.imageUrls ?? []).filter((u): u is string => Boolean(u))
     urls.forEach((url, i) => {
@@ -834,6 +960,19 @@ function buildIdentitySheetPrompt(req: GenerateIdentitySheetRequest): string {
     `- image${i + 1} = ${ref.role}${ref.description ? ` (${ref.description})` : ''}`,
   )
   const hasScene = orderedRefs.some((r) => r.role.includes('LIGHTING source'))
+  const hasPriorSheets = orderedRefs.some((r) => r.role.includes('CANON'))
+  const rc = req.rowContext
+  const rowContextLines = rc && (rc.actions || rc.shotSize || rc.emotionAtmosphere || rc.performanceGuidance)
+    ? [
+        `## 本行拍摄语境 / THIS ROW'S SHOOTING CONTEXT${rc.shotNumber ? `（${rc.shotNumber}）` : ''}`,
+        `This sheet anchors ONE specific shot. Its poses, expressions and detail picks must service what this row actually shoots — not a generic catalogue:`,
+        ...(rc.actions ? [`- 本行动作 / Actions: ${rc.actions}`] : []),
+        ...(rc.shotSize ? [`- 本行景别/机位 / Shot size & camera: ${rc.shotSize}`] : []),
+        ...(rc.emotionAtmosphere ? [`- 本行情绪氛围 / Emotional beat: ${rc.emotionAtmosphere}`] : []),
+        ...(rc.performanceGuidance ? [`- 表演指导 / Performance guidance: ${rc.performanceGuidance}`] : []),
+        ``,
+      ]
+    : []
 
   return [
     `# 角色身份版 / CHARACTER IDENTITY SHEET — ${c.name}. ONE ${aspect} model sheet that locks this character for every downstream shot.`,
@@ -842,17 +981,23 @@ function buildIdentitySheetPrompt(req: GenerateIdentitySheetRequest): string {
     `## Character`,
     `${c.name}${c.description ? ` — ${c.description}` : ''}`,
     `**Identity is NON-NEGOTIABLE**: face structure, hairstyle, body proportions, costume must match the character reference images exactly in every view on this sheet. Same person, ${1 + 7 + 3 + 3 + 3} times.`,
+    ...(hasPriorSheets
+      ? [
+          `**COSTUME DETAIL CANON**: a previous identity sheet of this character is provided in the reference legend. Every costume detail — accessories (玉佩/pendants), embroidery patterns, fastenings, belt/trim details — must be copied EXACTLY from that canon sheet. Do NOT re-invent, add, remove or restyle ANY detail.`,
+        ]
+      : []),
     ``,
+    ...rowContextLines,
     `## Sheet layout (all on ONE ${aspect} image)`,
     `1. **全身锚点 / Full-body anchor (×1)** — largest figure on the sheet, left side: neutral standing pose, front-facing, full body head-to-toe.`,
-    `2. **辅助视角 / Auxiliary views (×7)** — a row of smaller full-body views: 正面 front, 背面 back, 左侧 left profile, 右侧 right profile, 3/4侧 three-quarter, 仰视 low-angle (looking up at the character), 俯视 high-angle (looking down). Consistent scale across all 7.`,
-    `3. **轮廓剪影 / Silhouettes (×3)** — solid-black silhouettes in three distinct readable poses (standing / action / signature gesture). Pure shape, no interior detail.`,
-    `4. **表情 / Expressions (×3)** — head-and-shoulders close-ups: ${req.coreEmotion ? `centered on 核心情绪「${req.coreEmotion}」plus two contrasting states` : 'three distinct emotional states covering the character\'s dramatic range'}.`,
+    `2. **辅助视角 / Auxiliary views (×7)** — a row of smaller full-body views: 正面 front, 背面 back, 左侧 left profile, 右侧 right profile, 3/4侧 three-quarter, 仰视 low-angle (looking up at the character), 俯视 high-angle (looking down). Consistent scale across all 7.${rc?.shotSize ? ` The view matching THIS ROW's camera（${rc.shotSize}）gets the most careful rendering — downstream shots will read it first.` : ''}`,
+    `3. **轮廓剪影 / Silhouettes (×3)** — solid-black silhouettes in three distinct readable poses${rc?.actions ? `, drawn from THIS ROW's actions（${rc.actions}）: e.g. the action's wind-up, peak moment, and follow-through` : ' (standing / action / signature gesture)'}. Pure shape, no interior detail.`,
+    `4. **表情 / Expressions (×3)** — head-and-shoulders close-ups: ${rc?.emotionAtmosphere ? `centered on THIS ROW's emotional beat「${rc.emotionAtmosphere}」${req.coreEmotion ? `，plus 核心情绪「${req.coreEmotion}」and one transitional state` : 'plus two adjacent states the row passes through'}` : req.coreEmotion ? `centered on 核心情绪「${req.coreEmotion}」plus two contrasting states` : 'three distinct emotional states covering the character\'s dramatic range'}.`,
     `5. **细节 / Detail close-ups (×3)** — the three most identity-critical details (e.g. face/eyes, hands or signature prop grip, costume/${req.visualMark ? `视觉标志「${req.visualMark}」` : 'distinctive costume element'}).`,
     `6. **ID 块 / ID block (×1)** — bottom-right card, cleanly hand-lettered: 名字「${c.name}」· 身份/${'dramatic role'}${c.description ? `「${c.description.split(/[，,。\n]/)[0]}」` : ''} · 核心情绪${req.coreEmotion ? `「${req.coreEmotion}」` : ''} · 视觉标志${req.visualMark ? `「${req.visualMark}」` : '（该角色最具辨识度的一个视觉元素）'}.`,
     ...(props.length
       ? [
-          `7. **角色×道具比例条 / Prop scale strip** — ${c.name} standing full-height as the ruler, each prop beside them at TRUE relative scale. This strip FIXES the character↔prop 比例 for all later shots:`,
+          `7. **角色×道具比例条 / Prop scale strip** — a lineup panel: ${c.name} standing full-height and every prop placed SIDE-BY-SIDE next to them on ONE shared ground line, each drawn at TRUE relative scale (police-lineup style, faint horizontal height guide lines across the panel). The PICTURE itself is the ruler — scale must be readable purely from the drawing. **DO NOT convey scale with text, numbers, measurements or annotation labels**; no "1.5m" captions, no arrows. This strip FIXES the character↔prop 比例 for all later shots:`,
           ...props.map((p, i) => `   - ${i + 1}. ${p.name}${p.description ? ` — ${p.description}` : ''}`),
         ]
       : []),
@@ -911,7 +1056,7 @@ export async function* generateIdentitySheet(
 }
 
 // Pure helpers, exported for tests + reuse by the caller.
-export { buildKeyframePrompt, buildCleanKeyframePrompt, collectOrderedRefs, buildIdentitySheetPrompt, collectIdentitySheetRefs }
+export { buildKeyframePrompt, buildCleanKeyframePrompt, collectOrderedRefs, buildIdentitySheetPrompt, collectIdentitySheetRefs, isHighActionRow, isDanceRow }
 
 // ─── Verb: critiqueKeyframe ───────────────────────────────────────
 //

@@ -26,6 +26,10 @@ export interface ByteplusAsset {
   assetType: string
   status: string
   groupId: string
+  /** Permanent same-origin /uploads/ copy of the asset image, persisted
+   *  server-side (the raw ListAssets URL is signed and expires ~12h).
+   *  Absent when the download failed — the asset still matches/ships. */
+  previewUrl?: string
 }
 
 const LIST_ENDPOINT = '/capabilities/byteplus-assets'
@@ -41,10 +45,12 @@ export function _resetByteplusAssetCache(): void {
 /**
  * Fetch the account's digital assets, cached for a few minutes (the list
  * only changes when someone registers a new 真人资产 in the console).
+ * `force` bypasses the cache — the asset-library dialog's refresh button
+ * uses it right after the user registers something in the console.
  * Throws on transport/IAM errors — callers decide whether that's fatal.
  */
-export async function fetchByteplusAssets(): Promise<ByteplusAsset[]> {
-  if (cache && Date.now() - cache.at < CACHE_TTL_MS) return cache.assets
+export async function fetchByteplusAssets(opts: { force?: boolean } = {}): Promise<ByteplusAsset[]> {
+  if (!opts.force && cache && Date.now() - cache.at < CACHE_TTL_MS) return cache.assets
   const res = await fetch(LIST_ENDPOINT)
   const body = (await res.json()) as { assets?: ByteplusAsset[]; error?: string }
   if (!res.ok || body.error) {
@@ -55,21 +61,34 @@ export async function fetchByteplusAssets(): Promise<ByteplusAsset[]> {
 }
 
 /**
- * Match character slots to Active image assets by name.
+ * Match character slots to Active image assets.
  *
- * Matching is canonical-name based (first comma-segment, parentheticals
- * stripped, lowercased) with containment both ways, so a slot description
- * like "艾琳 (Erin) — 凌乱的黑色短发" matches an asset named "艾琳" or
- * "艾琳真人参考". Each asset is used at most once (two characters never
- * collapse onto the same registered person). Pure — unit-tested directly.
+ * Priority per character:
+ *   1. Explicit binding (canonical character name → asset id) from the
+ *      资产库 dialog's 点选分配 — in practice REQUIRED for most accounts,
+ *      because console-registered asset Names are machine hashes
+ *      ("keyframe_4fcae3d7"), not character names.
+ *   2. Canonical-name match (first comma-segment, parentheticals stripped,
+ *      lowercased, containment both ways) — "艾琳 (Erin) — 凌乱的黑色短发"
+ *      matches an asset renamed to "艾琳" or "艾琳真人参考".
+ *
+ * Each asset is used at most once (two characters never collapse onto the
+ * same registered person). Pure — unit-tested directly.
+ *
+ * The bindings map is shared with characterAvatarBindings: avatar-library
+ * ids and BytePlus asset ids live in one map, and each consumer only acts
+ * on ids it recognizes (resolveAvatarsForCharacters checks its catalog;
+ * this checks the listed assets), so the two never fight.
  */
 export function matchAssetsToCharacters(
   characters: Array<{ slotLabel: string; name?: string | null }>,
   assets: ByteplusAsset[],
+  bindings: Record<string, string> = {},
 ): VirtualAvatarShootRef[] {
   const usable = assets.filter(
     (a) => a.id && a.status.toLowerCase() === 'active' && a.assetType.toLowerCase() === 'image',
   )
+  const usableById = new Map(usable.map((a) => [a.id, a]))
   const used = new Set<string>()
   const out: VirtualAvatarShootRef[] = []
   for (const ch of characters) {
@@ -77,7 +96,9 @@ export function matchAssetsToCharacters(
     if (!raw) continue
     const key = canonicalCharacterName(raw)
     if (!key) continue
-    const hit = usable.find((a) => {
+    const boundId = bindings[key]
+    const bound = boundId && !used.has(boundId) ? usableById.get(boundId) : undefined
+    const hit = bound ?? usable.find((a) => {
       if (used.has(a.id)) return false
       const an = canonicalCharacterName(a.name)
       return Boolean(an) && (an === key || an.includes(key) || key.includes(an))

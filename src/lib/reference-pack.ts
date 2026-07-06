@@ -1,6 +1,6 @@
 import { isValidReferenceImageUrl } from '@/lib/agents/cinematographer-agent'
 import type { ReferencePackImage } from '@/lib/agents/cinematographer-agent'
-import type { StoryboardRow, ElementSlot } from '@/types/storyboard'
+import { rowCharacters, rowIdentitySheets, rowProps, type StoryboardRow, type ElementSlot } from '@/types/storyboard'
 
 /**
  * Assemble the ordered multi-reference pack (多参考输入合成) for a row:
@@ -55,8 +55,11 @@ export function buildReferencePack(row: StoryboardRow): ReferencePackImage[] {
       )
     }
   }
-  pushCharacter(row.character1, row.identitySheet1Url, '角色1')
-  pushCharacter(row.character2, row.identitySheet2Url, '角色2')
+  // All characters in the row, each with its OWN per-member identity sheet
+  // (identitySheetUrls[i]); members without a sheet yet fall back to their raw
+  // character setup image (pushCharacter's fallback).
+  const sheetUrls = rowIdentitySheets(row)
+  rowCharacters(row).forEach((slot, i) => pushCharacter(slot, sheetUrls[i] || undefined, `角色${i + 1}`))
 
   // 2. 道具图 — hero props carry identity too (a signature weapon that
   // changes shape between shots is as jarring as a face swap). Text-only
@@ -73,8 +76,7 @@ export function buildReferencePack(row: StoryboardRow): ReferencePackImage[] {
       'prop',
     )
   }
-  pushProp(row.prop1, '道具1')
-  pushProp(row.prop2, '道具2')
+  rowProps(row).forEach((slot, i) => pushProp(slot, `道具${i + 1}`))
 
   // 3. 场景图 — 虚拟影棚约束：the scene slot holds either the 360° panorama
   // itself or a 机位截图 captured from it (PanoramaViewer 截机位); either way
@@ -122,5 +124,12 @@ export function buildReferencePack(row: StoryboardRow): ReferencePackImage[] {
   // fall back to the legacy path where keyframeUrl passes through as-is.
   if (!pack.some((p) => p.kind === 'camera')) return []
 
-  return pack
+  // 黑白分镜图 (storyboard grid) ALWAYS leads the pack — it's the single most
+  // important reference: the action / staging / rhythm authority the video
+  // must follow (user directive). Everything else (identity / scene / props /
+  // 机位) is a secondary lock. Stable-partition so the rest keep their order.
+  return [
+    ...pack.filter((p) => p.kind === 'storyboard'),
+    ...pack.filter((p) => p.kind !== 'storyboard'),
+  ]
 }

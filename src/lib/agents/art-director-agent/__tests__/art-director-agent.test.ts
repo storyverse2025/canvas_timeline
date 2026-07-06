@@ -124,7 +124,28 @@ describe('generateAssetImages', () => {
     expect(result.props[0]!.img_url).toMatch(/^https:\/\/assets\//)
   })
 
-  it('skips elements that already have an img_url by default', async () => {
+  it('skips already-generated scenes/props by default', async () => {
+    mockedRunCapability.mockResolvedValue({ outputs: [{ kind: 'image', url: 'https://new.png' }] })
+    const ctx = createMemoryContext({ llm: { complete: async () => '' } })
+    const result = await driveAuto(
+      generateAssetImages({
+        artStyle: 'cinematic',
+        extraction: {
+          characters: [],
+          scenes: [{ name: 'S', description: '', image_prompt: 'p', img_url: 'https://existing-scene.png' }],
+          props: [{ name: 'P', description: '', image_prompt: 'p', img_url: 'https://existing-prop.png' }],
+        },
+      }, ctx),
+    )
+    expect(result.scenes[0]!.img_url).toBe('https://existing-scene.png')
+    expect(result.props[0]!.img_url).toBe('https://existing-prop.png')
+    expect(mockedRunCapability).not.toHaveBeenCalled()
+  })
+
+  it('regenerates an already-imaged character that is NOT 开白-bound (to register its own face)', async () => {
+    // A character with an image but no characterAvatarBindings entry can't pass
+    // the real-person privacy filter, and registration needs a fresh public URL
+    // — so the loop regenerates it to 开白 its own face rather than skipping.
     mockedRunCapability.mockResolvedValue({ outputs: [{ kind: 'image', url: 'https://new.png' }] })
     const ctx = createMemoryContext({ llm: { complete: async () => '' } })
     const result = await driveAuto(
@@ -137,8 +158,8 @@ describe('generateAssetImages', () => {
         },
       }, ctx),
     )
-    expect(result.characters[0]!.img_url).toBe('https://existing.png')
-    expect(mockedRunCapability).not.toHaveBeenCalled()
+    expect(result.characters[0]!.img_url).toBe('https://new.png')
+    expect(mockedRunCapability).toHaveBeenCalled()
   })
 
   it('regenerates already-generated elements when skipIfAlreadyGenerated is false', async () => {

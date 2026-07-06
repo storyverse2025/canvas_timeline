@@ -1,0 +1,20 @@
+{
+  "id": "mech",
+  "title": "核心苏醒",
+  "genre": "科幻机械解构",
+  "totalDurationSeconds": 30,
+  "stylePreset": "3d_weta_performance_capture_epic",
+  "aspectRatio": "16:9",
+  "characters": [],
+  "script": "幽暗机库中，一台十米高的人形机甲'玄武-07'静置于维护台架上，探照灯逐一亮起勾勒轮廓。检修程序启动：机甲开始爆炸图式解构——外层装甲板沿轴线整齐弹开悬浮，露出银色骨架与密布的液压管线；骨架继续层层分离，胸腔中央的聚变动力核心暴露出来，缓缓旋转，蓝色能量纹路在核心表面流动。检测完成，所有部件按原路径依次回位咬合，装甲闭合的瞬间机甲双目亮起蓝光，低沉的启动轰鸣响彻机库。",
+  "arc": {
+    "opening": "机库探照灯亮起，建立完整机甲的体量与静置状态",
+    "development": "爆炸图式逐层解构：装甲→骨架→动力核心，复杂度顶点",
+    "resolution": "部件回位咬合、双目亮起启动，'解构'获得目的性收束"
+  },
+  "expect": {
+    "characterSlots": 0,
+    "propFocus": ["玄武-07 机甲整体", "聚变动力核心"],
+    "visualGrammar": "exploded view 部件沿轴线分离"
+  }
+}

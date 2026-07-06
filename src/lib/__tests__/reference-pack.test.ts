@@ -21,10 +21,14 @@ describe('buildReferencePack', () => {
       keyframeCleanUrl: '/uploads/clean.png',
     })
     const pack = buildReferencePack(row)
-    expect(pack.map((p) => p.kind)).toEqual(['character', 'scene', 'storyboard', 'camera'])
-    expect(pack[0]!.url).toBe('/uploads/id1.png')
-    expect(pack[0]!.subject).toBe('艾琳')
-    expect(pack[3]!.url).toBe('/uploads/clean.png')
+    // Storyboard grid ALWAYS leads (most important reference — the action /
+    // staging authority the video must follow); the rest keep their order.
+    expect(pack.map((p) => p.kind)).toEqual(['storyboard', 'character', 'scene', 'camera'])
+    expect(pack[0]!.url).toBe('/uploads/grid.png')
+    const char = pack.find((p) => p.kind === 'character')!
+    expect(char.url).toBe('/uploads/id1.png')
+    expect(char.subject).toBe('艾琳')
+    expect(pack.find((p) => p.kind === 'camera')!.url).toBe('/uploads/clean.png')
   })
 
   it('includes prop slot images (道具图) between characters and the scene', () => {

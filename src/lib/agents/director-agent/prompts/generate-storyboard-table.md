@@ -25,6 +25,7 @@ director-agent / generate-storyboard-table
   - 任何 < 2s 的行必须与相邻行合并。
   - 想要长情绪段落？多行串联，每行最多 15s，主体/构图/节奏可以非常相近但必须有新动作或新情绪信息。
 - 在编辑每个 row 的 duration 之前先做整体规划：按节拍权重分配各 row 时长，确保总时长 == {{totalDurationSeconds}} 且每行落在 [2, 15] 区间内。
+- **戏剧权重（不要平均分时长）**：核心戏剧段落（打斗高潮 / 情绪爆发 / 主要冲突反转 / 题材主打点）必须拿到最多时长，向 15s 上限靠拢，必要时拆成多个连续 row 承载；建立（起）与收尾（合）段落收紧。**硬性检查：建立镜头的 duration 不得超过核心高潮镜头**——若出现"起 12s、打斗 8s"这种核心段落反而更短的分配，判为错误，必须重排让核心段落最长。这条优先级高于"少而长默认 10-15s"。
 - 输出前在心里逐行核对：每行 ∈ [2, 15]；Σ duration == {{totalDurationSeconds}}。违反任何一条则整张表作废。
 
 【小蔡剧本转分镜 Skill 基准】
@@ -36,11 +37,11 @@ director-agent / generate-storyboard-table
 - 角色心理描写要来自剧本上下文，但输出要能指导表演和镜头，不能只写空泛文学句。
 
 【单 row 演员/场景上限（硬约束）】
-- 每一行 row 只能承载 **一个场景 (scene)** 和 **至多两位主要角色 (character1 + character2)**。
-- 如果剧本同一个 beat 里出现 3 位以上有戏份的角色，**必须拆成多行**：第一行带主线角色对，下一行立刻切到新角色对（同场景不同人物 / 视点切换）。每行仍满足 2 ≤ duration ≤ 15s 和总时长锁定。
-- 同理，如果一个 beat 跨越两个空间（例：从屋内拍到屋外），**必须为每个空间各开一行 row**，scene 字段填该行实际所在的那一个，不要把两个场景塞进同一个 scene.description。
-- 拆分原则：保持因果与情绪连续（A 行结尾的动作 → B 行开头的反应/承接），但每行 character / scene 数量都不得超过上限。
-- 字段意图：character1 / character2 是这一行需要参考其外形 / 表演的核心人物，不是路人。背景群演不要塞进 character 字段。
+- 每一行 row 只能承载 **一个场景 (scene)**，角色放进 **`characters` 数组**，**至多 6 位**主要角色。
+- **群体同框（女团/小队/群戏）就把所有出镜成员都列进同一行的 `characters` 数组**（例：五人女团在一个舞台镜头里 → 该行 `characters` 有 5 个成员，不要只填 2 个、也不要为凑数拆成多行）。只有当同一 beat 出镜角色**超过 6 个**时才拆行。
+- 如果一个 beat 跨越两个空间（例：从屋内拍到屋外），**必须为每个空间各开一行 row**，scene 字段填该行实际所在的那一个，不要把两个场景塞进同一个 scene.description。
+- 拆分原则：保持因果与情绪连续（A 行结尾的动作 → B 行开头的反应/承接），但每行 characters 数量不得超过 6、scene 只能一个。
+- 字段意图：`characters` 数组里是这一行需要参考其外形 / 表演的核心人物，不是路人。背景群演不要塞进 characters。道具同理放进 `props` 数组（至多 6 个）。
 
 【多格导演分镜图与长视频 row 规则】
 - **默认节奏：绝大多数 row 应落在 10-15 秒。** 不要把内容机械拆成一堆 2-3 秒碎镜。只有用户显式快剪 / RAPID CUTS / 明确的强节奏点才允许 row < 10s（仍 ≥ 2s）。
@@ -48,6 +49,7 @@ director-agent / generate-storyboard-table
 - 一旦**场景发生变化**（换地点 / 换空间），必须**另起一个新的 row**——不要把两个场景塞进同一个 row。
 - 每个 row 的 storyboard_prompts 必须生成一张"多格导演分镜图 / multi-panel director storyboard sheet/grid"，而不是单张电影 still。
 - 多格数量必须根据时长和节奏自动决定：10-15秒 或包含多个 cut 的 row 需要更多格，覆盖完整起承转合；每个 cut 至少一格。
+- **高强度动作镜头（打斗 / 交锋 / 追逐 / 格挡 / 拔刀挥剑 / 搏斗等）必须用约 25 格快切**，而且必须写成**两人来回交锋回合（不是分离的高光集锦）**：主动权在两名角色之间每 1-2 格交替一次——甲出招→乙格挡/招架→兵器相击迸火星→乙反击→甲闪避/换位→反转→打击定格→再起新回合。25 格里要有**至少 4 个完整来回回合**、**至少 4 次力量反转**（节奏波：压制→反转→再压制→终结）、**至少一半（约 13 格）出现兵器碰撞/身体接触**（兵器相击/格挡震手/擒拿/缠斗/命中），不要一格里只站一个人摆造型。**禁止从一招直接跳到结果**（例如"扑出→剑已抵咽喉"），中间被省略的交锋必须补全成多个连续回合。每格用**六要素**精确描述（景别/构图/运镜/画面内容精确到兵器轨迹与火星血花飞溅方向/光影/打击感），格与格之间用**匹配剪辑**（上一格末帧惯性动作无缝滑入下一格）、高速动作画**能量残影/速度线**、节奏走**定格-加速-定格**。这类 row 的 storyboard_prompts 要显式写成约 25 格 / 25-panel。非动作镜头（对话 / 情绪 / 建立 / 收束）维持按时长节奏选 3-6 格即可。
 - 每格必须写清 timing slice、构图、机位/焦段/光圈、运镜、角色调度、视线/轴线、景深、转场，以及这一格新增的视觉信息或情绪信息。同 row 内相邻两格如果是不同 cut，要写清楚它们之间是硬切 / 匹配剪辑 / 运镜衔接。
 - 允许轻微重复：为了保持连续性，角色姿态、空间方向、道具位置可以轻微重复；不要把这种连续性误判为单调。
 - 合并后的 row 必须保持同场景内的强一致动作情节：动作因果、角色目标、视线方向、空间轴线和情绪递进要连续，即便切了机位也不得跳戏 / 跳场。
@@ -62,7 +64,7 @@ director-agent / generate-storyboard-table
 - **第一行**：`transition_note` 写开场处理（冷开场 / 定场镜头 / 渐入等）。
 - `transition_note` 的设计必须落到画面：本行 `storyboard_prompts` 的**开头格**要体现这里写的过渡手法；独立 row 的**结尾格**要体现 ~1s 留白；`motion_prompts` 也要相应带上开头过渡与结尾留白，让最终视频真的有过渡和呼吸。
 
-重要：每行的 character1/character2 的 description 和 image_prompt 必须使用前面角色提取步骤中的详细描述，
+重要：每行 `characters` 数组里每个角色的 description 必须使用前面角色提取步骤中的详细描述，
 scene 的 description 必须使用场景提取步骤中的详细描述。这样才能确保后续生成图片时角色和场景一致。
 
 每行格式：
@@ -81,19 +83,23 @@ scene 的 description 必须使用场景提取步骤中的详细描述。这样�
   "lighting_atmosphere": "光影氛围",
   "dialogue": "对白",
   "transition_note": "相对上一行的衔接设计：换场景→开头过渡手法（点名是对白关键词呼应/匹配剪辑/场景穿越/动作衔接等）+ 本行结尾~1s留白；同场景连续→画面构图衔接（机位/景别/视线/角色位置如何承接上一行收尾画面）；第一行写开场处理",
-  "storyboard_prompts": "english prompt for a multi-panel director storyboard sheet/grid, not a single still; include style: {{artStyle}}; choose panel count by duration/rhythm; a single same-scene row may contain multiple cuts (the opening panel must realize the transition device noted in transition_note; for a scene-change row reserve ~1s hold/breath in the final panel); each panel includes timing slice, composition, camera angle/lens/aperture/movement, blocking, eye-line/axis, depth of field, transition, and new visual/emotional information; this is storyboard guidance, not final split-screen video",
+  "storyboard_prompts": "english prompt for a multi-panel director storyboard sheet/grid, not a single still; include style: {{artStyle}}; choose panel count by duration/rhythm — but HIGH-INTENSITY ACTION shots (fight/duel/chase/parry/slash/brawl) MUST use ~25 panels authored as a TWO-FIGHTER EXCHANGE (来回交锋回合), NOT a montage of separated solo highlights: initiative alternates between the two combatants every 1-2 panels (attack→parry→weapons-clash→riposte→dodge/reposition→reversal→new round), ≥4 full exchange rounds and ≥4 power reversals (节奏波: dominate→reverse→dominate→finish), at least half (~13) of the panels show physical contact / weapon collision (clashing/blocking/grappling/landing hits), impact frames get their own frozen panel; use match-cut continuity (each panel flows from the previous panel's end-inertia, no pause), draw motion trails/speed lines on fast moves, rhythm is freeze-accelerate-freeze; never jump straight from a strike to its result — fill the skipped exchange with continuous rounds; never 3-6 panels which reads as slow motion; a single same-scene row may contain multiple cuts (the opening panel must realize the transition device noted in transition_note; for a scene-change row reserve ~1s hold/breath in the final panel); each panel includes timing slice, composition, camera angle/lens/aperture/movement, blocking, eye-line/axis, depth of field, transition, and new visual/emotional information; this is storyboard guidance, not final split-screen video",
   "motion_prompts": "english video motion prompt following the panel progression from storyboard_prompts; open with the transition_note device, end a scene-change row with ~1s hold/breath; include camera movement motivated by emotion_atmosphere and character_motivation; interpret the storyboard grid sequentially (including cut changes), not as a literal split-screen",
-  "character1": { "image": "", "description": "从角色提取结果复制完整描述" },
-  "character2": { "image": "", "description": "从角色提取结果复制完整描述" },
-  "prop1": { "image": "", "description": "道具描述" },
-  "prop2": { "image": "", "description": "" },
+  "characters": [
+    { "image": "[node:xxxxxx] 或留空", "description": "从角色提取结果复制完整描述" }
+    // …本行所有出镜主要角色，至多 6 个；群戏就全列进来
+  ],
+  "props": [
+    { "image": "[node:xxxxxx] 或留空", "description": "道具描述" }
+    // …本行出镜道具，至多 6 个
+  ],
   "scene": { "image": "", "description": "从场景提取结果复制完整描述" }
 }
 
 字段硬约束：
 - 每一行的 duration ∈ [2, 15]（秒）。任何超出区间的行都视为违反硬约束，整张表作废。
 - 所有 row 的 duration 字段之和必须等于 {{totalDurationSeconds}} 秒（容差 ±0.5s）。这是 hard constraint，违反则整张表作废。
-- **每一行只能填 1 个 scene + 至多 2 个 character (character1, character2)**。剧本同一 beat 有 3+ 角色 → 拆成多行；跨 2 个场景 → 拆成多行。违反则整张表作废。
+- **每一行只能填 1 个 scene；角色放进 `characters` 数组，至多 6 个；道具放进 `props` 数组，至多 6 个**。群戏/女团同框就把所有出镜成员列进 `characters`（别只填 2 个）；出镜角色 >6 或跨 2 个场景 → 才拆成多行。违反则整张表作废。
 - emotion_atmosphere 不等于 lighting_atmosphere；前者是情绪/氛围目标，后者是光影实现。
 - character_motivation 必须回答"为什么这样表演/行动"。
 - character_psychology 必须回答"心理纠结/潜台词/处境压力"。

@@ -221,6 +221,30 @@ export interface GenerateIdentitySheetRequest {
   /** The character this sheet locks. imageUrls = existing asset images
    *  (identity anchors — face/costume must match them exactly). */
   character: KeyframeCharacterRef
+  /**
+   * Identity sheets already generated for the SAME character on other
+   * rows. Shipped as costume/detail CANON references so every sheet
+   * repeats the same accessories (玉佩、绣纹、系带…) instead of
+   * re-inventing small details per row — the root cause of cross-row
+   * costume drift.
+   */
+  priorSheetUrls?: string[]
+  /**
+   * THIS row's dramatic context. Without it the sheet's silhouettes /
+   * expressions / views are generic; with it they preview the actions,
+   * camera angles and emotional beat the row will actually shoot.
+   */
+  rowContext?: {
+    shotNumber?: string
+    /** row.character_actions */
+    actions?: string
+    /** row.shot_size */
+    shotSize?: string
+    /** row.emotion_atmosphere */
+    emotionAtmosphere?: string
+    /** row.performance_guidance */
+    performanceGuidance?: string
+  }
   /** Prop references from the same row. Rendered in the scale strip so
    *  the character↔prop 比例 is fixed once and reused by later shots. */
   props?: KeyframePropRef[]

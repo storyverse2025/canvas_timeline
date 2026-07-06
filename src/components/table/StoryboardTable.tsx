@@ -16,7 +16,7 @@ import { VoiceFeedbackButton, type VoicePlan } from '@/components/canvas/VoiceFe
 import { useAssetStore } from '@/stores/asset-store'
 import { useCanvasStore } from '@/stores/canvas-store'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
-import type { StoryboardRow, ElementSlot } from '@/types/storyboard'
+import { EMPTY_ELEMENT_SLOT, MAX_ROW_CHARACTERS, MAX_ROW_PROPS, normalizeRowSlots, rowCharacters, rowIdentitySheets, rowProps, withIdentitySheet, type StoryboardRow, type ElementSlot } from '@/types/storyboard'
 import { computeMergeGroups, mergeRowGroup } from '@/lib/storyboard-merge'
 import { thumb } from '@/lib/thumb'
 
@@ -38,10 +38,8 @@ const COLUMNS: Col[] = [
   { key: 'reference_image',     label: '黑白故事板',    width: 'w-28',  type: 'media-image' },
   { key: 'keyframe_clean',      label: '开场构图',      width: 'w-28',  type: 'media-image' },
   { key: 'shot_size',           label: '景别',          width: 'w-24',  type: 'text' },
-  { key: 'character1',          label: '角色1',         width: 'w-40',  type: 'element' },
-  { key: 'character2',          label: '角色2',         width: 'w-40',  type: 'element' },
-  { key: 'prop1',               label: '道具1',         width: 'w-40',  type: 'element' },
-  { key: 'prop2',               label: '道具2',         width: 'w-40',  type: 'element' },
+  { key: 'characters',          label: '角色',          width: 'w-44',  type: 'element' },
+  { key: 'props',               label: '道具',          width: 'w-44',  type: 'element' },
   { key: 'scene',               label: '场景',          width: 'w-40',  type: 'element' },
   { key: 'character_actions',   label: '角色动作',      width: 'w-48',  type: 'multiline' },
   { key: 'emotion_mood',        label: '情绪',          width: 'w-28',  type: 'text' },
@@ -236,6 +234,24 @@ function ElementCell({ slot: rawSlot, onChange, identity }: {
 export function StoryboardTable() {
   const rows = useStoryboardStore((s) => s.rows)
   const updateRow = useStoryboardStore((s) => s.updateRow)
+  // Patch the i-th character/prop slot in the canonical array, then re-normalize
+  // so the legacy character1/2 + prop1/2 fields stay mirrored to the first two
+  // (keeps un-migrated readers + persisted schema consistent). Editing the
+  // trailing empty cell appends a new member/prop.
+  const updateArraySlot = useCallback(
+    (row: StoryboardRow, key: 'characters' | 'props', index: number, patch: Partial<ElementSlot>) => {
+      const cap = key === 'characters' ? MAX_ROW_CHARACTERS : MAX_ROW_PROPS
+      if (index >= cap) return
+      const base: ElementSlot[] = [...((row[key] as ElementSlot[] | undefined) ?? [])]
+      while (base.length <= index) base.push({ ...EMPTY_ELEMENT_SLOT })
+      base[index] = { ...base[index]!, ...patch }
+      const norm = normalizeRowSlots({ ...row, [key]: base })
+      updateRow(row.id, key === 'characters'
+        ? { characters: norm.characters, character1: norm.character1, character2: norm.character2 }
+        : { props: norm.props, prop1: norm.prop1, prop2: norm.prop2 })
+    },
+    [updateRow],
+  )
   const clear = useStoryboardStore((s) => s.clear)
   const setActiveTab = useViewStore((s) => s.setActiveTab)
   const setPlayhead = useTimelineStore((s) => s.setPlayheadTime)
@@ -402,10 +418,8 @@ export function StoryboardTable() {
       if (refs.some((r) => r.url === url)) return
       refs.push({ role, description, url })
     }
-    push('角色1', row.character1?.description ?? '', row.character1?.image)
-    push('角色2', row.character2?.description ?? '', row.character2?.image)
-    push('道具1', row.prop1?.description ?? '',      row.prop1?.image)
-    push('道具2', row.prop2?.description ?? '',      row.prop2?.image)
+    rowCharacters(row).forEach((s, i) => push(`角色${i + 1}`, s.description ?? '', s.image))
+    rowProps(row).forEach((s, i) => push(`道具${i + 1}`, s.description ?? '', s.image))
     push('场景',  row.scene?.description ?? '',      row.scene?.image)
     push('参考',  '',                                row.reference_image)
     const legend = refs.length
@@ -598,49 +612,47 @@ export function StoryboardTable() {
                     <td className="px-2 py-2 border-b border-zinc-900">
                       <TextCell value={r.shot_size} onChange={(v) => updateRow(r.id, { shot_size: v })} />
                     </td>
-                    {/* 角色1（含身份版条：生成后画布上 角色节点 → 身份版节点 连边） */}
-                    <td className="px-2 py-2 border-b border-zinc-900">
-                      <ElementCell slot={r.character1 ?? { image: '', description: '', nodeId: '' }}
-                        onChange={(p) => updateRow(r.id, { character1: { ...(r.character1 ?? { image: '', description: '', nodeId: '' }), ...p } })}
-                        identity={{
-                          url: r.identitySheet1Url,
-                          busy: idBusy,
-                          onGenerate: () => generateIdentitySheets(r, 1),
-                          onPick: (picked) => {
-                            updateRow(r.id, { identitySheet1Url: picked.url, identitySheet1NodeId: picked.nodeId })
-                            // Manually-picked sheets get the same canvas provenance
-                            // as generated ones: character asset node → sheet node.
-                            if (r.character1?.nodeId && picked.nodeId) {
-                              useCanvasStore.getState().addEdge(r.character1.nodeId, picked.nodeId)
-                            }
-                          },
-                        }} />
+                    {/* 角色（单列，可放多个角色；每个成员各自一张身份版） */}
+                    <td className="px-2 py-2 border-b border-zinc-900 align-top">
+                      <div className="space-y-2">
+                        {(() => {
+                          const chars = r.characters?.length ? r.characters : rowCharacters(r)
+                          // Existing members + one trailing empty cell to add another (until the cap).
+                          const cells = [...chars]
+                          if (cells.length < MAX_ROW_CHARACTERS) cells.push({ ...EMPTY_ELEMENT_SLOT })
+                          const sheetUrls = rowIdentitySheets(r)
+                          const lastRealIdx = chars.length - 1
+                          return cells.map((slot, i) => (
+                            <ElementCell key={i} slot={slot}
+                              onChange={(p) => updateArraySlot(r, 'characters', i, p)}
+                              // Real members (not the trailing "add" cell) each get their own
+                              // identity-sheet strip → per-member 身份版.
+                              identity={i <= lastRealIdx ? {
+                                url: sheetUrls[i],
+                                busy: idBusy,
+                                onGenerate: () => generateIdentitySheets(r, i + 1),
+                                onPick: (picked) => {
+                                  updateRow(r.id, withIdentitySheet(r, i, picked.url, picked.nodeId ?? ''))
+                                  if (slot.nodeId && picked.nodeId) useCanvasStore.getState().addEdge(slot.nodeId, picked.nodeId)
+                                },
+                              } : undefined} />
+                          ))
+                        })()}
+                      </div>
                     </td>
-                    {/* 角色2 */}
-                    <td className="px-2 py-2 border-b border-zinc-900">
-                      <ElementCell slot={r.character2 ?? { image: '', description: '', nodeId: '' }}
-                        onChange={(p) => updateRow(r.id, { character2: { ...(r.character2 ?? { image: '', description: '', nodeId: '' }), ...p } })}
-                        identity={{
-                          url: r.identitySheet2Url,
-                          busy: idBusy,
-                          onGenerate: () => generateIdentitySheets(r, 2),
-                          onPick: (picked) => {
-                            updateRow(r.id, { identitySheet2Url: picked.url, identitySheet2NodeId: picked.nodeId })
-                            if (r.character2?.nodeId && picked.nodeId) {
-                              useCanvasStore.getState().addEdge(r.character2.nodeId, picked.nodeId)
-                            }
-                          },
-                        }} />
-                    </td>
-                    {/* 道具1 */}
-                    <td className="px-2 py-2 border-b border-zinc-900">
-                      <ElementCell slot={r.prop1 ?? { image: '', description: '', nodeId: '' }}
-                        onChange={(p) => updateRow(r.id, { prop1: { ...(r.prop1 ?? { image: '', description: '', nodeId: '' }), ...p } })} />
-                    </td>
-                    {/* 道具2 */}
-                    <td className="px-2 py-2 border-b border-zinc-900">
-                      <ElementCell slot={r.prop2 ?? { image: '', description: '', nodeId: '' }}
-                        onChange={(p) => updateRow(r.id, { prop2: { ...(r.prop2 ?? { image: '', description: '', nodeId: '' }), ...p } })} />
+                    {/* 道具（单列，可放多个道具） */}
+                    <td className="px-2 py-2 border-b border-zinc-900 align-top">
+                      <div className="space-y-2">
+                        {(() => {
+                          const props = r.props?.length ? r.props : rowProps(r)
+                          const cells = [...props]
+                          if (cells.length < MAX_ROW_PROPS) cells.push({ ...EMPTY_ELEMENT_SLOT })
+                          return cells.map((slot, i) => (
+                            <ElementCell key={i} slot={slot}
+                              onChange={(p) => updateArraySlot(r, 'props', i, p)} />
+                          ))
+                        })()}
+                      </div>
                     </td>
                     {/* 场景 */}
                     <td className="px-2 py-2 border-b border-zinc-900">

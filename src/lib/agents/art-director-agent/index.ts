@@ -218,7 +218,11 @@ export async function generateOneImage(
   imgCtx: AssetImageContext,
   ctx: ProjectContext,
   timeoutMs: number,
-): Promise<{ url: string | undefined; prompt: string }> {
+  // Character images opt in: register the generated face as a BytePlus 开白
+  // asset (its OWN likeness, not a stranger's) and bind the character → asset
+  // so downstream 身份版/关键帧/视频 ship asset:// and pass the privacy filter.
+  registerAsCharacter = false,
+): Promise<{ url: string | undefined; prompt: string; byteplusAssetId?: string; byteplusAssetActive?: boolean }> {
   // ALWAYS run the template. The earlier `image_prompt ? raw : template`
   // short-circuit meant the LLM-built image_prompt bypassed every
   // template directive (360° + NO HUMANS + turnaround + no-face). With
@@ -237,16 +241,85 @@ export async function generateOneImage(
   })
   void ctx
   const label = `art-director text-to-image (${element.name})`
-  const r = await withTimeout(
-    runCapability({
-      capability: 'text-to-image',
-      inputs: [{ kind: 'text', text: prompt }],
-      params: { aspect: imgCtx.aspect, ...(imgCtx.extraParams ?? {}) },
-    }),
-    timeoutMs,
-    label,
-  )
-  return { url: r.outputs[0]?.url, prompt }
+  // Backend fallback chain: the default (Apimart) provider frequently times
+  // out / 500s on the shared box, which used to silently kill asset-image
+  // generation (empty node → downstream keyframe/storyboard choke on the
+  // missing image). Mirror the keyframe nano-banana fallback so an Apimart
+  // failure retries on Gemini instead of dropping the asset. The register
+  // param rides whichever backend succeeds, so the 开白 asset is still created.
+  const IMAGE_BACKENDS: Array<Record<string, unknown>> = [
+    {}, // default provider/model (env-configured; director pins gpt-image elsewhere)
+    { provider: 'gemini', model: 'google/gemini-3.1-flash-image-preview' }, // nano-banana fallback
+  ]
+  let r: Awaited<ReturnType<typeof runCapability>> | undefined
+  let lastErr: unknown
+  const lastIdx = IMAGE_BACKENDS.length - 1
+  for (let i = 0; i < IMAGE_BACKENDS.length; i++) {
+    try {
+      const attempt = await withTimeout(
+        runCapability({
+          capability: 'text-to-image',
+          inputs: [{ kind: 'text', text: prompt }],
+          params: {
+            aspect: imgCtx.aspect,
+            ...(imgCtx.extraParams ?? {}),
+            ...IMAGE_BACKENDS[i],
+            ...(registerAsCharacter ? { registerByteplusAssetName: element.name } : {}),
+          },
+        }),
+        timeoutMs,
+        label,
+      )
+      r = attempt
+      if (attempt.outputs[0]?.url) {
+        if (i > 0) console.warn(`[art-director] ${element.name} used fallback image backend ${JSON.stringify(IMAGE_BACKENDS[i])}`)
+        break
+      }
+      // No exception but no url either — retry on the next backend; on the
+      // last backend keep the (empty) result so the caller degrades gracefully
+      // to an undefined img_url instead of throwing.
+      if (i < lastIdx) console.warn(`[art-director] image backend ${i} returned no url for ${element.name}; trying nano-banana fallback`)
+    } catch (e) {
+      lastErr = e
+      if (i < lastIdx) {
+        console.warn(`[art-director] image backend ${i} failed for ${element.name} (${String((e as Error)?.message ?? e).slice(0, 120)}); trying nano-banana fallback`)
+      }
+    }
+  }
+  // Only throw when EVERY backend raised (timeouts/500s). A graceful empty
+  // result (no url, no exception) returns an undefined img_url as before.
+  if (!r) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr ?? 'art-director: image generation failed'))
+  const url = r.outputs[0]?.url
+  const out0 = r.outputs[0] as { byteplusAssetId?: string; byteplusAssetActive?: boolean } | undefined
+  const byteplusAssetId = out0?.byteplusAssetId
+  const byteplusAssetActive = out0?.byteplusAssetActive ?? false
+  // Bind character → freshly-registered asset (name-keyed; read by 身份版 /
+  // keyframe / video) AND record it in the local 开白 registry (the source of
+  // truth for "my own generated + 开白'd characters", surfaced in the node
+  // picker and merged into the shoot's asset pool). Best-effort + lazy imports
+  // to keep this agent module free of a static store / DOM dependency.
+  if (registerAsCharacter && byteplusAssetId) {
+    try {
+      const [{ useProjectDB }, { canonicalCharacterName }, { recordLocalByteplusAsset }] = await Promise.all([
+        import('@/stores/project-db'),
+        import('@/lib/virtual-avatar-library'),
+        import('@/lib/byteplus-local-assets'),
+      ])
+      const key = canonicalCharacterName(element.name)
+      if (key) {
+        const db = useProjectDB.getState()
+        const bindings = db.script.characterAvatarBindings ?? {}
+        db.updateScript({ characterAvatarBindings: { ...bindings, [key]: byteplusAssetId } })
+      }
+      recordLocalByteplusAsset({
+        id: byteplusAssetId,
+        name: element.name,
+        previewUrl: url,
+        active: byteplusAssetActive,
+      })
+    } catch { /* binding/registry are best-effort — the image still generated fine */ }
+  }
+  return { url, prompt, byteplusAssetId, byteplusAssetActive }
 }
 
 export async function* generateAssetImages(
@@ -265,12 +338,34 @@ export async function* generateAssetImages(
   const sceneLimit = cap.scenes ?? out.scenes.length
   const propLimit = cap.props ?? out.props.length
 
+  // A character is "done" only if it has an image AND is already bound to a
+  // 开白 asset. Registration needs a FRESH public provider URL (BytePlus can't
+  // fetch localhost /uploads/), so an already-localized image can't be
+  // registered after the fact — the only way to whitelist an unbound existing
+  // character is to regenerate it here. So skip only fully-registered ones;
+  // regenerate the rest so their OWN face gets 开白'd (else the video trips the
+  // real-person privacy filter). Read bindings once, best-effort.
+  let boundKeys = new Set<string>()
+  let canonName: (n: string) => string = (n) => n
+  try {
+    const [{ useProjectDB }, { canonicalCharacterName }] = await Promise.all([
+      import('@/stores/project-db'),
+      import('@/lib/virtual-avatar-library'),
+    ])
+    canonName = canonicalCharacterName
+    boundKeys = new Set(Object.keys(useProjectDB.getState().script.characterAvatarBindings ?? {}))
+  } catch { /* store unavailable (tests) — treat nothing as bound */ }
+
   for (let i = 0; i < Math.min(out.characters.length, charLimit); i++) {
     const ch = out.characters[i]!
-    if (skipIfDone && ch.img_url) continue
-    yield { type: 'progress', message: `art-director: generating character image ${ch.name}` }
+    if (skipIfDone && ch.img_url && boundKeys.has(canonName(ch.name))) continue
+    const regen = Boolean(ch.img_url) // had an image but wasn't bound → regenerating to 开白
+    yield {
+      type: 'progress',
+      message: `art-director: ${regen ? '重新生成并开白' : 'generating'} character image ${ch.name}`,
+    }
     try {
-      const { url, prompt } = await generateOneImage(
+      const { url, prompt, byteplusAssetId, byteplusAssetActive } = await generateOneImage(
         ch,
         {
           artStyle: req.artStyle,
@@ -283,10 +378,16 @@ export async function* generateAssetImages(
         },
         ctx,
         ASSET_TIMEOUT_MS.character,
+        true, // registerAsCharacter → auto 开白 register + bind
       )
       ch.img_url = url
       ch.generation_prompt = prompt
-      yield { type: 'progress', message: `art-director: ✓ character ${ch.name} ready` }
+      yield {
+        type: 'progress',
+        message: byteplusAssetId
+          ? `art-director: ✓ character ${ch.name} ready — 开白 asset ${byteplusAssetId}${byteplusAssetActive ? ' (Active)' : ' (Processing…)'}`
+          : `art-director: ✓ character ${ch.name} ready — ⚠️ 开白注册未成功（视频可能触发真人风控）`,
+      }
     } catch (e) {
       const msg = (e as Error).message
       ctx.log(`art-director: ✗ character ${ch.name} image failed: ${msg}`)

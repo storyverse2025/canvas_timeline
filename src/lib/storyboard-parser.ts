@@ -1,7 +1,7 @@
 import { useCanvasStore } from '@/stores/canvas-store'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { useAssetStore } from '@/stores/asset-store'
-import { validateStoryboard, type StoryboardRowInput, type StoryboardValidationResult } from '@/types/storyboard'
+import { normalizeRowSlots, validateStoryboard, type ElementSlot, type StoryboardRowInput, type StoryboardValidationResult } from '@/types/storyboard'
 
 const SHORT_ID_RE = /\b([0-9a-f]{6,8})\b/i
 
@@ -209,21 +209,29 @@ export function parseAndValidateStoryboard(response: string): ParseResult {
     // `??`) so the empty string falls through to the original short-id —
     // resolveSlotNode at keyframe time will re-resolve via slot.nodeId from
     // the live item store, and a future re-parse will also recover.
-    for (const slotKey of ['character1', 'character2', 'prop1', 'prop2', 'scene'] as const) {
-      const slot = out[slotKey]
-      if (!slot || typeof slot !== 'object') continue
-      const img = String(slot.image ?? '').trim()
-      if (!img || /^https?:\/\//i.test(img) || img.startsWith('data:')) continue
+    const resolveSlot = (slot: unknown): ElementSlot | undefined => {
+      if (!slot || typeof slot !== 'object') return undefined
+      const s = slot as ElementSlot
+      const img = String(s.image ?? '').trim()
+      if (!img || /^https?:\/\//i.test(img) || img.startsWith('data:')) return undefined
       const sm = img.match(SHORT_ID_RE)
-      if (!sm) continue
+      if (!sm) return undefined
       const ref = resolveCanvasReference(sm[1])
-      out[slotKey] = {
-        image: ref.url || img,
-        description: slot.description ?? '',
-        nodeId: ref.nodeId ?? slot.nodeId ?? '',
-      }
+      return { image: ref.url || img, description: s.description ?? '', nodeId: ref.nodeId ?? s.nodeId ?? '' }
     }
-    return out
+    for (const slotKey of ['character1', 'character2', 'prop1', 'prop2', 'scene'] as const) {
+      const resolved = resolveSlot(out[slotKey])
+      if (resolved) out[slotKey] = resolved
+    }
+    // Same short-id resolution for the canonical multi-slot arrays.
+    for (const arrKey of ['characters', 'props'] as const) {
+      const arr = out[arrKey]
+      if (!Array.isArray(arr)) continue
+      out[arrKey] = arr.map((slot) => resolveSlot(slot) ?? slot)
+    }
+    // Reconcile arrays ↔ legacy pair fields (back-fills arrays for old
+    // storyboards, mirrors first-two onto character1/2 + prop1/2).
+    return normalizeRowSlots(out)
   })
 
   return { ok: true, rows }

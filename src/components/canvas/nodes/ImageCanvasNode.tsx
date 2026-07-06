@@ -2,13 +2,16 @@ import { memo, useRef, useState, useCallback } from 'react'
 import { Handle, Position, NodeResizer, useNodeId } from '@xyflow/react'
 import { toast } from 'sonner'
 import { NodeFloatingToolbar } from '../NodeFloatingToolbar'
-import { ImageIcon, Upload, Link as LinkIcon, User, MapPin, Package, Film, Mic, Star } from 'lucide-react'
+import { ImageIcon, Upload, Link as LinkIcon, User, MapPin, Package, Film, Mic, Star, ShieldCheck } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { useCanvasStore } from '@/stores/canvas-store'
 import { useLibtvTasksStore } from '@/stores/libtv-tasks-store'
 import { useAssetStore } from '@/stores/asset-store'
 import { useStoryboardStore } from '@/stores/storyboard-store'
+import { useProjectDB } from '@/stores/project-db'
+import { canonicalCharacterName } from '@/lib/virtual-avatar-library'
+import { ByteplusAssetPickerDialog } from '@/components/director/ByteplusAssetPickerDialog'
 import { runCapability } from '@/lib/capabilities/client'
 import { VoiceFeedbackButton, type VoicePlan, type VoiceElementKind } from '@/components/canvas/VoiceFeedbackButton'
 import { PanoramaViewer } from '@/components/canvas/PanoramaViewer'
@@ -57,6 +60,15 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
   const isKeyframeItem = item?.role === 'keyframe'
   const isBeatVideoItem = item?.role === 'beat-video'
   const adoptable = isKeyframeItem || isBeatVideoItem
+
+  // 角色节点: 开白资产绑定入口 (source of truth — bind here and every
+  // downstream 身份版 / keyframe / video inherits via characterAvatarBindings).
+  const isCharacterItem = item?.role === 'character' || asset?.type === 'character'
+  const characterName = (asset?.name ?? item?.name ?? '').trim()
+  const [bpPickerOpen, setBpPickerOpen] = useState(false)
+  const boundAssetId = useProjectDB((s) =>
+    characterName ? s.script.characterAvatarBindings?.[canonicalCharacterName(characterName)] : undefined,
+  )
   const adoptedRowId = useStoryboardStore((s) => {
     if (!item?.content) return undefined
     if (isKeyframeItem) return s.rows.find((r) => r.keyframeUrl === item.content)?.id
@@ -244,6 +256,50 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
             compact
           />
         </div>
+      )}
+
+      {/* 角色节点: 开白资产绑定按钮 (top-right). Binding here is the source of
+          truth — the name-keyed characterAvatarBindings is read by 身份版 /
+          keyframe / video generation, so every downstream artifact inherits
+          it. Green ring when already bound. */}
+      {isCharacterItem && characterName && (
+        <div className="absolute top-1 right-1 z-20">
+          <button
+            title={boundAssetId ? `已绑定开白资产 · 点击更换（生成时携带 asset://${boundAssetId}）` : '绑定开白资产作为该角色（下游身份版/关键帧/视频自动继承，过隐私风控）'}
+            onClick={(e) => { e.stopPropagation(); setBpPickerOpen(true) }}
+            className={cn(
+              'p-1 rounded shadow-sm text-white',
+              boundAssetId ? 'bg-emerald-600 ring-1 ring-emerald-300' : 'bg-black/50 hover:bg-emerald-700',
+            )}
+          >
+            <ShieldCheck className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {isCharacterItem && (
+        <ByteplusAssetPickerDialog
+          open={bpPickerOpen}
+          characterName={characterName}
+          onClose={() => setBpPickerOpen(false)}
+          onPick={(bpAsset) => {
+            // Set this character node's image to the asset preview AND bind
+            // the character → asset (name-keyed) so downstream inherits.
+            if (bpAsset.previewUrl) {
+              updateItem(data.itemId, { content: bpAsset.previewUrl })
+              if (data.assetId) updateAsset(data.assetId, { imageUrl: bpAsset.previewUrl })
+            }
+            const key = canonicalCharacterName(characterName)
+            if (key) {
+              const db = useProjectDB.getState()
+              const bindings = db.script.characterAvatarBindings ?? {}
+              db.updateScript({ characterAvatarBindings: { ...bindings, [key]: bpAsset.id } })
+              toast.success(`已绑定开白资产给「${characterName.split(/[，,。\n]/)[0]}」`, {
+                description: `角色图已更新；身份版/关键帧/视频将自动携带 asset://${bpAsset.id}`,
+              })
+            }
+          }}
+        />
       )}
 
       {/* Typed badge — only when this image node is the canvas representation of an asset */}

@@ -57,6 +57,33 @@ describe('matchAssetsToCharacters', () => {
     expect(refs[0]?.slotLabel).toBe('角色1')
   })
 
+  it('explicit binding beats name matching — required because console asset names are machine hashes', () => {
+    const assets = [
+      asset({ id: 'asset-hash', name: 'keyframe_4fcae3d7' }), // real-world name shape
+      asset({ id: 'asset-named', name: '艾琳' }),
+    ]
+    const refs = matchAssetsToCharacters(
+      [{ slotLabel: '角色1', name: '艾琳 (Erin)' }],
+      assets,
+      { [/* canonicalCharacterName('艾琳 (Erin)') */ '艾琳']: 'asset-hash' },
+    )
+    expect(refs).toEqual([
+      { assetUri: 'asset://asset-hash', characterName: '艾琳 (Erin)', slotLabel: '角色1' },
+    ])
+  })
+
+  it('a binding to a non-Active or unknown asset falls back to name matching', () => {
+    const refs = matchAssetsToCharacters(
+      [{ slotLabel: '角色1', name: '艾琳' }],
+      [
+        asset({ id: 'asset-dead', name: 'x', status: 'Failed' }),
+        asset({ id: 'asset-named', name: '艾琳' }),
+      ],
+      { 艾琳: 'asset-dead' },
+    )
+    expect(refs[0]?.assetUri).toBe('asset://asset-named')
+  })
+
   it('skips empty slots and non-matching names without throwing', () => {
     const refs = matchAssetsToCharacters(
       [

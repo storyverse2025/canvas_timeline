@@ -53,7 +53,7 @@ export const SHOOT_PROVIDER = 'doubao'
 // art direction. Operators that explicitly want Fast pass the Fast id via
 // runShootBeatVideos's `model` param.
 export const SHOOT_MODEL = 'dreamina-seedance-2-0-260128'
-export const SHOOT_RESOLUTION_DEFAULT: '480p' | '720p' | '1080p' = '480p'
+export const SHOOT_RESOLUTION_DEFAULT: '480p' | '720p' | '1080p' = '1080p'
 const MIN_DURATION = 5
 const MAX_DURATION = 15
 
@@ -162,7 +162,7 @@ function buildMotionDescription(req: {
     cleanText(r.performance_guidance) ? `表演指导：${cleanText(r.performance_guidance)}` : '',
   ].filter(Boolean)
   if (performance.length) {
-    blocks.push(`【表演与情绪】\n${performance.join('\n')}\n要求落到眼神、呼吸、手部、身体重心、步伐节奏等可见表演。`)
+    blocks.push(`【表演与情绪】\n${performance.join('\n')}\n**面部表情必须清晰可见且随情绪逐拍变化**——镜头要给到脸，眼神/眉形/嘴型/下颌张力要演出上面的情绪，不能是面无表情的呆脸（面瘫会让画面出戏）。同时落到呼吸、手部、身体重心、步伐节奏等可见表演。`)
   }
 
   const motion = cleanText(r.motion_prompts)

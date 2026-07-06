@@ -10,6 +10,7 @@
 
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { useStoryboardStore } from '@/stores/storyboard-store'
+import { correctElementRole } from '@/lib/canvas-elements'
 import type { CanvasItem } from '@/stores/canvas-item-store'
 import type { StoryboardRow } from '@/types/storyboard'
 
@@ -32,7 +33,10 @@ export function findMissingAssets(): MissingAsset[] {
     if (item.kind !== 'image') continue
     if (item.content.trim()) continue
     if (item.role === 'character' || item.role === 'scene' || item.role === 'prop') {
-      out.push({ kind: item.role, name: item.name, itemId: item.id })
+      // Guard: a 场景/道具 mislabeled as 'character' must NOT regenerate with the
+      // character three-view portrait template (the 场景：悬空断桥 bug).
+      const kind = correctElementRole(item.name, item.role) as 'character' | 'scene' | 'prop'
+      out.push({ kind, name: item.name, itemId: item.id })
     }
   }
   return out
