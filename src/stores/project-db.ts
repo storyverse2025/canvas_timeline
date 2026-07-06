@@ -178,6 +178,11 @@ export interface Script {
    *  Consumed by cinematographer prompt augmentation + by the canvas audio
    *  node spawner so every character has a paired voice asset on the canvas. */
   voiceBindings?: Record<string, string>
+  /** canonical character name -> virtual-avatar asset id, set by the character
+   *  casting picker. For 真人 / live-action styles this pins which approved
+   *  BytePlus avatar stands in for each character (overrides the auto-matcher).
+   *  Consumed by src/lib/virtual-avatar-library resolveAvatarsForCharacters. */
+  characterAvatarBindings?: Record<string, string>
   /** User's answers to the script-agent ask-phase clarification questions.
    *  Captured per-run by director-assistant from dossier.clarifications and
    *  consumed by self-check stages (critique-timeline) so they can verify

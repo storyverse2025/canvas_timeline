@@ -7,6 +7,7 @@ describe('dispatch coverage', () => {
     'bridge-row-judge',
     'cinematography-describe',
     'freeform-text',
+    'storyboard-generation', 'voice-casting',
     'text-to-image', 'batch-image', 'smart-edit', 'inpaint', 'upscale-image', 'outpaint',
     'crop-image', 'shot-association', 'multi-angle', 'angle-adjust', 'pose-edit',
     'text-to-video', 'first-last-frame', 'multi-ref-video', 'universal-video',
@@ -26,9 +27,9 @@ describe('dispatch coverage', () => {
     }
   })
 
-  it('handler count matches capability count (33)', () => {
-    expect(expectedHandlers.length).toBe(33)
-    expect(CAPABILITIES.length).toBe(33)
+  it('handler count matches capability count (35)', () => {
+    expect(expectedHandlers.length).toBe(35)
+    expect(CAPABILITIES.length).toBe(35)
   })
 })
 

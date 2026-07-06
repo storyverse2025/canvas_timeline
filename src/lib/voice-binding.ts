@@ -12,7 +12,7 @@
  * if the voice changed); existing edges are not duplicated.
  */
 
-import { runAgentWithChatBridge } from '@/lib/agents/chat-bridge'
+import { runAgentValidated } from '@/lib/agents/chat-bridge'
 import { createMemoryContext } from '@/lib/agents/_shared/context/memory'
 import { createCapabilityLLM } from '@/lib/agents/_shared/llm/capability'
 import { castVoices, type VoiceBindings, type VoiceCandidateSummary } from '@/lib/agents/actor-agent'
@@ -60,18 +60,31 @@ export async function runCastVoicesAndSpawnAudio(args: CastVoicesArgs): Promise<
     }))
   }
 
-  const ctx = createMemoryContext({ llm: createCapabilityLLM() })
-  const bindings = await runAgentWithChatBridge(
+  // Route through the dedicated `voice-casting` capability, NOT the default
+  // `element-extraction`. cast-voices.md carries the complete instruction
+  // (return `{characterName: voiceId}`), but element-extraction's hardcoded
+  // domain system prompt hijacks it and makes the model emit a 角色/场景/
+  // 道具/情绪/色彩/构图 element breakdown instead — which fails
+  // VoiceBindingsSchema and used to silently return {} (no 音色 nodes).
+  // voice-casting reinforces the {角色名: 音色id} contract; the
+  // runAgentValidated gate re-prompts the agent if a run still comes back
+  // empty / malformed instead of swallowing it.
+  // Fresh context per attempt (built inside makeGen): reusing one memory
+  // context across runAgentValidated retries feeds each retry the previous
+  // malformed turn.
+  const bindings = await runAgentValidated(
     'actor-agent',
-    castVoices(
-      {
-        castingCards: args.castingCards,
-        creativeBrief: args.creativeBrief,
-        candidatesPerCard,
-      },
-      ctx,
-    ),
-    { verb: 'cast-voices' },
+    () =>
+      castVoices(
+        {
+          castingCards: args.castingCards,
+          creativeBrief: args.creativeBrief,
+          candidatesPerCard,
+        },
+        createMemoryContext({ llm: createCapabilityLLM({ capabilityId: 'voice-casting' }) }),
+      ),
+    (b) => (Object.keys(b).length > 0 ? true : '没有产出任何「角色 → 音色」绑定'),
+    { verb: 'cast-voices', retries: 2 },
   )
 
   useProjectDB.getState().updateScript({ voiceBindings: bindings })

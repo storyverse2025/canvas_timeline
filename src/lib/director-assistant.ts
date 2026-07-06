@@ -19,7 +19,8 @@ import {
   critiqueTimeline as directorCritiqueTimeline,
   generateStoryboardTable as directorGenerateStoryboardTable,
 } from '@/lib/agents/director-agent'
-import { runAgentWithChatBridge } from '@/lib/agents/chat-bridge'
+import { runAgentWithChatBridge, runAgentValidated } from '@/lib/agents/chat-bridge'
+import { parseAndValidateStoryboard } from '@/lib/storyboard-parser'
 import { createMemoryContext } from '@/lib/agents/_shared/context/memory'
 import { createCapabilityLLM } from '@/lib/agents/_shared/llm/capability'
 export type StepStatus = 'pending' | 'running' | 'done' | 'error'
@@ -144,8 +145,16 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
     }
   })()
 
+  // Route through `freeform-text`, NOT the default `element-extraction`.
+  // Every agent driven by this ctx (script-agent expand, art-director
+  // style-bible, director-agent allocate/compose/storyboard/critique)
+  // ships a complete self-contained prompt. element-extraction's hardcoded
+  // domain system prompt hijacks those and makes the model emit a
+  // 角色/场景/道具/情绪/色彩/构图 element breakdown instead — which is fatal
+  // for generate-storyboard-table (raw passthrough → parseAndValidateStoryboard
+  // fails → 分镜表为空). Same fix as voice-binding.ts / session-title.ts.
   const agentCtx = createMemoryContext({
-    llm: createCapabilityLLM(),
+    llm: createCapabilityLLM({ capabilityId: 'freeform-text' }),
     snapshot: { style: { presetId: artDir.stylePreset, promptText: artStyle } },
   })
   const dossier = await runAgentWithChatBridge(
@@ -382,24 +391,42 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   // ScriptInputDialog / chat-intent will populate fresh rows on success.
   useStoryboardStore.getState().clear()
   setStep(state, 0, 11, 'running'); onUpdate(state)
-  const storyboardJson = await runAgentWithChatBridge(
+  // Dedicated `storyboard-generation` capability (reinforces the JSON-array
+  // contract) + validate→retry gate: generateStoryboardTable is a raw
+  // passthrough, so if a run comes back as anything parseAndValidateStoryboard
+  // can't turn into rows (e.g. an element-breakdown object), we re-prompt the
+  // agent instead of letting an empty 分镜表 slip through to the user.
+  // Fresh context PER ATTEMPT (inside makeGen): reusing one memory context
+  // across retries makes every retry see the previous malformed turn and
+  // converge on the same garbage.
+  const storyboardJson = await runAgentValidated(
     'director-agent',
-    directorGenerateStoryboardTable(
-      {
-        artStyle,
-        totalDurationSeconds,
-        characterDesigns,
-        sceneDesigns,
-        propDesigns,
-        shotAllocation,
-        shotComposition,
-        visualStrategy,
-        elementContext: elementCtx,
-        revisedScript,
-      },
-      agentCtx,
-    ),
-    { verb: 'generate-storyboard-table' },
+    () =>
+      directorGenerateStoryboardTable(
+        {
+          artStyle,
+          totalDurationSeconds,
+          characterDesigns,
+          sceneDesigns,
+          propDesigns,
+          shotAllocation,
+          shotComposition,
+          visualStrategy,
+          elementContext: elementCtx,
+          revisedScript,
+        },
+        createMemoryContext({
+          llm: createCapabilityLLM({ capabilityId: 'storyboard-generation' }),
+          snapshot: { style: { presetId: artDir.stylePreset, promptText: artStyle } },
+        }),
+      ),
+    (json) => {
+      const parsed = parseAndValidateStoryboard(json)
+      return parsed.ok && parsed.rows && parsed.rows.length > 0
+        ? true
+        : `分镜 JSON 无法解析为有效行（${(parsed.errors ?? ['未知']).slice(0, 2).join('; ')}）`
+    },
+    { verb: 'generate-storyboard-table', retries: 2 },
   )
   for (const issue of collectDurationIssues(storyboardJson, totalDurationSeconds)) {
     state.issues.push(issue)
@@ -479,7 +506,9 @@ async function runSelfCheck(state: PipelineState, storyboardJson: string, onUpda
     Math.ceil((totalDurationSeconds || 1) / 12),
   )
 
-  const agentCtx = createMemoryContext({ llm: createCapabilityLLM() })
+  // freeform-text: critique-timeline / critique-composition carry complete
+  // prompts; element-extraction would hijack them (see runOptimize note).
+  const agentCtx = createMemoryContext({ llm: createCapabilityLLM({ capabilityId: 'freeform-text' }) })
 
   // Source-of-truth anchors for "did the generator stay faithful to what
   // the user actually said?" The critic compares storyboard rows against:
@@ -543,28 +572,38 @@ async function runFix(state: PipelineState, storyboardJson: string, issues: stri
   }
 
   setStep(state, 2, 0, 'running'); onUpdate(state)
-  const agentCtx = createMemoryContext({ llm: createCapabilityLLM() })
-  const fixResult = await runAgentWithChatBridge(
-    'director-agent',
-    directorApplyTimelineFixes(
-      {
-        storyboardJson,
-        issues,
-        totalDurationSeconds: totalDurationSeconds || 0,
+  // Dedicated `storyboard-generation` capability + validate→retry.
+  // apply-timeline-fixes is a raw passthrough; element-extraction used to
+  // hijack it and OVERWRITE the good storyboard with a garbage element
+  // breakdown (the "乱"). We retry on unparseable output, and if every
+  // attempt still fails, fall back to the pre-fix table — fixing is optional,
+  // and a reviewable table beats an empty/garbage one.
+  let fixResult: string
+  try {
+    fixResult = await runAgentValidated(
+      'director-agent',
+      () =>
+        directorApplyTimelineFixes(
+          {
+            storyboardJson,
+            issues,
+            totalDurationSeconds: totalDurationSeconds || 0,
+          },
+          // Fresh context per attempt — see generate-storyboard-table above.
+          createMemoryContext({
+            llm: createCapabilityLLM({ capabilityId: 'storyboard-generation' }),
+          }),
+        ),
+      (json) => {
+        const parsed = parseAndValidateStoryboard(json)
+        return parsed.ok && parsed.rows && parsed.rows.length > 0
+          ? true
+          : '修复输出无法解析为有效分镜行'
       },
-      agentCtx,
-    ),
-    { verb: 'apply-timeline-fixes' },
-  )
-
-  // Defensive fallback: if the LLM's "fixed" output is unparseable, prefer
-  // the pre-fix JSON over a dropped run. The original table at least
-  // renders so the user can review + retry, instead of an empty Storyboard
-  // tab + a transient error toast that's easy to miss.
-  const { parseAndValidateStoryboard } = await import('@/lib/storyboard-parser')
-  const parsed = parseAndValidateStoryboard(fixResult)
-  if (!parsed.ok) {
-    state.fixes = [`修复失败，已保留未修复版本（apply-timeline-fixes 返回无法解析的 JSON）`]
+      { verb: 'apply-timeline-fixes', retries: 2 },
+    )
+  } catch {
+    state.fixes = [`修复失败，已保留未修复版本（apply-timeline-fixes 多次返回无法解析的 JSON）`]
     setStep(state, 2, 0, 'done', `修复失败：保留 ${issues.length} 个未修复问题，使用原始分镜表`); onUpdate(state)
     setStep(state, 2, 1, 'done', '回退到自检前的分镜表 JSON'); onUpdate(state)
     return storyboardJson

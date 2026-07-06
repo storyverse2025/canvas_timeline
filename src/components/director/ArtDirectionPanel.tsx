@@ -5,13 +5,20 @@ import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { useCanvasStore } from '@/stores/canvas-store'
 import { getArtStyle } from '@/lib/canvas-elements'
 import { toast } from 'sonner'
-import { Wand2 } from 'lucide-react'
+import { Wand2, UserCircle2, ShieldCheck } from 'lucide-react'
+import { useState } from 'react'
+import { isRealPersonStyle } from '@/lib/virtual-avatar-library'
+import { CharacterCastingDialog } from './CharacterCastingDialog'
+import { ByteplusAssetLibraryDialog } from './ByteplusAssetLibraryDialog'
 
 const ASPECTS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9']
 
 export function ArtDirectionPanel() {
   const art = useProjectDB((s) => s.artDirection)
   const update = useProjectDB((s) => s.updateArtDirection)
+  const [castingOpen, setCastingOpen] = useState(false)
+  const [assetLibOpen, setAssetLibOpen] = useState(false)
+  const realPerson = isRealPersonStyle(art.stylePreset)
 
   const imageModels = PROVIDERS.flatMap((p) => p.models.filter((m) => m.kind === 'image').map((m) => ({ provider: p.id, model: m.id, label: `${p.label} · ${m.label}` })))
   const videoModels = PROVIDERS.flatMap((p) => p.models.filter((m) => m.kind === 'video').map((m) => ({ provider: p.id, model: m.id, label: `${p.label} · ${m.label}` })))
@@ -37,6 +44,27 @@ export function ArtDirectionPanel() {
         <label className="text-[10px] text-muted-foreground uppercase mb-1 block">风格预设</label>
         <StylePresetsGrid value={art.stylePreset} onChange={(v) => update({ stylePreset: v })} />
       </div>
+
+      <div>
+        <button
+          onClick={() => setCastingOpen(true)}
+          className={`w-full flex items-center justify-center gap-1.5 text-[11px] px-2 py-1.5 rounded border ${realPerson ? 'border-emerald-400/50 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20' : 'border-border text-muted-foreground hover:bg-muted/40'}`}
+          title="真人 / 实拍风格：把每个角色绑定到 BytePlus 虚拟人像，避开内容审查"
+        >
+          <UserCircle2 className="w-3 h-3" />
+          虚拟人像选角{realPerson ? '（真人风格已启用）' : ''}
+        </button>
+        <button
+          onClick={() => setAssetLibOpen(true)}
+          className="mt-1.5 w-full flex items-center justify-center gap-1.5 text-[11px] px-2 py-1.5 rounded border border-border text-muted-foreground hover:bg-muted/40"
+          title="查看账号已开白的 BytePlus 真人资产，预览角色名匹配结果，并可把资产图加入画布"
+        >
+          <ShieldCheck className="w-3 h-3" />
+          开白真人资产库
+        </button>
+      </div>
+      <CharacterCastingDialog open={castingOpen} onClose={() => setCastingOpen(false)} />
+      <ByteplusAssetLibraryDialog open={assetLibOpen} onClose={() => setAssetLibOpen(false)} />
 
       <div>
         <label className="text-[10px] text-muted-foreground uppercase mb-1 block">自定义风格 (可选)</label>

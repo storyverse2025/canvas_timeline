@@ -10,6 +10,10 @@ describe('detectVideoType', () => {
     expect(detectVideoType({ images: ['https://a.png'], videos: [], audios: [] })).toBe('image-to-video-first')
   })
 
+  it('1 image with reference mode → reference-to-video (so avatar asset refs can be added)', () => {
+    expect(detectVideoType({ images: ['https://a.png'], videos: [], audios: [], mode: 'reference' })).toBe('reference-to-video')
+  })
+
   it('2 images default → image-to-video-first-last', () => {
     expect(detectVideoType({ images: ['a', 'b'], videos: [], audios: [] })).toBe('image-to-video-first-last')
   })

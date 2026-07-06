@@ -93,10 +93,19 @@ export async function quickGenerateMissingAssets(deps: QuickActionDeps): Promise
       // Synthesize a minimal element from item.name so the template's
       // buildDescription fallback can still produce a sensible prompt.
       const element = { name: m.name, image_prompt: '' } as Parameters<typeof artDirectorGenerateOneImage>[0]
-      const { url, prompt } = await artDirectorGenerateOneImage(element, imgCtx, ctx, timeoutMs)
+      // Characters auto 开白 (register OWN face + bind) so downstream video
+      // passes the real-person privacy filter — same as the pipeline path.
+      const isChar = m.kind === 'character'
+      const { url, prompt, byteplusAssetId, byteplusAssetActive } =
+        await artDirectorGenerateOneImage(element, imgCtx, ctx, timeoutMs, isChar)
       if (url) {
         useCanvasItemStore.getState().updateItem(m.itemId, { content: url, prompt })
         deps.log(`✓ ${m.kind} ${m.name} 完成`)
+        if (isChar) {
+          deps.log(byteplusAssetId
+            ? `✓ 开白 ${m.name} → asset ${byteplusAssetId} (${byteplusAssetActive ? 'Active' : 'Processing…'})`
+            : `⚠️ ${m.name} 开白注册未成功（视频可能触发真人风控）`)
+        }
       } else {
         deps.log(`✗ ${m.kind} ${m.name} 失败 — provider 返回空 URL`)
       }

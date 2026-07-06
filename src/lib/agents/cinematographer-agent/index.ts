@@ -26,8 +26,10 @@ import type {
   BeatVideoRef,
   BeatVideoResult,
   BeatVideoRow,
+  ReferencePackImage,
   ReviseRequest,
   ShootRequest,
+  VirtualAvatarShootRef,
 } from './schema'
 
 const { body: SYSTEM } = parseFrontmatter(skillSource)
@@ -51,7 +53,7 @@ export const SHOOT_PROVIDER = 'doubao'
 // art direction. Operators that explicitly want Fast pass the Fast id via
 // runShootBeatVideos's `model` param.
 export const SHOOT_MODEL = 'dreamina-seedance-2-0-260128'
-export const SHOOT_RESOLUTION_DEFAULT: '480p' | '720p' | '1080p' = '480p'
+export const SHOOT_RESOLUTION_DEFAULT: '480p' | '720p' | '1080p' = '1080p'
 const MIN_DURATION = 5
 const MAX_DURATION = 15
 
@@ -90,37 +92,110 @@ export function resolveEffectiveDurationSeconds(opts: {
 }
 
 function buildContextRefLine(contextRefs: BeatVideoContextRef[]): string {
-  // Context refs (character/scene/prop descriptions) are intentionally NOT
-  // baked into the motion text any more — they bias Seedance away from
-  // what's actually in the keyframe image. Kept exported for tests/back-compat.
-  void contextRefs
-  return ''
+  return contextRefs
+    .filter((ref) => ref.description?.trim())
+    .map((ref) => `- ${ref.role}：${ref.description!.trim()}`)
+    .join('\n')
+}
+
+function cleanText(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
 }
 
 function buildMotionDescription(req: {
   row: BeatVideoRow
   visualStyle?: string
   contextRefs?: BeatVideoContextRef[]
+  /** True when a multi-reference pack replaces the single keyframe as the
+   *  image inputs — the 参考素材用途 block then defers to the pack legend. */
+  hasReferencePack?: boolean
 }): string {
-  // Only dialogue + SFX survive in this block. motion_prompts / style /
-  // scene / mood / motivation / psychology / lighting / shot size used to
-  // be stripped because they biased Seedance away from the keyframe — but
-  // the keyframe is now visual-only (storyboard panels + diagrams with no
-  // embedded text labels), so the camera / lighting / motion vocabulary
-  // is re-introduced by a separate `cinematography-describe` LLM step
-  // that reads the keyframe image (see describeKeyframeCinematography
-  // below). Dialogue + SFX stay here; voice refs are attached later by
-  // actor-agent.attachVoiceRefs.
-  void req.visualStyle
-  void req.contextRefs
   const r = req.row
+  const contextLines = buildContextRefLine(req.contextRefs ?? [])
   const blocks: string[] = []
-  if (r.dialogue && r.dialogue.trim()) {
-    blocks.push(`【对白 / DIALOGUE】\n${r.dialogue.trim()}`)
+
+  blocks.push([
+    '【Seedance 2.0 视频生成指令】',
+    r.shot_number ? `镜头编号：${r.shot_number}` : '',
+    r.duration ? `目标时长：${clampDuration(r.duration)}秒（Seedance 支持 4–15 秒；本系统安全夹到 5–15 秒）` : '',
+    '把上传的关键帧/导演分镜参考理解为视频生成依据；输出必须是干净的全屏电影画面。',
+  ].filter(Boolean).join('\n'))
+
+  const subjectScene = [
+    cleanText(r.visual_description) ? `画面主体/场景：${cleanText(r.visual_description)}` : '',
+    cleanText(r.shot_size) ? `景别：${cleanText(r.shot_size)}` : '',
+    cleanText(r.lighting_atmosphere) ? `光影氛围：${cleanText(r.lighting_atmosphere)}` : '',
+    cleanText(req.visualStyle) ? `视觉风格：${cleanText(req.visualStyle)}` : '',
+  ].filter(Boolean)
+  if (subjectScene.length) blocks.push(`【主体 / 场景 / 风格】\n${subjectScene.join('\n')}`)
+
+  if (req.hasReferencePack) {
+    blocks.push([
+      '【参考素材用途】',
+      // No hardcoded slot order here — the pack's composition varies per
+      // row (身份版可能缺席、场景可能缺席), and a stale order listing sends
+      // the model to the wrong indices. The legend is the only authority.
+      '- 多参考输入模式：各参考图的职责与编号以【参考图】legend 为准，@图片N 明确指向对应主体；CASTING 依据见 legend 标注。',
+      contextLines,
+    ].filter(Boolean).join('\n'))
+  } else if (contextLines) {
+    blocks.push([
+      '【参考素材用途】',
+      '- 首帧：当前 keyframe / image1 锁定开场构图、角色、服装、场景和光影。',
+      contextLines,
+      '- 上述角色/场景/道具参考主要通过提示词约束；除显式 reference-pack 模式外，不额外塞图片给 Seedance。',
+    ].join('\n'))
+  } else {
+    blocks.push([
+      '【参考素材用途】',
+      '- 首帧：当前 keyframe / image1 锁定开场构图、角色、服装、场景和光影。',
+      '- 若存在第二张导演分镜图，只读取调度、走位、节奏，不要渲染边框/箭头/文字。',
+    ].join('\n'))
   }
-  if (r.sound_effects && r.sound_effects.trim()) {
-    blocks.push(`【音效 / SFX】\n${r.sound_effects.trim()}`)
+
+  const performance = [
+    cleanText(r.character_actions) ? `角色动作：${cleanText(r.character_actions)}` : '',
+    cleanText(r.emotion_mood) ? `情绪：${cleanText(r.emotion_mood)}` : '',
+    cleanText(r.emotion_atmosphere) ? `情绪氛围：${cleanText(r.emotion_atmosphere)}` : '',
+    cleanText(r.character_motivation) ? `动机：${cleanText(r.character_motivation)}` : '',
+    cleanText(r.character_psychology) ? `心理：${cleanText(r.character_psychology)}` : '',
+    cleanText(r.performance_guidance) ? `表演指导：${cleanText(r.performance_guidance)}` : '',
+  ].filter(Boolean)
+  if (performance.length) {
+    blocks.push(`【表演与情绪】\n${performance.join('\n')}\n**面部表情必须清晰可见且随情绪逐拍变化**——镜头要给到脸，眼神/眉形/嘴型/下颌张力要演出上面的情绪，不能是面无表情的呆脸（面瘫会让画面出戏）。同时落到呼吸、手部、身体重心、步伐节奏等可见表演。`)
   }
+
+  const motion = cleanText(r.motion_prompts)
+  if (motion) {
+    blocks.push(`【分时段动作与运镜】\n${motion}\n8秒以上必须按时间段执行；镜头运动、景别、角色走位和情绪变化要连续。`)
+  }
+
+  const storyboard = cleanText(r.storyboard_prompts)
+  if (storyboard) {
+    blocks.push([
+      '【导演分镜格信息】',
+      storyboard,
+      '如果参考图是多格导演分镜图，请按格子顺序理解为动作/情绪/镜头推进；不要理解为最终视频的分屏画面；not a literal split-screen.',
+    ].join('\n'))
+  }
+
+  const audio = [
+    cleanText(r.dialogue) ? `对白：${cleanText(r.dialogue)}` : '',
+    cleanText(r.sound_effects) ? `音效：${cleanText(r.sound_effects)}` : '',
+    // row.bgm is the MIXER's brief, not a generation instruction. Surfacing
+    // it positively here re-broke the No-Music-Bed hard rule from #94 (the
+    // model reads "BGM: 紧张弦乐" and lays down a score). Keep it strictly
+    // as a mood reference with an explicit negative.
+    cleanText(r.bgm)
+      ? `情绪基调参考（仅供表演/节奏理解）：${cleanText(r.bgm)} —— 但输出音轨严禁出现任何 BGM/配乐/音乐，配乐由后期混音阶段单独处理。`
+      : '',
+  ].filter(Boolean)
+  if (audio.length) {
+    blocks.push(`【声音设计】\n${audio.join('\n')}\n声音必须与动作节奏贴合；只保留对白与画内音效，禁止任何配乐。`)
+  }
+
+  blocks.push('【一致性约束】\n保持角色身份、服装、场景、光影、运动方向连续；不要添加无关角色；不要改变核心服装和身份。\n若本段文字规划（景别/光影/运镜）与参考图实际画面冲突，以参考图为准 —— 参考图是已经通过审片的最终视觉。')
+
   return blocks.join('\n\n')
 }
 
@@ -182,29 +257,132 @@ async function describeKeyframeCinematography(opts: {
 }
 
 /**
- * The image legend lists ONLY the keyframe — omni-reference (全能参考) mode
- * means a single image input. Character / scene / prop info goes into the
- * motion text via buildContextRefLine.
+ * The image legend.
+ *
+ * Both images travel to Seedance as reference_image (omni-reference / 全能参考
+ * mode — the only way Seedance accepts two images alongside dialogue audio;
+ * it rejects mixing a literal first_frame role with reference_image). Since
+ * neither carries the API-level first_frame role, the prompt itself spells out
+ * the intended roles: image1 (the clean frame) should anchor the opening
+ * composition / first frame, and image2 (the multi-panel grid) is the
+ * director's storyboard "thinking diagram" — read staging / blocking / pacing
+ * from it but never render its panels, borders, or labels.
+ *
+ * Single-image (no grid) keeps the original one-line legend.
  */
-function buildImageLegend(_keyframeUrl: string): string {
-  void _keyframeUrl
-  return [
-    '【REFERENCE IMAGE / 参考图】 (omni-reference / 全能参考):',
-    '- image1 / @图片1 = Keyframe (the director storyboard sheet — read casting, scene, blocking, lighting from it; do NOT shoot the sheet itself).',
-  ].join('\n')
+/**
+ * Reference-pack URL discipline (see .claude/skills/canvas-seedance-video-prompt):
+ * http(s) raster URLs, data:image rasters, and root-relative /uploads/ paths
+ * may ship to Seedance — the capability server inlines /uploads/ files to
+ * data: URLs before the provider call (see vite-capabilities-plugin's
+ * isSeedanceMediaUrl / inlineLocalRefsInContentParts; every generated
+ * keyframe / identity sheet is persisted there, so rejecting them here
+ * silently emptied the reference pack down to a single scene image).
+ * Rejects other relative paths, stale node markers, asset:// (those travel
+ * via the dedicated avatar param), and SVG data URLs.
+ */
+export function isValidReferenceImageUrl(url: string | undefined): url is string {
+  if (!url || !url.trim()) return false
+  const u = url.trim()
+  if (/^data:image\/(png|jpe?g|webp|gif|bmp);/i.test(u)) return true
+  if (/^\/uploads\/\S+$/i.test(u)) return true
+  return /^https?:\/\/\S+$/i.test(u)
+}
+
+function buildImageLegend(
+  _keyframeUrl: string,
+  hasStoryboardRef = false,
+  avatarRefs: VirtualAvatarShootRef[] = [],
+  referencePack: ReferencePackImage[] = [],
+): string {
+  const lines: string[] = []
+  if (referencePack.length > 0) {
+    lines.push(
+      '【REFERENCE IMAGES / 参考图】 (全能参考 / omni-reference，多参考输入合成):',
+    )
+    referencePack.forEach((ref, i) => {
+      const idx = i + 1
+      const subject = ref.subject ? `，@${ref.subject} 即指向这张图中的主体` : ''
+      lines.push(`- image${idx} / @图片${idx} = ${ref.label} —— ${ref.usage}${subject}。`)
+    })
+    // CASTING 依据 — computed from the pack's actual composition, never
+    // hardcoded to @图片1 (pack contents vary per row; in a pack whose
+    // image1 is the empty scene plate a hardcoded anchor sends the model
+    // hunting for faces in an image that deliberately has none).
+    const charRefs = referencePack
+      .map((ref, i) => ({ ref, idx: i + 1 }))
+      .filter(({ ref }) => ref.kind === 'character')
+    if (charRefs.length > 0) {
+      lines.push(
+        `CASTING 依据 / casting anchor：${charRefs
+          .map(({ ref, idx }) => `@图片${idx}${ref.subject ? `（${ref.subject}）` : ''}`)
+          .join('、')} —— 角色脸型、发型、服装、体态以这些图为准。`,
+      )
+    } else {
+      const cameraIdx = referencePack.findIndex((r) => r.kind === 'camera')
+      if (cameraIdx >= 0) {
+        lines.push(
+          `CASTING 依据 / casting anchor：@图片${cameraIdx + 1}（机位截图中的角色造型）—— 角色脸型、发型、服装、体态以这张图中出现的角色为准。`,
+        )
+      }
+    }
+    lines.push(
+      '严禁把任何参考图的分格、边框、箭头、标注文字、ID 块渲染进画面；参考图只提供身份/场景/调度/构图信息。',
+    )
+  } else if (!hasStoryboardRef) {
+    lines.push(
+      '【REFERENCE IMAGE / 参考图】 (omni-reference / 全能参考):',
+      '- image1 / @图片1 = Keyframe (the director storyboard sheet — read casting, scene, blocking, lighting from it; do NOT shoot the sheet itself).',
+      'CASTING 依据 / casting anchor：@图片1。',
+    )
+  } else {
+    lines.push(
+      '【REFERENCE IMAGES / 参考图】 (全能参考 / omni-reference，两张都是参考图):',
+      '- image1 / @图片1 = 首帧图 / clean first frame —— 以这张作为视频的开场首帧与主构图，casting、场景、配色、光线都以它为准。',
+      '- image2 / @图片2 = 导演思维图 / director storyboard sheet —— 仅作导演调度参考：读取走位、调度、节奏、多拍动作演进。严禁把图板的分格、边框、箭头、时间标签、文字渲染进画面；画面长相以 @图片1 为准。',
+      'CASTING 依据 / casting anchor：@图片1（首帧图）。',
+    )
+  }
+  // Virtual-avatar references for 真人 styles. They are appended AFTER the
+  // keyframe (+grid) / reference-pack image_url parts server-side, so their
+  // @图片N index is the running image count. Each line ties the index to a
+  // named character so the model locks that character's face/appearance to
+  // the approved avatar.
+  const baseImageCount = referencePack.length > 0 ? referencePack.length : hasStoryboardRef ? 2 : 1
+  avatarRefs.forEach((ref, i) => {
+    const idx = baseImageCount + i + 1
+    lines.push(
+      `- image${idx} / @图片${idx} = 虚拟人像「${ref.characterName}」(${ref.slotLabel}) —— ` +
+        `视频里这个角色的脸、五官、发型、气质严格以这张为准，全程保持一致；这是经过审核的合规人像。`,
+    )
+  })
+  return lines.join('\n')
 }
 
 function assembleShootPrompt(req: {
   row: BeatVideoRow
   keyframeUrl: string
+  storyboardRefUrl?: string
+  referencePack?: ReferencePackImage[]
   contextRefs?: BeatVideoContextRef[]
   visualStyle?: string
   cinematography?: string
+  virtualAvatarRefs?: VirtualAvatarShootRef[]
 }): string {
-  const dialogueAndSfx = buildMotionDescription(req)
-  const legend = buildImageLegend(req.keyframeUrl)
+  const pack = (req.referencePack ?? []).filter((p) => isValidReferenceImageUrl(p.url))
+  const dialogueAndSfx = buildMotionDescription({ ...req, hasReferencePack: pack.length > 0 })
+  const hasStoryboardRef = Boolean(
+    req.storyboardRefUrl?.trim() && req.storyboardRefUrl.trim() !== req.keyframeUrl,
+  )
+  const legend = buildImageLegend(req.keyframeUrl, hasStoryboardRef, req.virtualAvatarRefs ?? [], pack)
+  // The cinematography-describe step reads req.keyframeUrl — in pack mode
+  // that image sits at whatever index the pack put it (usually the 机位
+  // tail), NOT @图片1. Label with the true index so the model attributes
+  // the analysis to the right reference.
+  const analyzedIdx = pack.length > 0 ? pack.findIndex((p) => p.url === req.keyframeUrl) : 0
+  const analyzedLabel = analyzedIdx >= 0 ? `基于 @图片${analyzedIdx + 1} / image${analyzedIdx + 1} 的分析` : '基于机位/首帧参考图的分析'
   const cinematographyBlock = req.cinematography?.trim()
-    ? `【镜头语言 / CINEMATOGRAPHY】（基于 @图片1 / image1 的分析）\n${req.cinematography.trim()}`
+    ? `【镜头语言 / CINEMATOGRAPHY】（${analyzedLabel}）\n${req.cinematography.trim()}`
     : ''
   return fillTemplate(TPL.shoot, {
     imageLegend: legend,
@@ -253,16 +431,51 @@ async function callFirstLastFrame(opts: {
 async function callSeedance(opts: {
   prompt: string
   keyframeUrl: string
+  storyboardRefUrl?: string
+  /** Validated multi-reference pack. Non-empty → replaces keyframe+grid as
+   *  the image inputs (see ShootRequest.referencePack). */
+  referencePack?: ReferencePackImage[]
   voiceAudioUrls?: string[]
   durationSeconds: number
   aspect: '16:9' | '9:16' | '1:1' | '4:3'
   resolution: '480p' | '720p' | '1080p'
   invitedImageAssetIds?: string[]
+  /** `asset://<id>` virtual-avatar refs for 真人 styles (see ShootRequest). */
+  avatarAssetUris?: string[]
 }): Promise<string> {
-  // ONE image input: the keyframe (omni-reference / 全能参考). We deliberately
-  // don't ship character / scene / prop asset images alongside — the model
-  // reads casting, scene, blocking, lighting from the keyframe itself.
-  //
+  // Image inputs. Both the clean keyframe and the director storyboard grid
+  // ride along as reference_image (全能参考 / omni-reference). Seedance forbids
+  // tagging one image as the literal first_frame while another is a
+  // reference_image ("first/last frame content cannot be mixed with reference
+  // media content"), so we ship BOTH as references and let the PROMPT spell
+  // out the intended roles instead: @图片1 = 首帧 / 开场构图, @图片2 = 导演思维图
+  // (see buildImageLegend). mode:'reference' forces reference-to-video for the
+  // image-only case; when dialogue audio is present the dispatcher promotes to
+  // universal-to-video, which also tags every image reference_image.
+  const storyboardRef = opts.storyboardRefUrl?.trim()
+  const hasStoryboardRef = Boolean(storyboardRef && storyboardRef !== opts.keyframeUrl)
+  // Multi-reference pack replaces the [keyframe, grid] pair entirely: the
+  // pack already carries the storyboard + the camera/first-frame anchor at
+  // its tail (角色→场景→分镜→机位截图). Seedance caps reference_image at 9;
+  // leave headroom for server-appended avatar refs.
+  const pack = (opts.referencePack ?? []).filter((p) => isValidReferenceImageUrl(p.url)).slice(0, 9)
+  const imageInputs = pack.length > 0
+    ? pack.map((p) => ({ kind: 'image' as const, url: p.url }))
+    : [
+        { kind: 'image' as const, url: opts.keyframeUrl },
+        ...(hasStoryboardRef ? [{ kind: 'image' as const, url: storyboardRef! }] : []),
+      ]
+
+  // Virtual-avatar refs (真人 styles) travel as a dedicated param, NOT as image
+  // inputs: their `asset://<id>` URIs are filtered out by the dispatcher's
+  // http/data url guard, and the plugin appends them as reference_image parts
+  // itself. Their presence forces reference-to-video so they don't get mixed
+  // with a literal first_frame (Seedance rejects that combination).
+  const avatarAssetUris = (opts.avatarAssetUris ?? []).filter((u) => u.trim()).slice(0, 6)
+  // Per Ark's contract, first/last-frame roles can never mix with
+  // reference media — any multi-image shipment must be all-reference.
+  const forceReference = pack.length > 0 || hasStoryboardRef || avatarAssetUris.length > 0
+
   // PER-CHARACTER voice files travel as audio inputs (when dialogue exists)
   // so Seedance can match each spoken line to its corresponding 音色N
   // reference. The capability dispatcher auto-routes audios → universal-to-
@@ -280,7 +493,7 @@ async function callSeedance(opts: {
     capability: 'text-to-video',
     inputs: [
       { kind: 'text', text: opts.prompt },
-      { kind: 'image', url: opts.keyframeUrl },
+      ...imageInputs,
       ...voiceInputs,
     ],
     params: {
@@ -289,15 +502,19 @@ async function callSeedance(opts: {
       duration: String(opts.durationSeconds),
       aspect: opts.aspect,
       resolution: opts.resolution,
-      // Hints to the capability plugin to use omni-reference mode if the
-      // provider exposes it as a flag (Doubao Seedance 2.0 supports it).
-      reference_mode: 'omni',
+      // Two images OR avatar refs → force reference-to-video (every image is
+      // reference_image). Single image keeps the legacy omni-reference hint.
+      ...(forceReference ? { mode: 'reference' as const } : { reference_mode: 'omni' }),
       // Privacy-block fallback: BytePlus digital-asset ids the caller
       // pre-registered. The capability plugin translates these to the
       // Seedance body's `invited_images` field.
       ...(opts.invitedImageAssetIds?.length
         ? { invitedImageAssetIds: opts.invitedImageAssetIds }
         : {}),
+      // 真人 style: virtual-avatar `asset://` refs. The plugin appends each as
+      // a reference_image content part; the prompt legend (image3/image4…)
+      // ties them to characters.
+      ...(avatarAssetUris.length ? { avatarAssetUris } : {}),
     },
   })
   const url = r.outputs[0]?.url
@@ -349,9 +566,12 @@ export async function* shoot(
   const basePrompt = assembleShootPrompt({
     row: req.row,
     keyframeUrl: req.keyframeUrl,
+    storyboardRefUrl: req.storyboardRefUrl,
+    referencePack: req.referencePack,
     contextRefs: req.contextRefs,
     visualStyle: req.visualStyle,
     cinematography,
+    virtualAvatarRefs: req.virtualAvatarRefs,
   })
 
   void ctx
@@ -363,7 +583,12 @@ export async function* shoot(
   const prompt = typeof augmented === 'string' ? augmented : augmented.videoPrompt
   const voiceAudioUrls = typeof augmented === 'string' ? undefined : augmented.voiceAudioUrls
 
-  const mode = req.transitionFrames ? 'first-last-frame transition' : 'omni-reference'
+  const packSize = (req.referencePack ?? []).filter((p) => isValidReferenceImageUrl(p.url)).length
+  const mode = req.transitionFrames
+    ? 'first-last-frame transition'
+    : packSize > 0
+      ? `multi-reference pack ×${packSize}`
+      : 'omni-reference'
   yield {
     type: 'progress',
     message: `cinematographer: rolling on Seedance (${SHOOT_PROVIDER}/${SHOOT_MODEL}, ${mode})${
@@ -378,8 +603,11 @@ export async function* shoot(
         durationSeconds, aspect, resolution,
       })
     : await callSeedance({
-        prompt, keyframeUrl: req.keyframeUrl, voiceAudioUrls, durationSeconds, aspect, resolution,
+        prompt, keyframeUrl: req.keyframeUrl, storyboardRefUrl: req.storyboardRefUrl,
+        referencePack: req.referencePack,
+        voiceAudioUrls, durationSeconds, aspect, resolution,
         invitedImageAssetIds: req.invitedImageAssetIds,
+        avatarAssetUris: req.virtualAvatarRefs?.map((r) => r.assetUri),
       })
 
   yield {
@@ -451,7 +679,18 @@ export async function* revise(
     type: 'progress',
     message: `cinematographer: re-rolling on Seedance with revised prompt`,
   }
-  const url = await callSeedance({ prompt: revisedPrompt, keyframeUrl: req.keyframeUrl, durationSeconds, aspect, resolution })
+  // Re-ship the SAME reference set as the original shoot: without the
+  // avatar asset refs a 真人 shot that only passed the privacy filter via
+  // approved personas fails (or drifts faces) on the reshoot, and without
+  // the pack/grid the reshoot loses its staging anchors.
+  const url = await callSeedance({
+    prompt: revisedPrompt,
+    keyframeUrl: req.keyframeUrl,
+    storyboardRefUrl: req.storyboardRefUrl,
+    referencePack: req.referencePack,
+    durationSeconds, aspect, resolution,
+    avatarAssetUris: req.virtualAvatarRefs?.map((r) => r.assetUri),
+  })
 
   yield {
     type: 'result',
@@ -535,9 +774,12 @@ export async function* shootMultiStrategy(
   const basePrompt = assembleShootPrompt({
     row: req.row,
     keyframeUrl: req.keyframeUrl,
+    storyboardRefUrl: req.storyboardRefUrl,
+    referencePack: req.referencePack,
     contextRefs: req.contextRefs,
     visualStyle: req.visualStyle,
     cinematography,
+    virtualAvatarRefs: req.virtualAvatarRefs,
   })
 
   const augmented = req.promptPostProcessor ? await req.promptPostProcessor(basePrompt) : basePrompt
@@ -560,11 +802,14 @@ export async function* shootMultiStrategy(
       callSeedance({
         prompt: v.prompt,
         keyframeUrl: req.keyframeUrl,
+        storyboardRefUrl: req.storyboardRefUrl,
+        referencePack: req.referencePack,
         voiceAudioUrls,
         durationSeconds,
         aspect,
         resolution,
         invitedImageAssetIds: req.invitedImageAssetIds,
+        avatarAssetUris: req.virtualAvatarRefs?.map((r) => r.assetUri),
       }),
     ),
   )
@@ -637,8 +882,10 @@ export type {
   BeatVideoRef,
   BeatVideoResult,
   BeatVideoRow,
+  ReferencePackImage,
   ShootRequest,
   ReviseRequest,
   ShootVariant,
   MultiStrategyResult,
+  VirtualAvatarShootRef,
 } from './schema'

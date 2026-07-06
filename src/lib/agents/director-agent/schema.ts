@@ -209,6 +209,66 @@ export interface GenerateKeyframeRequest {
   feedbackNote?: string
 }
 
+// ─── generateIdentitySheet ────────────────────────────────────────
+//
+// 角色身份版 — one 16:9 sheet per character that locks the character's
+// identity for every downstream generation: full-body anchor + auxiliary
+// views + silhouettes + expressions + detail close-ups + an ID block.
+// Relit with the row's scene lighting and scale-locked against the row's
+// prop references.
+
+export interface GenerateIdentitySheetRequest {
+  /** The character this sheet locks. imageUrls = existing asset images
+   *  (identity anchors — face/costume must match them exactly). */
+  character: KeyframeCharacterRef
+  /**
+   * Identity sheets already generated for the SAME character on other
+   * rows. Shipped as costume/detail CANON references so every sheet
+   * repeats the same accessories (玉佩、绣纹、系带…) instead of
+   * re-inventing small details per row — the root cause of cross-row
+   * costume drift.
+   */
+  priorSheetUrls?: string[]
+  /**
+   * THIS row's dramatic context. Without it the sheet's silhouettes /
+   * expressions / views are generic; with it they preview the actions,
+   * camera angles and emotional beat the row will actually shoot.
+   */
+  rowContext?: {
+    shotNumber?: string
+    /** row.character_actions */
+    actions?: string
+    /** row.shot_size */
+    shotSize?: string
+    /** row.emotion_atmosphere */
+    emotionAtmosphere?: string
+    /** row.performance_guidance */
+    performanceGuidance?: string
+  }
+  /** Prop references from the same row. Rendered in the scale strip so
+   *  the character↔prop 比例 is fixed once and reused by later shots. */
+  props?: KeyframePropRef[]
+  /** Scene reference. Used ONLY as the lighting source (刷光): light
+   *  direction, color temperature, contrast — never as a backdrop. */
+  scene?: KeyframeSceneRef
+  /** Resolved art-style prose (via getArtStyle), same as keyframes. */
+  visualStyle?: string
+  /** Character's 核心情绪 / dramatic function for the ID block. */
+  coreEmotion?: string
+  /** Character's 视觉标志 (visual mark) for the ID block. */
+  visualMark?: string
+  aspect?: '16:9' | '9:16' | '1:1' | '4:3'
+  /** Same privacy-retry flag as keyframes. */
+  stylizeFacesFor2D?: boolean
+}
+
+export interface IdentitySheetResult {
+  url: string
+  prompt: string
+  /** Image references sent, in order (image1, image2, …). */
+  imageRefs: Array<{ role: string; description?: string; imageUrl: string }>
+}
+
 // ─── critiqueKeyframe ─────────────────────────────────────────────
 
 export interface KeyframeIssue {
@@ -269,6 +329,23 @@ export interface KeyframeResult {
   cleanUrl?: string
   /** The full text prompt for the clean frame (for retries/debug). */
   cleanPrompt?: string
+  /**
+   * True when `prompt` was derived by the LLM pre-pass (故事板结构模板 +
+   * 分镜参考 + 人物/场景图 + 主题 → 黑白手绘故事板提示词) rather than
+   * taken verbatim from the structure template. The caller drops the
+   * derived prompt on the canvas as a text node upstream of the
+   * storyboard image so the user can read / edit the reasoning chain.
+   */
+  promptDerived?: boolean
+  /**
+   * Set when the 黑白故事板 (grid) render FAILED but the 开场构图 (clean)
+   * succeeded. In that case `url` falls back to `cleanUrl` for back-compat,
+   * which means url === cleanUrl — the caller must NOT store `url` as the
+   * row's storyboard (both table columns would show the same clean frame
+   * and the video reference pack would ship a fake "storyboard"). Carries
+   * the grid error message so the UI can surface why and offer a retry.
+   */
+  gridFailReason?: string
 }
 
 export interface CritiqueVideoConsistencyRequest {

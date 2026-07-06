@@ -48,6 +48,9 @@ export type CanvasItemRole =
   | 'character'
   | 'character-bio'
   | 'scene'
+  /** A 机位截图 captured from a scene panorama's PanoramaViewer (虚拟取景).
+   *  Flat 16:9 camera plate — renders as a normal <img>, NOT the viewer. */
+  | 'scene-view'
   | 'scene-description'
   | 'prop'
   | 'prop-description'

@@ -2,12 +2,16 @@ import { memo, useRef, useState, useCallback } from 'react'
 import { Handle, Position, NodeResizer, useNodeId } from '@xyflow/react'
 import { toast } from 'sonner'
 import { NodeFloatingToolbar } from '../NodeFloatingToolbar'
-import { ImageIcon, Upload, Link as LinkIcon, User, MapPin, Package, Film, Mic, Star } from 'lucide-react'
+import { ImageIcon, Upload, Link as LinkIcon, User, MapPin, Package, Film, Mic, Star, ShieldCheck } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
+import { useCanvasStore } from '@/stores/canvas-store'
 import { useLibtvTasksStore } from '@/stores/libtv-tasks-store'
 import { useAssetStore } from '@/stores/asset-store'
 import { useStoryboardStore } from '@/stores/storyboard-store'
+import { useProjectDB } from '@/stores/project-db'
+import { canonicalCharacterName } from '@/lib/virtual-avatar-library'
+import { ByteplusAssetPickerDialog } from '@/components/director/ByteplusAssetPickerDialog'
 import { runCapability } from '@/lib/capabilities/client'
 import { VoiceFeedbackButton, type VoicePlan, type VoiceElementKind } from '@/components/canvas/VoiceFeedbackButton'
 import { PanoramaViewer } from '@/components/canvas/PanoramaViewer'
@@ -56,6 +60,15 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
   const isKeyframeItem = item?.role === 'keyframe'
   const isBeatVideoItem = item?.role === 'beat-video'
   const adoptable = isKeyframeItem || isBeatVideoItem
+
+  // 角色节点: 开白资产绑定入口 (source of truth — bind here and every
+  // downstream 身份版 / keyframe / video inherits via characterAvatarBindings).
+  const isCharacterItem = item?.role === 'character' || asset?.type === 'character'
+  const characterName = (asset?.name ?? item?.name ?? '').trim()
+  const [bpPickerOpen, setBpPickerOpen] = useState(false)
+  const boundAssetId = useProjectDB((s) =>
+    characterName ? s.script.characterAvatarBindings?.[canonicalCharacterName(characterName)] : undefined,
+  )
   const adoptedRowId = useStoryboardStore((s) => {
     if (!item?.content) return undefined
     if (isKeyframeItem) return s.rows.find((r) => r.keyframeUrl === item.content)?.id
@@ -105,6 +118,37 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
       })
       toast.success(`已设为镜号 ${shotNumber} 的采用 beat video`)
     }
+  }, [item, nodeId])
+
+  // 虚拟取景 (panorama 截机位): persist the captured 16:9 camera plate as its
+  // own canvas node, edge-wired from this scene so the provenance is visible
+  // (场景全景 → 机位截图). Staggered right of the scene node; multiple
+  // captures line up side by side.
+  const captureSceneView = useCallback((dataUrl: string) => {
+    if (!item) return
+    const canvas = useCanvasStore.getState()
+    const selfNode = canvas.nodes.find((n) => n.id === nodeId)
+    const baseX = (selfNode?.position.x ?? 0) + (selfNode?.width ?? 360) + 40
+    const baseY = selfNode?.position.y ?? 0
+    const siblings = Object.values(useCanvasItemStore.getState().items).filter(
+      (it) => it.role === 'scene-view' && it.name.startsWith(`${item.name}-机位`),
+    ).length
+    const viewItemId = useCanvasItemStore.getState().addItem({
+      kind: 'image',
+      name: `${item.name}-机位${siblings + 1}`,
+      content: dataUrl,
+      prompt: `机位截图（虚拟取景 16:9）from 场景全景「${item.name}」`,
+      role: 'scene-view',
+    })
+    const viewNodeId = canvas.addItemNode(
+      viewItemId, 'image',
+      { x: baseX, y: baseY + siblings * 200 },
+      { width: 280, height: 158 },
+    )
+    canvas.addEdge(nodeId, viewNodeId)
+    toast.success(`机位${siblings + 1} 已截取`, {
+      description: '已落到画布并与场景全景连边；可在分镜行中选作场景/参考图',
+    })
   }, [item, nodeId])
   const [promptOpen, setPromptOpen] = useState(false)
   const [regenerating, setRegenerating] = useState<{ intent: string } | null>(null)
@@ -212,6 +256,50 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
             compact
           />
         </div>
+      )}
+
+      {/* 角色节点: 开白资产绑定按钮 (top-right). Binding here is the source of
+          truth — the name-keyed characterAvatarBindings is read by 身份版 /
+          keyframe / video generation, so every downstream artifact inherits
+          it. Green ring when already bound. */}
+      {isCharacterItem && characterName && (
+        <div className="absolute top-1 right-1 z-20">
+          <button
+            title={boundAssetId ? `已绑定开白资产 · 点击更换（生成时携带 asset://${boundAssetId}）` : '绑定开白资产作为该角色（下游身份版/关键帧/视频自动继承，过隐私风控）'}
+            onClick={(e) => { e.stopPropagation(); setBpPickerOpen(true) }}
+            className={cn(
+              'p-1 rounded shadow-sm text-white',
+              boundAssetId ? 'bg-emerald-600 ring-1 ring-emerald-300' : 'bg-black/50 hover:bg-emerald-700',
+            )}
+          >
+            <ShieldCheck className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {isCharacterItem && (
+        <ByteplusAssetPickerDialog
+          open={bpPickerOpen}
+          characterName={characterName}
+          onClose={() => setBpPickerOpen(false)}
+          onPick={(bpAsset) => {
+            // Set this character node's image to the asset preview AND bind
+            // the character → asset (name-keyed) so downstream inherits.
+            if (bpAsset.previewUrl) {
+              updateItem(data.itemId, { content: bpAsset.previewUrl })
+              if (data.assetId) updateAsset(data.assetId, { imageUrl: bpAsset.previewUrl })
+            }
+            const key = canonicalCharacterName(characterName)
+            if (key) {
+              const db = useProjectDB.getState()
+              const bindings = db.script.characterAvatarBindings ?? {}
+              db.updateScript({ characterAvatarBindings: { ...bindings, [key]: bpAsset.id } })
+              toast.success(`已绑定开白资产给「${characterName.split(/[，,。\n]/)[0]}」`, {
+                description: `角色图已更新；身份版/关键帧/视频将自动携带 asset://${bpAsset.id}`,
+              })
+            }
+          }}
+        />
       )}
 
       {/* Typed badge — only when this image node is the canvas representation of an asset */}
@@ -334,7 +422,9 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
           // equirectangular panoramas. Render through the draggable
           // PanoramaViewer so the user can pan to different viewpoints inside
           // the canvas node. Non-scene image assets stay as plain <img>.
-          <PanoramaViewer src={item.content} alt={item.name} />
+          // onCapture = 虚拟取景: the 截机位 button exports the current view
+          // direction as a flat 16:9 camera plate node wired to this scene.
+          <PanoramaViewer src={item.content} alt={item.name} onCapture={captureSceneView} />
         ) : (
           <img src={thumb(item.content, 512)} alt={item.name} loading="lazy" decoding="async" className="w-full h-full object-contain bg-black/40" />
         )
