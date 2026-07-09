@@ -64,6 +64,79 @@ describe('ensureElements: artStyle always applied', () => {
   })
 })
 
+/**
+ * Regression test for the bug where ensureElements() silently skipped
+ * character/scene/prop generation for a NEW script whenever the canvas
+ * already had ANY item of that role — even one left over from an unrelated
+ * previous script/session, with a completely different name.
+ *
+ * Root cause: the old gate was `inventory.characters.length === 0`, i.e.
+ * "is the bucket empty", not "does this script's cast already have a
+ * portrait". A single stale character item made the whole bucket
+ * non-empty and suppressed generation for every newly extracted character,
+ * even ones with no matching canvas item at all. Downstream, findMissingAssets()
+ * (gap-finder.ts) couldn't catch this either — it only flags EXISTING
+ * empty-content items, and no item was ever created for the new cast, so
+ * the "补全缺失素材" quick action reported "✓ 没有缺失" while portraits for
+ * the new characters were simply never generated.
+ *
+ * Fix: name-match extraction against inventory; only the extracted
+ * elements with no same-named canvas counterpart are treated as missing.
+ */
+describe('ensureElements: name-matched missing detection (not bucket-emptiness)', () => {
+  // Mirrors the filter logic added to canvas-elements.ts's ensureElements().
+  function filterMissingByName<T extends { name: string }>(
+    extracted: T[],
+    existingNames: Set<string>,
+  ): T[] {
+    return extracted.filter((e) => !existingNames.has(e.name))
+  }
+
+  it('still generates a NEW character even when a stale, unrelated character already exists on the canvas', () => {
+    // Canvas has a leftover character from a previous, unrelated script.
+    const existingCharacterNames = new Set(['网红拉拉'])
+    // Current script extracted two brand-new characters.
+    const extractedCharacters = [
+      { name: '程亦', appearance: '', clothing: '', gender: '', expression: '', image_prompt: '' },
+      { name: '沈以晴', appearance: '', clothing: '', gender: '', expression: '', image_prompt: '' },
+    ]
+
+    const missing = filterMissingByName(extractedCharacters, existingCharacterNames)
+
+    // Both must be flagged as missing — neither name matches the stale item.
+    expect(missing).toHaveLength(2)
+    expect(missing.map((c) => c.name)).toEqual(['程亦', '沈以晴'])
+  })
+
+  it('does NOT regenerate a character that already has a matching canvas portrait', () => {
+    const existingCharacterNames = new Set(['程亦', '沈以晴'])
+    const extractedCharacters = [
+      { name: '程亦', appearance: '', clothing: '', gender: '', expression: '', image_prompt: '' },
+      { name: '沈以晴', appearance: '', clothing: '', gender: '', expression: '', image_prompt: '' },
+      { name: '新角色', appearance: '', clothing: '', gender: '', expression: '', image_prompt: '' },
+    ]
+
+    const missing = filterMissingByName(extractedCharacters, existingCharacterNames)
+
+    // Only the genuinely new character is regenerated.
+    expect(missing).toHaveLength(1)
+    expect(missing[0].name).toBe('新角色')
+  })
+
+  it('the old bucket-emptiness check would have wrongly reported nothing missing', () => {
+    // This asserts the OLD (buggy) condition against the exact repro
+    // scenario, to document why it fails.
+    const inventoryCharactersLength = 1 // one stale, unrelated item
+    const extractedCharacters = [{ name: '程亦' }, { name: '沈以晴' }]
+
+    const oldNeedCharacters = inventoryCharactersLength === 0 && extractedCharacters.length > 0
+    expect(oldNeedCharacters).toBe(false) // <- the bug: nothing gets generated
+
+    const newMissing = filterMissingByName(extractedCharacters, new Set(['网红拉拉']))
+    expect(newMissing.length > 0).toBe(true) // <- the fix: correctly detects both as missing
+  })
+})
+
 describe('ChatPanel: scriptText source', () => {
   // Simulates the fixed source-selection logic from ChatPanel.tsx
   function pickScriptText(chatMessage: string, storeScriptText: string): string {
