@@ -25,7 +25,7 @@ import { join } from 'node:path'
 const BASE_URL = process.env.EVOLUTION_BASE_URL ?? ''
 const RUN_ID = process.env.EVOLUTION_RUN_ID ?? `bench-${Date.now().toString(36)}`
 const CASE_FILTER = (process.env.EVOLUTION_CASES ?? '').split(',').filter(Boolean)
-const CASE_TIMEOUT_MS = 45 * 60 * 1000
+const CASE_TIMEOUT_MS = Number(process.env.EVOLUTION_CASE_TIMEOUT_MS ?? 45 * 60 * 1000)
 
 // Self-signed dev certs (vite basicSsl) — Node fetch must not reject them.
 if (BASE_URL.startsWith('https://localhost')) {
@@ -66,6 +66,8 @@ describe.skipIf(!BASE_URL)('bench e2e — genre adaptation batch', async () => {
   const { useCanvasStore } = await import('@/stores/canvas-store')
   const { useCanvasItemStore } = await import('@/stores/canvas-item-store')
   const { useStoryboardStore } = await import('@/stores/storyboard-store')
+  const { useChatStore } = await import('@/stores/chat-store')
+  const { pickRecommendedAnswer } = await import('@/lib/agents/_shared/runtime/runner')
 
   const resultsDir = join(process.cwd(), 'evolution', 'results', RUN_ID)
   mkdirSync(resultsDir, { recursive: true })
@@ -73,6 +75,20 @@ describe.skipIf(!BASE_URL)('bench e2e — genre adaptation batch', async () => {
   const cases = CASE_FILTER.length
     ? GENRE_CASES.filter((c) => CASE_FILTER.includes(c.id))
     : GENRE_CASES
+
+  // director-assistant's expand-script step runs with { interactive: true }
+  // (director-assistant.ts:181) so a REAL user sees an InterviewCard for
+  // clarifying questions. Headless here — there is no UI to click Submit —
+  // so without this, any Question turn deadlocks the pipeline forever (the
+  // promise from chat-store.presentQuestion() never resolves) until vitest's
+  // per-case timeout kills it. Auto-answer with the recommended option,
+  // matching exactly what driveAuto() would do for a non-interactive caller.
+  useChatStore.subscribe((state) => {
+    const pending = state.pendingQuestion
+    if (pending) {
+      useChatStore.getState().answerQuestion(pending.id, pickRecommendedAnswer(pending.question))
+    }
+  })
 
   beforeEach(() => {
     useProjectDB.getState().clearAll()
