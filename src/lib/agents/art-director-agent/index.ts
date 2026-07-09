@@ -250,6 +250,7 @@ export async function generateOneImage(
   const IMAGE_BACKENDS: Array<Record<string, unknown>> = [
     {}, // default provider/model (env-configured; director pins gpt-image elsewhere)
     { provider: 'gemini', model: 'google/gemini-3.1-flash-image-preview' }, // nano-banana fallback
+    { provider: 'apimart', model: 'doubao-seedream-5-0-lite' }, // Seedream 5.0 Lite — last resort when nano-banana also fails
   ]
   let r: Awaited<ReturnType<typeof runCapability>> | undefined
   let lastErr: unknown
@@ -278,11 +279,11 @@ export async function generateOneImage(
       // No exception but no url either — retry on the next backend; on the
       // last backend keep the (empty) result so the caller degrades gracefully
       // to an undefined img_url instead of throwing.
-      if (i < lastIdx) console.warn(`[art-director] image backend ${i} returned no url for ${element.name}; trying nano-banana fallback`)
+      if (i < lastIdx) console.warn(`[art-director] image backend ${i} returned no url for ${element.name}; trying ${JSON.stringify(IMAGE_BACKENDS[i + 1])}`)
     } catch (e) {
       lastErr = e
       if (i < lastIdx) {
-        console.warn(`[art-director] image backend ${i} failed for ${element.name} (${String((e as Error)?.message ?? e).slice(0, 120)}); trying nano-banana fallback`)
+        console.warn(`[art-director] image backend ${i} failed for ${element.name} (${String((e as Error)?.message ?? e).slice(0, 120)}); trying ${JSON.stringify(IMAGE_BACKENDS[i + 1])}`)
       }
     }
   }

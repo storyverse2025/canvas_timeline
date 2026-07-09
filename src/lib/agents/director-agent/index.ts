@@ -739,11 +739,16 @@ async function deriveStoryboardPrompt(
 // heavy multi-reference prompts (identity sheets, 12-panel grids) sometimes
 // blow the upstream Apimart 180s task cap. When the primary times out or
 // errors, fall back to Gemini flash-image ("nano-banana") — fast, rarely
-// hits the cap, different safety filter. Single chokepoint: covers the
-// storyboard grid, clean keyframe, AND identity sheet.
+// hits the cap, different safety filter. When nano-banana ALSO fails, fall
+// back once more to Seedream 5.0 Lite (also Apimart-hosted, same
+// submit/poll protocol as the primary — see runApimartImage/pollApimartTask
+// in vite-capabilities-plugin.ts) as the last resort before giving up.
+// Single chokepoint: covers the storyboard grid, clean keyframe, AND
+// identity sheet.
 const KEYFRAME_BACKENDS: Array<{ provider: string; model: string }> = [
   { provider: KEYFRAME_PROVIDER, model: KEYFRAME_MODEL },
   { provider: 'gemini', model: 'google/gemini-3.1-flash-image-preview' },
+  { provider: 'apimart', model: 'doubao-seedream-5-0-lite' },
 ]
 
 async function callKeyframeCapability(opts: {
@@ -776,8 +781,9 @@ async function callKeyframeCapability(opts: {
     } catch (e) {
       lastErr = e
       if (i < KEYFRAME_BACKENDS.length - 1) {
+        const next = KEYFRAME_BACKENDS[i + 1]!
         console.warn(
-          `[director-agent] keyframe backend ${backend.provider}/${backend.model} failed (${String((e as Error)?.message ?? e).slice(0, 100)}); trying nano-banana fallback`,
+          `[director-agent] keyframe backend ${backend.provider}/${backend.model} failed (${String((e as Error)?.message ?? e).slice(0, 100)}); trying ${next.provider}/${next.model}`,
         )
       }
     }
