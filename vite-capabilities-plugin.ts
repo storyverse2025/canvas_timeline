@@ -1,7 +1,9 @@
 import type { Plugin } from 'vite'
 import type { IncomingMessage, ServerResponse } from 'http'
-import { writeFileSync, mkdirSync, existsSync, statSync, createReadStream } from 'fs'
+import { writeFileSync, mkdirSync, existsSync, statSync, createReadStream, readFileSync, readdirSync, rmSync } from 'fs'
 import { join } from 'path'
+import { tmpdir } from 'os'
+import { spawn } from 'child_process'
 import { randomUUID, createHash, createHmac } from 'crypto'
 import sharp from 'sharp'
 
@@ -483,6 +485,193 @@ async function bridgeRowJudge(req: CapReq): Promise<CapRes> {
     }
   }
   throw lastErr ?? new Error('bridge-row-judge: exhausted retries')
+}
+
+/**
+ * six-criteria-judge (HarnessX D6, frozen verifier): score a storyboard /
+ * keyframe set / generated video against the 6 漫剧 quality criteria, anchored
+ * to neowow/libtv exemplars. The system prompt is fs-read from
+ * server/judge-prompts/six-criteria.md and is deliberately EXCLUDED from the
+ * evolution loop's editable allowlist — the verifier must stay fixed so
+ * judge scores are comparable across harness versions (and so the Evolver
+ * can't reward-hack by editing its own judge).
+ *
+ * Input modes (params.tier):
+ *   L2a  text input only (storyboard rows JSON) — free, criteria 3/4/5 solid,
+ *        1/2/6 provisional
+ *   L2b  text + keyframe images in shot order (adjacent pairs judged for
+ *        continuity) — full 6 criteria
+ *   L3   text + video inputs; frames are ffmpeg-sampled server-side
+ *        (~2fps capped) — full 6 criteria incl. true pacing
+ *
+ * params.useExemplars: inject top-K exemplar prompt anchors (and frames at
+ * L2b/L3) from the exemplar index built by prompt_rag's
+ * build_exemplar_index.py (EXEMPLAR_INDEX_JSONL env).
+ */
+const JUDGE_PROMPT_PATH = join(process.cwd(), 'server', 'judge-prompts', 'six-criteria.md')
+const EXEMPLAR_INDEX_DEFAULT = '/data/repos/prompt_rag/data/exemplars/exemplar_index.jsonl'
+const JUDGE_MAX_FRAMES_PER_VIDEO = 24
+const JUDGE_MAX_IMAGES_TOTAL = 40
+
+interface ExemplarRow {
+  id: string
+  criterion_tags?: string[]
+  prompt_text?: string
+  frame_paths?: string[]
+  engagement?: Record<string, number>
+}
+
+function loadExemplars(criteriaTags: string[], k: number): ExemplarRow[] {
+  const path = process.env.EXEMPLAR_INDEX_JSONL || EXEMPLAR_INDEX_DEFAULT
+  if (!existsSync(path)) return []
+  const rows: ExemplarRow[] = []
+  for (const line of readFileSync(path, 'utf8').split('\n')) {
+    if (!line.trim()) continue
+    try { rows.push(JSON.parse(line) as ExemplarRow) } catch { /* skip bad line */ }
+  }
+  const scored = rows
+    .map((r) => {
+      const overlap = criteriaTags.length
+        ? (r.criterion_tags ?? []).filter((t) => criteriaTags.includes(t)).length
+        : 1
+      const likes = r.engagement?.likeCount ?? 0
+      return { r, score: overlap * 1000 + likes }
+    })
+    .filter((s) => s.score > 0)
+  scored.sort((a, b) => b.score - a.score)
+  return scored.slice(0, k).map((s) => s.r)
+}
+
+function ffmpegSpawn(args: string[]): Promise<{ code: number; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    let stderr = ''
+    proc.stderr.on('data', (b) => { stderr += b.toString() })
+    proc.on('error', (e) => reject(new Error(`ffmpeg spawn failed: ${e.message}`)))
+    proc.on('close', (code) => resolve({ code: code ?? 1, stderr }))
+  })
+}
+
+/** Sample frames from a video URL (local /uploads/ path or remote). Returns
+ *  data: URIs, boundary frames first+last included via fps filter. */
+async function sampleVideoFrames(url: string, maxFrames: number): Promise<string[]> {
+  const workDir = join(tmpdir(), `judge-frames-${randomUUID().slice(0, 8)}`)
+  mkdirSync(workDir, { recursive: true })
+  try {
+    let src = maybeLocalPathFor(url)
+    if (!src) {
+      const res = await fetch(url)
+      if (!res.ok) throw new Error(`video fetch HTTP ${res.status}`)
+      src = join(workDir, 'src.mp4')
+      writeFileSync(src, Buffer.from(await res.arrayBuffer()))
+    }
+    const { code, stderr } = await ffmpegSpawn([
+      '-y', '-i', src,
+      '-vf', 'fps=2,scale=640:-2',
+      '-frames:v', String(maxFrames),
+      '-q:v', '5',
+      join(workDir, 'f-%03d.jpg'),
+    ])
+    if (code !== 0) throw new Error(`ffmpeg exit ${code}: ${stderr.slice(-200)}`)
+    const frames = readdirSync(workDir).filter((f) => f.startsWith('f-')).sort()
+    return frames.map((f) => `data:image/jpeg;base64,${readFileSync(join(workDir, f)).toString('base64')}`)
+  } finally {
+    try { rmSync(workDir, { recursive: true, force: true }) } catch { /* best-effort */ }
+  }
+}
+
+async function sixCriteriaJudge(req: CapReq): Promise<CapRes> {
+  const text = getText(req.inputs)
+  const images = getImages(req.inputs)
+  const videos = getVideos(req.inputs)
+  const tier = (req.params?.tier as string) || (videos.length ? 'L3' : images.length ? 'L2b' : 'L2a')
+  if (!text && !images.length && !videos.length) throw new Error('six-criteria-judge: 需要分镜表文本、关键帧图片或视频输入')
+
+  const key = process.env.APIMART_API_KEY
+  if (!key) throw new Error('APIMART_API_KEY not set')
+  const baseUrl = (process.env.APIMART_BASE_URL || APIMART_BASE_URL).replace(/\/$/, '')
+  if (!existsSync(JUDGE_PROMPT_PATH)) throw new Error(`judge prompt missing: ${JUDGE_PROMPT_PATH}`)
+  const systemPrompt = readFileSync(JUDGE_PROMPT_PATH, 'utf8')
+
+  const userContent: Array<Record<string, unknown>> = []
+  const exemplarRefs: string[] = []
+
+  // Exemplar anchors first, clearly labelled as reference material.
+  if (req.params?.useExemplars) {
+    const criteriaTags = Array.isArray(req.params?.criteriaTags) ? (req.params.criteriaTags as string[]) : []
+    const exemplars = loadExemplars(criteriaTags, Number(req.params?.exemplarK ?? 2))
+    for (const ex of exemplars) {
+      exemplarRefs.push(ex.id)
+      userContent.push({
+        type: 'text',
+        text: `【参考范例 ${ex.id}（高流量真实作品，作为满分锚点，不参与评分）】提示词：${(ex.prompt_text ?? '').slice(0, 800)}`,
+      })
+      if (tier !== 'L2a') {
+        for (const fp of (ex.frame_paths ?? []).slice(0, 2)) {
+          if (!existsSync(fp)) continue
+          userContent.push({
+            type: 'image_url',
+            image_url: { url: `data:image/jpeg;base64,${readFileSync(fp).toString('base64')}` },
+          })
+        }
+      }
+    }
+  }
+
+  userContent.push({ type: 'text', text: `【评审材料 tier=${tier}】\n${text || '(无文本，仅画面材料)'}` })
+
+  let attachedImages = 0
+  if (tier !== 'L2a') {
+    for (const url of images) {
+      if (attachedImages >= JUDGE_MAX_IMAGES_TOTAL) break
+      const safe = await urlToApimartImage(url)
+      if (safe) {
+        userContent.push({ type: 'image_url', image_url: { url: safe } })
+        attachedImages++
+      }
+    }
+    for (const vurl of videos) {
+      if (attachedImages >= JUDGE_MAX_IMAGES_TOTAL) break
+      try {
+        const frames = await sampleVideoFrames(vurl, JUDGE_MAX_FRAMES_PER_VIDEO)
+        for (const f of frames) {
+          if (attachedImages >= JUDGE_MAX_IMAGES_TOTAL) break
+          userContent.push({ type: 'image_url', image_url: { url: f } })
+          attachedImages++
+        }
+      } catch (e) {
+        console.warn(`[six-criteria-judge] frame sampling failed for ${vurl.slice(0, 100)}: ${(e as Error).message}`)
+      }
+    }
+  }
+
+  // temperature 0 for stable, comparable scores; retry both transient
+  // upstream errors AND non-JSON outputs (parse-validity is part of the
+  // verifier contract — the bench runner zod-parses this text).
+  let lastErr: unknown
+  for (let attempt = 0; attempt < APIMART_CHAT_MAX_ATTEMPTS; attempt++) {
+    if (attempt > 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, APIMART_CHAT_BACKOFF_MS[attempt] ?? 0))
+    }
+    try {
+      const out = await apimartChatOnce(key, baseUrl, systemPrompt, userContent, 0)
+      const cleaned = out.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
+      JSON.parse(cleaned) // validate only; caller re-parses with zod
+      return {
+        outputs: [
+          { kind: 'text', text: cleaned },
+          { kind: 'text', text: JSON.stringify({ exemplarRefs, tier }) },
+        ],
+      }
+    } catch (e) {
+      lastErr = e
+      if (attempt < APIMART_CHAT_MAX_ATTEMPTS - 1) {
+        console.warn(`[six-criteria-judge] attempt ${attempt + 1} failed (${String((e as Error)?.message ?? e).slice(0, 120)}); retrying`)
+        continue
+      }
+    }
+  }
+  throw lastErr ?? new Error('six-criteria-judge: exhausted retries')
 }
 
 /**
@@ -2282,6 +2471,7 @@ const handlers: Record<string, (req: CapReq) => Promise<CapRes>> = {
   'consistency-check': consistencyCheck,
   'storyboard-qc': storyboardQC,
   'bridge-row-judge': bridgeRowJudge,
+  'six-criteria-judge': sixCriteriaJudge,
   'cinematography-describe': cinematographyDescribe,
   'freeform-text': freeformText,
   'storyboard-generation': storyboardGeneration,

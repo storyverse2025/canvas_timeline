@@ -5,6 +5,7 @@ describe('dispatch coverage', () => {
   const expectedHandlers = [
     'script-rewrite', 'script-breakdown', 'element-extraction', 'shot-extraction', 'consistency-check', 'storyboard-qc',
     'bridge-row-judge',
+    'six-criteria-judge',
     'cinematography-describe',
     'freeform-text',
     'storyboard-generation', 'voice-casting',
@@ -27,9 +28,9 @@ describe('dispatch coverage', () => {
     }
   })
 
-  it('handler count matches capability count (35)', () => {
-    expect(expectedHandlers.length).toBe(35)
-    expect(CAPABILITIES.length).toBe(35)
+  it('handler count matches capability count (36)', () => {
+    expect(expectedHandlers.length).toBe(36)
+    expect(CAPABILITIES.length).toBe(36)
   })
 })
 

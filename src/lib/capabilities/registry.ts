@@ -66,6 +66,15 @@ export const CAPABILITIES: CapabilitySpec[] = [
     nodeTypes: ['image', 'text'],
   },
   {
+    id: 'six-criteria-judge',
+    category: 'agent',
+    label: '六项标准质量评审',
+    description: '进化循环专用（不接 UI）：按构图美术/造型流量密码/连贯一致/节奏/镜头语言/表情张力六项标准评分，锚定 neowow/libtv 范例。tier=L2a(文本)/L2b(关键帧)/L3(视频抽帧)',
+    inputKinds: ['text', 'image', 'video'],
+    outputKind: 'text',
+    nodeTypes: ['text'],
+  },
+  {
     id: 'bridge-row-judge',
     category: 'agent',
     label: '补全缺失分镜判断',

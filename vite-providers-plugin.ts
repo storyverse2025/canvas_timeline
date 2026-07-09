@@ -826,6 +826,21 @@ function tokenize(text: string): string[] {
   return out
 }
 
+/**
+ * Self-RAG growth (HarnessX D3): comma-separated extra JSONL paths appended
+ * AFTER the base corpus. High-scoring generations harvested by
+ * scripts/evolution/harvest-corpus.mts land in evolution/self-corpus.jsonl
+ * by default — the system's own successes become retrievable exemplars
+ * without ever replacing the ≥20k base guard below (extras only grow the
+ * count, they never substitute for the base file).
+ */
+function ragExtraJsonlPaths(): string[] {
+  const raw = process.env.PROMPT_RAG_EXTRA_JSONL
+  if (raw) return raw.split(',').map((s) => s.trim()).filter(Boolean)
+  const defaultPath = path.join(process.cwd(), 'evolution', 'self-corpus.jsonl')
+  try { fs.accessSync(defaultPath, fs.constants.R_OK); return [defaultPath] } catch { return [] }
+}
+
 function loadExamples(): RagExample[] {
   if (cachedExamples) return cachedExamples
   const p = ragJsonlPath()
@@ -842,6 +857,20 @@ function loadExamples(): RagExample[] {
     const trimmed = line.trim()
     if (!trimmed) continue
     try { examples.push(JSON.parse(trimmed) as RagExample) } catch { /* skip malformed */ }
+  }
+  for (const extraPath of ragExtraJsonlPaths()) {
+    try {
+      const extraRaw = fs.readFileSync(extraPath, 'utf8')
+      let added = 0
+      for (const line of extraRaw.split(/\r?\n/)) {
+        const trimmed = line.trim()
+        if (!trimmed) continue
+        try { examples.push(JSON.parse(trimmed) as RagExample); added++ } catch { /* skip malformed */ }
+      }
+      console.log(`[art-rag-search] merged ${added} self-corpus example(s) from ${extraPath}`)
+    } catch (e) {
+      console.warn(`[art-rag-search] could not read extra corpus ${extraPath}: ${(e as Error).message}`)
+    }
   }
   cachedExamples = examples
   // Precompute tokens + doc frequencies so per-request scoring is O(query

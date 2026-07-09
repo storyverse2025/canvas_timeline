@@ -19,10 +19,12 @@ import {
   critiqueTimeline as directorCritiqueTimeline,
   generateStoryboardTable as directorGenerateStoryboardTable,
 } from '@/lib/agents/director-agent'
+import { enrichTable as actorEnrichTable, type EnrichTableRequest } from '@/lib/agents/actor-agent'
 import { runAgentWithChatBridge, runAgentValidated } from '@/lib/agents/chat-bridge'
 import { parseAndValidateStoryboard } from '@/lib/storyboard-parser'
 import { createMemoryContext } from '@/lib/agents/_shared/context/memory'
 import { createCapabilityLLM } from '@/lib/agents/_shared/llm/capability'
+import { setTraceContext } from '@/lib/capabilities/trace'
 export type StepStatus = 'pending' | 'running' | 'done' | 'error'
 
 export interface PipelineStep {
@@ -67,6 +69,7 @@ export function createDirectorInitialState(): PipelineState {
           { id: 'shot-allocation', label: '镜头分配计划', status: 'pending' },
           { id: 'shot-composition', label: '镜头构图设计', status: 'pending' },
           { id: 'storyboard-design', label: '分镜设计', status: 'pending' },
+          { id: 'performance-enrichment', label: '演员表演打磨 (actor-agent 圆桌讨论)', status: 'pending' },
           { id: 'optimize-result', label: '优化结果', status: 'pending' },
         ],
       },
@@ -399,7 +402,7 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   // Fresh context PER ATTEMPT (inside makeGen): reusing one memory context
   // across retries makes every retry see the previous malformed turn and
   // converge on the same garbage.
-  const storyboardJson = await runAgentValidated(
+  let storyboardJson = await runAgentValidated(
     'director-agent',
     () =>
       directorGenerateStoryboardTable(
@@ -433,9 +436,55 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   }
   setStep(state, 0, 11, 'done', storyboardJson); onUpdate(state)
 
+  // Step 12.5: 演员表演打磨 — actor-agent runs its 2-round roundtable
+  // (solo takes per character → moderator synthesis) over EVERY row so the
+  // 6 performance fields are always actor-agent's playable, name-labeled
+  // text instead of director-agent's one-shot first draft. Patches the
+  // parsed rows in place and re-serializes; downstream parseAndValidateStoryboard
+  // calls (ScriptInputDialog / GenreCaseRunnerDialog / chat-intent) are
+  // unaffected — they just see a storyboardJson that already carries the
+  // enriched fields. Failure here must never break the pipeline: fall back
+  // to the un-enriched storyboardJson (the same behavior as before this
+  // step existed) and let the user re-run "演员完善表演" per-row if needed.
+  setStep(state, 0, 12, 'running'); onUpdate(state)
+  try {
+    const rowsMatch = storyboardJson.match(/\[[\s\S]*\]/)
+    const parsedRows: unknown = rowsMatch ? JSON.parse(rowsMatch[0]) : null
+    const castingCardsForEnrich = useProjectDBImport.getState().script.castingCards ?? persistedCastingCards
+
+    if (Array.isArray(parsedRows) && parsedRows.length > 0 && castingCardsForEnrich.length > 0) {
+      const rowsWithIds = (parsedRows as Array<Record<string, unknown>>).map((r, i) => ({ ...r, id: `row-${i}` }))
+      const enrichedByRowId = await runAgentWithChatBridge(
+        'actor-agent',
+        actorEnrichTable(
+          {
+            rows: rowsWithIds as unknown as EnrichTableRequest['rows'],
+            castingCards: castingCardsForEnrich,
+            creativeBrief: useProjectDBImport.getState().script.creativeBrief,
+            visualStyle: artStyle,
+          },
+          createMemoryContext({ llm: createCapabilityLLM({ capabilityId: 'freeform-text' }) }),
+        ),
+        { verb: 'enrich-table' },
+      )
+      const patchedRows = rowsWithIds.map(({ id, ...rest }) => ({ ...rest, ...(enrichedByRowId[id] ?? {}) }))
+      storyboardJson = JSON.stringify(patchedRows, null, 2)
+      setStep(state, 0, 12, 'done', `已为 ${Object.keys(enrichedByRowId).length}/${rowsWithIds.length} 行完善表演（圆桌讨论定稿）`); onUpdate(state)
+    } else {
+      setStep(
+        state, 0, 12, 'done',
+        castingCardsForEnrich.length === 0 ? '暂无角色卡 — 跳过表演打磨' : '分镜行解析失败 — 跳过表演打磨',
+      )
+      onUpdate(state)
+    }
+  } catch (e) {
+    console.warn('[director-assistant] actor-agent enrichTable failed; continuing with un-enriched storyboard:', (e as Error).message)
+    setStep(state, 0, 12, 'done', '表演打磨失败，继续使用未打磨的分镜表'); onUpdate(state)
+  }
+
   // Step 13: 优化结果 — final marker. No new work; just signals optimize
   // is done so the UI can advance to self-check.
-  setStep(state, 0, 12, 'done', '优化结果已生成，等待自检'); onUpdate(state)
+  setStep(state, 0, 13, 'done', '优化结果已生成，等待自检'); onUpdate(state)
 
   return storyboardJson
 }
@@ -626,9 +675,13 @@ export async function runDirectorPipeline(
   const state = createDirectorInitialState()
   onUpdate(state)
 
+  setTraceContext({ stage: 'optimize' })
   const storyboardJson = await runOptimize(state, onUpdate)
+  setTraceContext({ stage: 'selfcheck' })
   const issues = await runSelfCheck(state, storyboardJson, onUpdate)
+  setTraceContext({ stage: 'fix' })
   const finalJson = await runFix(state, storyboardJson, issues, onUpdate)
+  setTraceContext({ stage: undefined })
 
   return { state, storyboardJson: finalJson }
 }
