@@ -100,6 +100,26 @@ function normalizeApimartImageModel(model: string): string {
 }
 
 /**
+ * Every text-based agent call in the app (script-agent, casting,
+ * director-agent allocate/compose/storyboard, actor-agent enrich,
+ * critique-timeline/composition — everything routed through freeform-text
+ * or element-extraction) bottoms out in apimartChatOnce. Unlike the image
+ * fetch path (APIMART_IMAGE_FETCH_TIMEOUT_MS, line ~395) and the task-poll
+ * path (pollApimartTask's bounded deadline loop), this fetch had NO
+ * client-side timeout at all — if Apimart's /chat/completions connection
+ * ever hangs without responding or erroring, the call waits forever with
+ * zero signal, silently consuming whatever timeout budget wraps the whole
+ * pipeline. Root-caused via the evolution bench harness: real runs stalled
+ * at non-deterministic points (2 calls one run, 4 calls the next, always
+ * mid-script-agent) with dead silence in the trace store until an outer
+ * 15-45min timeout force-killed the test — no error, no retry, because
+ * nothing ever rejected. 240s matches the "180s task cap" convention used
+ * elsewhere in this file, with headroom for the slowest observed real call
+ * (188s).
+ */
+const APIMART_CHAT_TIMEOUT_MS = 240_000
+
+/**
  * Single attempt at /chat/completions. Pulled out of apimartChat so the
  * retry loop only re-runs the network call, not the env lookup / payload
  * construction (idempotent but pointless to repeat).
@@ -111,18 +131,31 @@ async function apimartChatOnce(
   userContent: Array<Record<string, unknown>>,
   temperature: number | undefined,
 ): Promise<string> {
-  const res = await fetch(`${baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: process.env.APIMART_TEXT_MODEL || APIMART_TEXT_MODEL,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userContent },
-      ],
-      ...(temperature != null ? { temperature } : {}),
-    }),
-  })
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), APIMART_CHAT_TIMEOUT_MS)
+  let res: Response
+  try {
+    res = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: process.env.APIMART_TEXT_MODEL || APIMART_TEXT_MODEL,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userContent },
+        ],
+        ...(temperature != null ? { temperature } : {}),
+      }),
+      signal: ctrl.signal,
+    })
+  } catch (e) {
+    if ((e as Error)?.name === 'AbortError') {
+      throw new Error(`Apimart chat timed out after ${APIMART_CHAT_TIMEOUT_MS}ms (no response)`)
+    }
+    throw e
+  } finally {
+    clearTimeout(timer)
+  }
   // `await res.text()` is where Apimart's mid-stream connection drops surface
   // as `TypeError: terminated`. Treat 5xx + empty body as transient too.
   const raw = await res.text()
@@ -144,6 +177,7 @@ function isTransientApimartError(err: unknown): boolean {
   return (
     /terminated/i.test(msg) ||
     /fetch failed/i.test(msg) ||
+    /timed out/i.test(msg) ||
     /ECONNRESET|ETIMEDOUT|EPIPE|ECONNREFUSED/i.test(msg) ||
     /Apimart chat 5\d\d/i.test(msg) ||
     /empty response/i.test(msg)
