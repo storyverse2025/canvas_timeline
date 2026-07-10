@@ -94,7 +94,16 @@ function runBenchInWorktree(baseUrl, runId, cases) {
 }
 
 function runOfflineChecks() {
-  execFileSync('npx', ['tsc', '-b'], { cwd: WORKTREE_PATH, stdio: 'inherit' })
+  // `tsc -b` (project-reference build mode) surfaces dozens of pre-existing,
+  // unrelated type errors across the codebase that `tsc --noEmit -p
+  // tsconfig.json` (the convention actually used everywhere else in this
+  // project/session) does not — confirmed by running both on unchanged
+  // main. Using `-b` here made every candidate fail this gate regardless of
+  // merit, since the codebase already has pre-existing type errors nobody
+  // is currently blocked by. Match the same check the rest of the workflow
+  // uses so only genuine regressions introduced by a candidate's own patch
+  // fail this step.
+  execFileSync('npx', ['tsc', '--noEmit', '-p', 'tsconfig.json'], { cwd: WORKTREE_PATH, stdio: 'inherit' })
   execFileSync('npx', ['vitest', 'run', '--exclude', '**/bench.e2e.test.ts'], {
     cwd: WORKTREE_PATH, stdio: 'inherit',
   })
