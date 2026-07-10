@@ -1915,14 +1915,32 @@ async function callArkOpenApi(action: string, body: Record<string, unknown>): Pr
   const kSigning = hmac(hmac(hmac(hmac(sk, shortDate), region), service), 'request')
   const signature = createHmac('sha256', kSigning).update(stringToSign).digest('hex')
 
-  const res = await fetch(`https://${host}/?${query}`, {
-    method: 'POST',
-    headers: {
-      ...headers,
-      Authorization: `HMAC-SHA256 Credential=${ak}/${scope}, SignedHeaders=${signedKeys.join(';')}, Signature=${signature}`,
-    },
-    body: payload,
-  })
+  // No timeout here previously — same class of bug fixed in apimartChatOnce
+  // (see APIMART_CHAT_TIMEOUT_MS comment): a hung connection would wait
+  // forever with no signal. This call backs CreateAsset/GetAsset/ListAssets
+  // — the entire 开白 registration path — so a silent hang here is exactly
+  // how a character ends up with an image but no registered asset.
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 30_000)
+  let res: Response
+  try {
+    res = await fetch(`https://${host}/?${query}`, {
+      method: 'POST',
+      headers: {
+        ...headers,
+        Authorization: `HMAC-SHA256 Credential=${ak}/${scope}, SignedHeaders=${signedKeys.join(';')}, Signature=${signature}`,
+      },
+      body: payload,
+      signal: ctrl.signal,
+    })
+  } catch (e) {
+    if ((e as Error)?.name === 'AbortError') {
+      throw new Error(`Ark OpenAPI ${action}: timed out after 30000ms (no response)`)
+    }
+    throw e
+  } finally {
+    clearTimeout(timer)
+  }
   const parsed = (await res.json()) as Record<string, unknown>
   const meta = parsed.ResponseMetadata as { Error?: { Code?: string; Message?: string } } | undefined
   if (meta?.Error) {
@@ -1974,8 +1992,18 @@ async function createByteplusAssetActive(publicUrl: string, name: string): Promi
   if (!id) throw new Error('CreateAsset returned no id')
   const deadline = Date.now() + 120_000
   while (Date.now() < deadline) {
-    const got = await callArkOpenApi('GetAsset', { ...(projectName ? { ProjectName: projectName } : {}), Id: id })
-    const status = ((got.Result ?? got) as { Status?: string }).Status
+    // A single poll's transient failure (including callArkOpenApi's own
+    // 30s timeout) must NOT abort registration outright — that would throw
+    // away an id that's still legitimately processing. Tolerate it as "not
+    // active yet" and keep polling within the 120s deadline; only a
+    // deterministic Status=Failed above is a real reason to give up.
+    let status: string | undefined
+    try {
+      const got = await callArkOpenApi('GetAsset', { ...(projectName ? { ProjectName: projectName } : {}), Id: id })
+      status = ((got.Result ?? got) as { Status?: string }).Status
+    } catch (e) {
+      console.warn(`[byteplus] GetAsset poll failed transiently (${(e as Error).message}); retrying within deadline`)
+    }
     if (status === 'Active') return { id, active: true }
     if (status === 'Failed') throw new Error('BytePlus asset moderation failed (Status=Failed)')
     await new Promise((r) => setTimeout(r, 4000))
