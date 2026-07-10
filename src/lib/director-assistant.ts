@@ -160,6 +160,16 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
     llm: createCapabilityLLM({ capabilityId: 'freeform-text' }),
     snapshot: { style: { presetId: artDir.stylePreset, promptText: artStyle } },
   })
+  // Fine-grained stage tags (HarnessX D8): runOptimize's 'optimize' stage
+  // wraps ~11 sequential real-work steps, several of which (script-agent's
+  // dossier especially) themselves chain many LLM calls internally. Without
+  // per-step tags, a stuck/slow bench run only shows "stuck somewhere in
+  // optimize" — not which of the 11 steps. Each tag persists (via the
+  // module-level trace context) across every runCapability call made until
+  // the next tag change, so calls INSIDE script-agent.run() all still land
+  // under 'script-agent-dossier' even though this file can't see its
+  // internal sub-steps directly.
+  setTraceContext({ stage: 'script-agent-dossier' })
   const dossier = await runAgentWithChatBridge(
     'script-agent',
     scriptAgent.run(
@@ -261,6 +271,7 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   // one-liner the extractor produced. Failures are non-fatal: log + fall
   // through with the original extraction.
   let augmentedExtraction = extraction
+  setTraceContext({ stage: 'character-design' })
   try {
     const { runDesignCharactersAndPersist } = await import('@/lib/character-design')
     const designed = await runDesignCharactersAndPersist({
@@ -278,6 +289,7 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   // the dossier's thin gender_presentation + voice_print one-liner.
   // Reads the freshly-augmented castingCards from projectDB (designCharacters
   // persists biography onto each card).
+  setTraceContext({ stage: 'voice-casting' })
   try {
     const { runCastVoicesAndSpawnAudio } = await import('@/lib/voice-binding')
     const castingCardsForVoice = useProjectDBImport.getState().script.castingCards ?? persistedCastingCards
@@ -296,6 +308,7 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
 
   // Step 7: 素材生成 (角色/场景图片)
   setStep(state, 0, 6, 'running'); onUpdate(state)
+  setTraceContext({ stage: 'ensure-elements' })
   const inv = await ensureElements(
     (msg) => { /* silent — progress shown via pipeline UI */ },
     { scriptText: scriptAnalysis, stylePreset: artDir.stylePreset, customStyle: artDir.customStyle, extraction: augmentedExtraction },
@@ -345,6 +358,7 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   // (anchor / strategy) for continuity, but they're both populated from the
   // single bible call.
   setStep(state, 0, 7, 'running'); onUpdate(state)
+  setTraceContext({ stage: 'style-bible' })
   const styleBible = await runAgentWithChatBridge(
     'art-director-agent',
     generateStyleBible({
@@ -364,6 +378,7 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
 
   // Step 10: 镜头分配计划 — director-agent.allocateShots
   setStep(state, 0, 9, 'running'); onUpdate(state)
+  setTraceContext({ stage: 'allocate-shots' })
   const shotAllocation = await runAgentWithChatBridge(
     'director-agent',
     directorAllocateShots(
@@ -376,6 +391,7 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
 
   // Step 11: 镜头构图设计 — director-agent.composeShots
   setStep(state, 0, 10, 'running'); onUpdate(state)
+  setTraceContext({ stage: 'compose-shots' })
   const shotComposition = await runAgentWithChatBridge(
     'director-agent',
     directorComposeShots({ shotAllocation, visualAnchor, revisedScript }, agentCtx),
@@ -394,6 +410,7 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   // ScriptInputDialog / chat-intent will populate fresh rows on success.
   useStoryboardStore.getState().clear()
   setStep(state, 0, 11, 'running'); onUpdate(state)
+  setTraceContext({ stage: 'generate-storyboard-table' })
   // Dedicated `storyboard-generation` capability (reinforces the JSON-array
   // contract) + validate→retry gate: generateStoryboardTable is a raw
   // passthrough, so if a run comes back as anything parseAndValidateStoryboard
@@ -447,6 +464,7 @@ async function runOptimize(state: PipelineState, onUpdate: OnUpdate): Promise<st
   // to the un-enriched storyboardJson (the same behavior as before this
   // step existed) and let the user re-run "演员完善表演" per-row if needed.
   setStep(state, 0, 12, 'running'); onUpdate(state)
+  setTraceContext({ stage: 'actor-enrich-table' })
   try {
     const rowsMatch = storyboardJson.match(/\[[\s\S]*\]/)
     const parsedRows: unknown = rowsMatch ? JSON.parse(rowsMatch[0]) : null
@@ -572,6 +590,7 @@ async function runSelfCheck(state: PipelineState, storyboardJson: string, onUpda
 
   // Timeline / continuity check — director-agent.critiqueTimeline
   setStep(state, 1, 0, 'running'); onUpdate(state)
+  setTraceContext({ stage: 'critique-timeline' })
   const timelineIssues = await runAgentWithChatBridge(
     'director-agent',
     directorCritiqueTimeline(
@@ -592,6 +611,7 @@ async function runSelfCheck(state: PipelineState, storyboardJson: string, onUpda
 
   // Composition check — art-director-agent.critiqueComposition (typed)
   setStep(state, 1, 1, 'running'); onUpdate(state)
+  setTraceContext({ stage: 'critique-composition' })
   const compositionIssues = await runAgentWithChatBridge(
     'art-director-agent',
     artDirectorCritique({ storyboardJson }, agentCtx),
