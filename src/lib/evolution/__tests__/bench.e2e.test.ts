@@ -83,11 +83,30 @@ describe.skipIf(!BASE_URL)('bench e2e — genre adaptation batch', async () => {
   // promise from chat-store.presentQuestion() never resolves) until vitest's
   // per-case timeout kills it. Auto-answer with the recommended option,
   // matching exactly what driveAuto() would do for a non-interactive caller.
-  useChatStore.subscribe((state) => {
-    const pending = state.pendingQuestion
-    if (pending) {
-      useChatStore.getState().answerQuestion(pending.id, pickRecommendedAnswer(pending.question))
-    }
+  //
+  // IMPORTANT: this must wrap presentQuestion directly, NOT react to
+  // pendingQuestion via store.subscribe(). chat-store.presentQuestion sets
+  // `pendingQuestion` (firing subscribers synchronously) BEFORE it registers
+  // the resolver in pendingResolvers (which only happens inside the
+  // `new Promise(...)` constructor on the next line). A subscribe-based
+  // auto-answerer calls answerQuestion() during that window, finds no
+  // resolver yet, and silently no-ops — the promise then never resolves and
+  // the pipeline hangs forever with zero error. Confirmed via a standalone
+  // repro (isolated from the real store) before ever touching this file:
+  // the subscribe approach reliably deadlocks; wrapping presentQuestion
+  // (which only runs its own answer AFTER the original call — and thus the
+  // resolver registration — has fully returned) resolves correctly, including
+  // across script-agent's up to 6 sequential questions.
+  const originalPresentQuestion = useChatStore.getState().presentQuestion
+  useChatStore.setState({
+    presentQuestion: (agentLabel, question) => {
+      const promise = originalPresentQuestion(agentLabel, question)
+      const pending = useChatStore.getState().pendingQuestion
+      if (pending) {
+        useChatStore.getState().answerQuestion(pending.id, pickRecommendedAnswer(pending.question))
+      }
+      return promise
+    },
   })
 
   beforeEach(() => {
