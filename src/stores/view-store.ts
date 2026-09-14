@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-type ActiveTab = 'canvas' | 'table' | 'timeline';
+type ActiveTab = 'canvas' | 'table' | 'timeline' | 'projects';
 
 interface ViewState {
   activeTab: ActiveTab;
