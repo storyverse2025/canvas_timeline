@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { Save, FolderOpen, Wand2, Eye, EyeOff, LayoutGrid, Table2, Film, Trash, Clapperboard, History } from 'lucide-react'
+import { Save, FolderOpen, Wand2, Eye, EyeOff, LayoutGrid, Table2, Film, Trash, Clapperboard, History, Library } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useUiStore } from '@/stores/ui-store'
@@ -17,6 +17,7 @@ const TABS = [
   { id: 'canvas', label: '画布', Icon: LayoutGrid },
   { id: 'table',  label: '表格', Icon: Table2 },
   { id: 'timeline', label: '时间轴', Icon: Film },
+  { id: 'projects', label: '项目库', Icon: Library },
 ] as const
 
 export function TopBar() {

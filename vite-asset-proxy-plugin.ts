@@ -3,7 +3,7 @@ import type { Plugin } from 'vite'
 // Hosts that hand out signed video/image URLs but don't set CORS, so the
 // browser can't fetch them for canvas-based export (timeline合拼视频).
 // Anything matching this regex can be proxied via /asset-proxy?url=<encoded>.
-const ALLOWED_HOST_RE = /(?:^|\.)(?:volces\.com|bytepluses\.com|bytedanceapi\.com|byteimg\.com|byteoss\.com|fal\.media|fal\.run)$/i
+const ALLOWED_HOST_RE = /(?:^|\.)(?:volces\.com|bytepluses\.com|bytedanceapi\.com|byteimg\.com|byteoss\.com|fal\.media|fal\.run|supabase\.co)$/i
 
 // Hop-by-hop or origin-specific headers we should not forward to the client.
 const STRIPPED_RESPONSE_HEADERS = new Set([
