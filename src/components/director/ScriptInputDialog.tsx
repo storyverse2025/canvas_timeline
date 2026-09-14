@@ -8,6 +8,7 @@ import { useChatStore } from '@/stores/chat-store'
 import { runDirectorPipeline, type PipelineState } from '@/lib/director-assistant'
 import { parseAndValidateStoryboard } from '@/lib/storyboard-parser'
 import { ArtDirectionPanel } from './ArtDirectionPanel'
+import { CastVoicePanel } from './CastVoicePanel'
 import { DirectorPipelineProgress } from './DirectorPipelineProgress'
 import { InterviewCard } from '@/components/chat/InterviewCard'
 
@@ -166,6 +167,11 @@ export function ScriptInputDialog({ onClose }: Props) {
 
           {/* Pipeline progress */}
           {pipelineState && <DirectorPipelineProgress state={pipelineState} />}
+
+          {/* Restored actor/voice casting panel. It remains visible after the
+              Director run so casting cards can be reviewed, auto-recast, or
+              manually swapped without hunting through canvas audio nodes. */}
+          {(phase === 'done' || (script.castingCards?.length ?? 0) > 0) && <CastVoicePanel />}
         </div>
 
         {/* Footer */}
