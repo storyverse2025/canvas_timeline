@@ -2,12 +2,18 @@ import { memo, useRef, useState, useCallback } from 'react'
 import { Handle, Position, NodeResizer, useNodeId } from '@xyflow/react'
 import { toast } from 'sonner'
 import { NodeFloatingToolbar } from '../NodeFloatingToolbar'
-import { ImageIcon, Upload, Link as LinkIcon, User, MapPin, Package, Film, Mic, Star } from 'lucide-react'
+import { ImageIcon, Upload, Link as LinkIcon, User, MapPin, Package, Film, Mic, Star, ShieldCheck, Download } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
+import { useCanvasStore } from '@/stores/canvas-store'
 import { useLibtvTasksStore } from '@/stores/libtv-tasks-store'
+import { usePrevisRunsStore } from '@/stores/previs-runs-store'
+import { cancelPrevisRun } from '@/lib/previs-export/run'
 import { useAssetStore } from '@/stores/asset-store'
 import { useStoryboardStore } from '@/stores/storyboard-store'
+import { useProjectDB } from '@/stores/project-db'
+import { canonicalCharacterName } from '@/lib/virtual-avatar-library'
+import { ByteplusAssetPickerDialog } from '@/components/director/ByteplusAssetPickerDialog'
 import { runCapability } from '@/lib/capabilities/client'
 import { VoiceFeedbackButton, type VoicePlan, type VoiceElementKind } from '@/components/canvas/VoiceFeedbackButton'
 import { PanoramaViewer } from '@/components/canvas/PanoramaViewer'
@@ -46,6 +52,10 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
       (t) => t.itemId === data.itemId && (t.status === 'pending' || t.status === 'polling'),
     ),
   )
+  // 「生成 3D 预演」placeholder: returns the stored run object (stable ref).
+  const previsRun = usePrevisRunsStore((s) =>
+    Object.values(s.runs).find((r) => r.itemId === data.itemId && r.status !== 'done'),
+  )
 
   // For keyframe / beat-video items: is this the one the storyboard table
   // currently adopts? Detect by URL match — each regen creates a fresh
@@ -56,6 +66,15 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
   const isKeyframeItem = item?.role === 'keyframe'
   const isBeatVideoItem = item?.role === 'beat-video'
   const adoptable = isKeyframeItem || isBeatVideoItem
+
+  // 角色节点: 开白资产绑定入口 (source of truth — bind here and every
+  // downstream 身份版 / keyframe / video inherits via characterAvatarBindings).
+  const isCharacterItem = item?.role === 'character' || asset?.type === 'character'
+  const characterName = (asset?.name ?? item?.name ?? '').trim()
+  const [bpPickerOpen, setBpPickerOpen] = useState(false)
+  const boundAssetId = useProjectDB((s) =>
+    characterName ? s.script.characterAvatarBindings?.[canonicalCharacterName(characterName)] : undefined,
+  )
   const adoptedRowId = useStoryboardStore((s) => {
     if (!item?.content) return undefined
     if (isKeyframeItem) return s.rows.find((r) => r.keyframeUrl === item.content)?.id
@@ -105,6 +124,37 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
       })
       toast.success(`已设为镜号 ${shotNumber} 的采用 beat video`)
     }
+  }, [item, nodeId])
+
+  // 虚拟取景 (panorama 截机位): persist the captured 16:9 camera plate as its
+  // own canvas node, edge-wired from this scene so the provenance is visible
+  // (场景全景 → 机位截图). Staggered right of the scene node; multiple
+  // captures line up side by side.
+  const captureSceneView = useCallback((dataUrl: string) => {
+    if (!item) return
+    const canvas = useCanvasStore.getState()
+    const selfNode = canvas.nodes.find((n) => n.id === nodeId)
+    const baseX = (selfNode?.position.x ?? 0) + (selfNode?.width ?? 360) + 40
+    const baseY = selfNode?.position.y ?? 0
+    const siblings = Object.values(useCanvasItemStore.getState().items).filter(
+      (it) => it.role === 'scene-view' && it.name.startsWith(`${item.name}-机位`),
+    ).length
+    const viewItemId = useCanvasItemStore.getState().addItem({
+      kind: 'image',
+      name: `${item.name}-机位${siblings + 1}`,
+      content: dataUrl,
+      prompt: `机位截图（虚拟取景 16:9）from 场景全景「${item.name}」`,
+      role: 'scene-view',
+    })
+    const viewNodeId = canvas.addItemNode(
+      viewItemId, 'image',
+      { x: baseX, y: baseY + siblings * 200 },
+      { width: 280, height: 158 },
+    )
+    canvas.addEdge(nodeId, viewNodeId)
+    toast.success(`机位${siblings + 1} 已截取`, {
+      description: '已落到画布并与场景全景连边；可在分镜行中选作场景/参考图',
+    })
   }, [item, nodeId])
   const [promptOpen, setPromptOpen] = useState(false)
   const [regenerating, setRegenerating] = useState<{ intent: string } | null>(null)
@@ -170,7 +220,7 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
       className={cn(
         'relative w-full h-full rounded-lg border-2 border-border bg-card shadow-md overflow-hidden',
         selected && 'ring-2 ring-primary',
-        (activeTask || regenerating) && 'bragi-generating'
+        (activeTask || regenerating || previsRun?.status === 'running') && 'bragi-generating'
       )}
     >
       <NodeFloatingToolbar nodeId={nodeId} itemId={data.itemId} isVisible={selected} />
@@ -212,6 +262,50 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
             compact
           />
         </div>
+      )}
+
+      {/* 角色节点: 开白资产绑定按钮 (top-right). Binding here is the source of
+          truth — the name-keyed characterAvatarBindings is read by 身份版 /
+          keyframe / video generation, so every downstream artifact inherits
+          it. Green ring when already bound. */}
+      {isCharacterItem && characterName && (
+        <div className="absolute top-1 right-1 z-20">
+          <button
+            title={boundAssetId ? `已绑定开白资产 · 点击更换（生成时携带 asset://${boundAssetId}）` : '绑定开白资产作为该角色（下游身份版/关键帧/视频自动继承，过隐私风控）'}
+            onClick={(e) => { e.stopPropagation(); setBpPickerOpen(true) }}
+            className={cn(
+              'p-1 rounded shadow-sm text-white',
+              boundAssetId ? 'bg-emerald-600 ring-1 ring-emerald-300' : 'bg-black/50 hover:bg-emerald-700',
+            )}
+          >
+            <ShieldCheck className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {isCharacterItem && (
+        <ByteplusAssetPickerDialog
+          open={bpPickerOpen}
+          characterName={characterName}
+          onClose={() => setBpPickerOpen(false)}
+          onPick={(bpAsset) => {
+            // Set this character node's image to the asset preview AND bind
+            // the character → asset (name-keyed) so downstream inherits.
+            if (bpAsset.previewUrl) {
+              updateItem(data.itemId, { content: bpAsset.previewUrl })
+              if (data.assetId) updateAsset(data.assetId, { imageUrl: bpAsset.previewUrl })
+            }
+            const key = canonicalCharacterName(characterName)
+            if (key) {
+              const db = useProjectDB.getState()
+              const bindings = db.script.characterAvatarBindings ?? {}
+              db.updateScript({ characterAvatarBindings: { ...bindings, [key]: bpAsset.id } })
+              toast.success(`已绑定开白资产给「${characterName.split(/[，,。\n]/)[0]}」`, {
+                description: `角色图已更新；身份版/关键帧/视频将自动携带 asset://${bpAsset.id}`,
+              })
+            }
+          }}
+        />
       )}
 
       {/* Typed badge — only when this image node is the canvas representation of an asset */}
@@ -334,7 +428,9 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
           // equirectangular panoramas. Render through the draggable
           // PanoramaViewer so the user can pan to different viewpoints inside
           // the canvas node. Non-scene image assets stay as plain <img>.
-          <PanoramaViewer src={item.content} alt={item.name} />
+          // onCapture = 虚拟取景: the 截机位 button exports the current view
+          // direction as a flat 16:9 camera plate node wired to this scene.
+          <PanoramaViewer src={item.content} alt={item.name} onCapture={captureSceneView} />
         ) : (
           <img src={thumb(item.content, 512)} alt={item.name} loading="lazy" decoding="async" className="w-full h-full object-contain bg-black/40" />
         )
@@ -384,6 +480,56 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
             </div>
           )}
         </div>
+      )}
+
+      {previsRun?.status === 'running' && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/70 text-white p-3 text-center">
+          <div className="w-6 h-6 border-2 border-sky-300 border-t-transparent rounded-full animate-spin" />
+          <div className="text-[11px]">3D 预演 · {previsRun.phase}</div>
+          <div className="text-[9px] text-white/60">
+            已调用 {previsRun.toolCalls} 次工具 · {Math.max(1, Math.round((Date.now() - previsRun.startedAt) / 60000))} 分钟
+          </div>
+          <button
+            className="mt-1 px-2 py-0.5 text-[10px] rounded bg-white/10 hover:bg-white/20"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={() => void cancelPrevisRun(previsRun.shortId)}
+          >取消</button>
+        </div>
+      )}
+      {previsRun?.status === 'error' && !item.content && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/70 text-center p-3">
+          <div className="text-[11px] text-red-300">3D 预演失败</div>
+          <div className="text-[9px] text-white/70 line-clamp-4">{previsRun.error}</div>
+        </div>
+      )}
+      {item.sessionUrl && (
+        <a
+          href={item.sessionUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="在 3D 导演台打开这个预演（可继续调站位、机位、动作）"
+          className="absolute top-1 left-9 z-20 px-1.5 py-0.5 text-[10px] rounded bg-sky-600/80 text-white hover:bg-sky-500"
+          onMouseDown={(e) => e.stopPropagation()}
+        >3D</a>
+      )}
+      {item.bundleUrl && (
+        <a
+          href={item.bundleUrl}
+          download
+          title="下载 .previs.json 项目包（单镜头约 30 MB，多镜头可达上百 MB；含白模布景 / 人物 / 机位 / 参考图）：到 3D 导演台「场景文件 → 从本地加载项目」上传后继续编辑"
+          className={`absolute top-1 ${item.sessionUrl ? 'left-[4.25rem]' : 'left-9'} z-20 inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] rounded bg-emerald-600/80 text-white hover:bg-emerald-500`}
+          onMouseDown={(e) => e.stopPropagation()}
+        ><Download className="w-2.5 h-2.5" />.previs.json</a>
+      )}
+      {item.reportUrl && (
+        <a
+          href={item.reportUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="导演报告：布景、走位图、每个 beat 的分镜与取舍"
+          className="absolute top-7 left-9 z-20 px-1.5 py-0.5 text-[10px] rounded bg-violet-600/80 text-white hover:bg-violet-500"
+          onMouseDown={(e) => e.stopPropagation()}
+        >报告</a>
       )}
 
       <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onFile} />

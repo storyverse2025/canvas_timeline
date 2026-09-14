@@ -15,7 +15,7 @@ export function BatchToolbar() {
           className="flex items-center gap-1 px-2 py-1 text-[10px] rounded border border-border text-muted-foreground hover:text-foreground hover:border-foreground/30 transition-colors disabled:opacity-40"
           onClick={() => startBatch('keyframe')}
           disabled={batch?.isRunning}
-          title="批量生成所有分镜的 Keyframe 图片"
+          title="批量生成：每行按 角色身份版 → 黑白故事板 → 开场构图 链式生成（已有身份版的行只补缺）"
         >
           <ImageIcon className="w-3 h-3" />
           批量 KF

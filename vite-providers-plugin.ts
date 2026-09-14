@@ -800,6 +800,9 @@ function ragJsonlPath(): string {
   // examples.jsonl (the older/smaller scratch file).
   const home = process.env.HOME || ''
   const candidates = [
+    path.join(home, 'repos/prompt_rag/data/video_examples_20k.jsonl'),
+    path.join(home, 'repos/prompt_rag/data/vidprom_20k.jsonl'),
+    path.join(home, 'repos/prompt_rag/data/libtv_canvas/canvas_examples.jsonl'),
     path.join(home, 'repos/prompt_rag/data/examples.jsonl'),
     path.join(home, 'repos/prompt_rag/examples.jsonl'),
   ]
@@ -856,25 +859,30 @@ function loadExamples(): RagExample[] {
   return examples
 }
 
-async function artRagSearch(req: IncomingMessage): Promise<{ hits: ArtRagSearchHit[] }> {
+async function artRagSearch(req: IncomingMessage): Promise<{ hits: ArtRagSearchHit[]; corpus_count: number; source_path: string }> {
   const body = (await readJson(req)) as {
     query?: string
     top_k?: number
     task_category?: string | null
     task_type?: string | null
     model_name?: string | null
+    output_media_type?: string | null
   }
   const query = (body.query ?? '').trim()
   if (!query) throw new Error('art-rag-search: missing query field')
 
   const examples = loadExamples()
+  const sourcePath = ragJsonlPath()
+  if (examples.length < 20000) {
+    throw new Error(`art-rag-search: wrong/too-small corpus (${examples.length} examples) from ${sourcePath}. Expected the 20k+ video prompt corpus; set PROMPT_RAG_JSONL or create ~/repos/prompt_rag/data/vidprom_20k.jsonl.`)
+  }
   if (examples.length === 0) {
-    return { hits: [] }
+    return { hits: [], corpus_count: examples.length, source_path: sourcePath }
   }
   const N = examples.length
   const queryTokens = tokenize(query)
   if (queryTokens.length === 0) {
-    return { hits: [] }
+    return { hits: [], corpus_count: examples.length, source_path: sourcePath }
   }
 
   // Score: sum of log(N / df) for each unique query token that appears in
@@ -884,6 +892,7 @@ async function artRagSearch(req: IncomingMessage): Promise<{ hits: ArtRagSearchH
   const taskType = body.task_type ?? null
   const taskCategory = body.task_category ?? null
   const modelName = body.model_name ?? null
+  const outputMediaType = body.output_media_type ?? null
   const seen = new Set<string>(queryTokens) // dedupe query terms
   const tokens = cachedTokens!
   const docFreq = cachedDocFreq!
@@ -893,6 +902,7 @@ async function artRagSearch(req: IncomingMessage): Promise<{ hits: ArtRagSearchH
     if (taskType && ex.task_type !== taskType) continue
     if (taskCategory && ex.task_category !== taskCategory) continue
     if (modelName && ex.model_name !== modelName) continue
+    if (outputMediaType && ex.output_media_type !== outputMediaType) continue
     const exTokens = tokens.get(ex.id ?? '') ?? new Set<string>()
     if (exTokens.size === 0) continue
     let score = 0
@@ -927,7 +937,7 @@ async function artRagSearch(req: IncomingMessage): Promise<{ hits: ArtRagSearchH
     source_name: s.ex.source_name ?? '',
     source_url: s.ex.source_url ?? '',
   }))
-  return { hits }
+  return { hits, corpus_count: examples.length, source_path: sourcePath }
 }
 
 async function dispatch(req: Req): Promise<{ url: string; kind: 'image' | 'video' }> {

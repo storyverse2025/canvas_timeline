@@ -16,6 +16,7 @@ import { generateImage } from '@/lib/fal-client'
 import { detectIntent, executeIntent } from '@/lib/chat-intent'
 import { buildCanvasContext } from '@/lib/canvas-context'
 import { parseAndValidateStoryboard } from '@/lib/storyboard-parser'
+import { mergeSameSceneRows } from '@/lib/storyboard-merge'
 import { useStoryboardStore } from '@/stores/storyboard-store'
 import { upsertKeyframeRow } from '@/lib/keyframe-sync'
 import { ensureElements, buildElementContext, type ElementInventory } from '@/lib/canvas-elements'
@@ -599,8 +600,11 @@ export function ChatPanel() {
             result = parseAndValidateStoryboard(lastText)
           }
           if (result.ok && result.rows) {
-            useStoryboardStore.getState().replaceAll(result.rows)
-            addMessage('system', `✓ 分镜表已生成：${result.rows.length} 行，时间轴已同步 → 切到「表格」/「时间线」查看`)
+            const merged = mergeSameSceneRows(result.rows)
+            useStoryboardStore.getState().replaceAll(merged.rows)
+            addMessage('system', merged.mergedAway > 0
+              ? `✓ 分镜表已生成：${result.rows.length} 行 → 合并同场景后 ${merged.rows.length} 行（单条更接近 15s），时间轴已同步 → 切到「表格」/「时间线」查看`
+              : `✓ 分镜表已生成：${merged.rows.length} 行，时间轴已同步 → 切到「表格」/「时间线」查看`)
           } else if (!streamErrorMessage) {
             // Only print "schema 重试 X 次失败" when the stream itself
             // succeeded but the schema kept failing — otherwise the

@@ -71,7 +71,12 @@ export function CanvasAssetsTab() {
           result.push({
             id: itemId,
             kind: 'image',
-            role: guessRole(item.name),
+            // Honor the item's EXPLICIT semantic role first (director pipeline,
+            // asset dialogs, etc. tag nodes role:'character'/'scene'/'prop').
+            // Only fall back to name-guessing for legacy/untagged items —
+            // otherwise a character named "艾琳 (Erin)" (no keyword match)
+            // silently drops out of the 角色 tab.
+            role: itemRoleToElementRole(item.role) ?? guessRole(item.name),
             name: item.name,
             content: item.content,
             description: item.prompt ?? '',
@@ -140,6 +145,35 @@ function mapAssetType(type: string): ElementRole {
     case 'prop': return 'prop'
     case 'keyframe': return 'keyframe'
     default: return 'unknown'
+  }
+}
+
+/** Map a canvas-item's explicit CanvasItemRole → the panel's ElementRole.
+ *  Returns null for roles the 画布资产 tabs don't categorize (style/system/
+ *  voice/…) so the caller can fall back to name-guessing. */
+function itemRoleToElementRole(role: string | undefined): ElementRole | null {
+  switch (role) {
+    case 'character':
+    case 'character-bio':
+      return 'character'
+    case 'scene':
+    case 'scene-view':
+    case 'scene-description':
+      return 'scene'
+    case 'prop':
+    case 'prop-description':
+      return 'prop'
+    case 'keyframe':
+    case 'keyframe-clean':
+    case 'identity-sheet': // identity sheets belong under 角色 conceptually, but are keyframe-like plates
+      return 'keyframe'
+    case 'beat-video':
+    case 'beat-video-alternate':
+      return 'beat-video'
+    case 'script':
+      return 'script'
+    default:
+      return null
   }
 }
 

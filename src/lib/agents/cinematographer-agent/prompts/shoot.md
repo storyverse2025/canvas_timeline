@@ -8,11 +8,11 @@ output: text (Seedance 2.0 video generation prompt)
 ---
 
 【全能参考 / Director Reference】
-使用上传的 @图片1 / image1 作为起始帧 / 主参考。从图中读取角色、服装、场景、调度、光影、运镜节奏。
-不要拍摄或展示这张图板本身；最终输出是干净的全屏电影画面。
+使用上传的参考图作为生成依据；每张图的职责以下方【REFERENCE IMAGES / 参考图】legend 为准（图的数量与顺序随镜头变化，legend 是唯一权威）。
+不要拍摄或展示任何参考图板本身；最终输出是干净的全屏电影画面。
 
 【CASTING LOCK / 角色锁定】
-角色脸型、发型、服装、体态必须与 @图片1 一致。不要换角，不要增角。
+角色脸型、发型、服装、体态必须与 legend 中标注的「CASTING 依据 / casting anchor」图一致。不要换角，不要增角。
 
 【NEGATIVE】
 不要图板边框、分栏、网格、箭头、字幕、subtitle、caption、watermark、logo、UI、乱码文字、credits、time codes、frame counters。In-world signage 只允许作为画面中实际存在的道具。

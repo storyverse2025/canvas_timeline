@@ -26,7 +26,7 @@ const MAX_CONCURRENT = 5
 
 export function useBatchGenerate() {
   const [batch, setBatch] = useState<BatchState | null>(null)
-  const { generateKeyframe, generateBeatVideo } = useStoryboardGenerate()
+  const { generateKeyframe, generateBeatVideo, generateIdentitySheets } = useStoryboardGenerate()
 
   const updateJob = (rowId: string, patch: Partial<BatchJob>) => {
     setBatch((prev) => {
@@ -66,7 +66,21 @@ export function useBatchGenerate() {
           if (!row) throw new Error('row not found')
 
           if (type === 'keyframe') {
-            await generateKeyframe(row)
+            // Per-row chain: ①角色身份版 → ②黑白故事板 → ③开场构图.
+            // The sheets feed the storyboard as character refs; the
+            // storyboard's first panel anchors the 开场构图 (②→③ is
+            // sequenced inside the generateKeyframe verb). Existing sheets
+            // are reused — a re-run only fills what's missing. Sheet
+            // failures don't abort the row (generateIdentitySheets toasts
+            // internally); the keyframe then falls back to raw slot images.
+            const needs1 = Boolean((row.character1?.image || row.character1?.description) && !row.identitySheet1Url)
+            const needs2 = Boolean((row.character2?.image || row.character2?.description) && !row.identitySheet2Url)
+            if (needs1 && needs2) await generateIdentitySheets(row)
+            else if (needs1) await generateIdentitySheets(row, 1)
+            else if (needs2) await generateIdentitySheets(row, 2)
+            // Re-read: the sheets were persisted onto the row by updateRow.
+            const fresh = useStoryboardStore.getState().rows.find((r) => r.id === job.rowId) ?? row
+            await generateKeyframe(fresh)
           } else {
             await generateBeatVideo(row)
             const updatedRow = useStoryboardStore.getState().rows.find((r) => r.id === job.rowId)

@@ -7,6 +7,7 @@ import { useViewStore } from '@/stores/view-store'
 import { useChatStore } from '@/stores/chat-store'
 import { runDirectorPipeline, type PipelineState } from '@/lib/director-assistant'
 import { parseAndValidateStoryboard } from '@/lib/storyboard-parser'
+import { mergeSameSceneRows } from '@/lib/storyboard-merge'
 import { ArtDirectionPanel } from './ArtDirectionPanel'
 import { DirectorPipelineProgress } from './DirectorPipelineProgress'
 import { InterviewCard } from '@/components/chat/InterviewCard'
@@ -62,9 +63,15 @@ export function ScriptInputDialog({ onClose }: Props) {
       // Parse and apply storyboard
       const result = parseAndValidateStoryboard(storyboardJson)
       if (result.ok && result.rows) {
-        useStoryboardStore.getState().replaceAll(result.rows)
+        // 同场景相邻分镜合并到 ≤15s，单条 beat video 尽量吃满 Seedance 时长。
+        const merged = mergeSameSceneRows(result.rows)
+        useStoryboardStore.getState().replaceAll(merged.rows)
         updateScript({ optimizedText: storyboardJson })
-        toast.success(`分镜表已生成：${result.rows.length} 行`)
+        toast.success(
+          merged.mergedAway > 0
+            ? `分镜表已生成：${result.rows.length} 行 → 合并同场景后 ${merged.rows.length} 行（单条更接近 15s）`
+            : `分镜表已生成：${merged.rows.length} 行`,
+        )
         setPhase('done')
       } else {
         toast.error('分镜 JSON 解析失败', {

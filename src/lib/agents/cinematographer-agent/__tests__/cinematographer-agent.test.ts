@@ -96,7 +96,7 @@ describe('pure helpers', () => {
     expect(resolveEffectiveDurationSeconds({ userRequested: 5, dialogue: huge })).toBe(15)
   })
 
-  it('buildMotionDescription keeps ONLY dialogue + SFX (motion_prompts, style/scene/mood are all stripped — keyframe carries the motion via its panel progression)', () => {
+  it('buildMotionDescription formats row fields into a Seedance 2.0 structure', () => {
     const desc = buildMotionDescription({
       row: {
         motion_prompts: 'slow push-in',
@@ -108,30 +108,35 @@ describe('pure helpers', () => {
         sound_effects: 'distant thunder; footsteps on wet gravel',
       },
       visualStyle: 'Cold-toned filmic',
+      contextRefs: [{ role: '角色1', description: 'Alice, grey trench' }],
     })
-    // Kept: dialogue + SFX, labelled with their own blocks.
-    expect(desc).toContain('【对白 / DIALOGUE】')
+    expect(desc).toContain('【Seedance 2.0 视频生成指令】')
+    expect(desc).toContain('【参考素材用途】')
+    expect(desc).toContain('角色1：Alice, grey trench')
+    expect(desc).toContain('【主体 / 场景 / 风格】')
+    expect(desc).toContain('rooftop at dusk')
+    expect(desc).toContain('Cold-toned filmic')
+    expect(desc).toContain('【表演与情绪】')
+    expect(desc).toContain('Alice draws the watch')
+    expect(desc).toContain('【分时段动作与运镜】')
+    expect(desc).toContain('slow push-in')
+    expect(desc).toContain('【导演分镜格信息】')
+    expect(desc).toContain('3-panel grid')
+    expect(desc).toContain('not a literal split-screen')
+    expect(desc).toContain('【声音设计】')
     expect(desc).toContain('Alice: We have to go.')
-    expect(desc).toContain('【音效 / SFX】')
     expect(desc).toContain('distant thunder')
-    // Stripped: motion_prompts (now carried by the keyframe panels alone),
-    // style, storyboard panels, visual_description, actions, mood, shot
-    // size — they all biased the model off the keyframe.
-    expect(desc).not.toContain('slow push-in')
-    expect(desc).not.toContain('Cold-toned filmic')
-    expect(desc).not.toContain('3-panel grid')
-    expect(desc).not.toContain('rooftop at dusk')
-    expect(desc).not.toContain('Alice draws the watch')
-    expect(desc).not.toContain('medium close-up shot')
-    expect(desc).not.toContain('temporal guidance')
   })
 
-  it('buildMotionDescription returns empty string when there is no dialogue and no SFX', () => {
+  it('buildMotionDescription still returns a minimal Seedance scaffold when there is no dialogue and no SFX', () => {
     const desc = buildMotionDescription({
       row: { motion_prompts: 'push in', visual_description: 'rooftop' },
       visualStyle: 'Cold-toned filmic',
     })
-    expect(desc).toBe('')
+    expect(desc).toContain('【Seedance 2.0 视频生成指令】')
+    expect(desc).toContain('push in')
+    expect(desc).toContain('rooftop')
+    expect(desc).toContain('Cold-toned filmic')
   })
 
   it('buildImageLegend lists ONLY the keyframe (omni-reference / 全能参考 mode)', () => {
@@ -143,23 +148,149 @@ describe('pure helpers', () => {
     expect(legend).not.toContain('image2')
     expect(legend).not.toContain('角色1')
   })
+
+  it('buildImageLegend designates @图片1=首帧 and @图片2=导演思维图 when a grid ref is shipped', () => {
+    const legend = buildImageLegend('https://clean.png', true)
+    expect(legend).toContain('image1 / @图片1')
+    expect(legend).toContain('image2 / @图片2')
+    expect(legend).toContain('首帧图')
+    expect(legend).toContain('导演思维图')
+    // The grid must be reference-only — never rendered into the frame.
+    expect(legend).toContain('严禁')
+  })
+
+  it('buildImageLegend enumerates the reference pack in order (角色→场景→分镜→机位) and @-points each subject', () => {
+    const legend = buildImageLegend('https://clean.png', false, [], [
+      { url: 'https://id1.png', label: '角色身份版「莉安」', usage: '锁定角色「莉安」的脸型与服装', subject: '莉安' },
+      { url: 'https://scene.png', label: '场景图「废弃教堂」', usage: '锁定场景空间与光线', subject: '废弃教堂' },
+      { url: 'https://grid.png', label: '黑白手绘分镜图', usage: '读取调度与箭头标注' },
+      { url: 'https://cam.png', label: '机位截图 / 开场构图', usage: '以这张作为开场机位' },
+    ])
+    expect(legend).toContain('多参考输入合成')
+    expect(legend).toContain('image1 / @图片1 = 角色身份版「莉安」')
+    expect(legend).toContain('@莉安 即指向这张图中的主体')
+    expect(legend).toContain('image2 / @图片2 = 场景图「废弃教堂」')
+    expect(legend).toContain('image3 / @图片3 = 黑白手绘分镜图')
+    expect(legend).toContain('image4 / @图片4 = 机位截图 / 开场构图')
+    // Pack annotations must never be rendered into the frame.
+    expect(legend).toContain('严禁')
+    // Pack mode replaces the keyframe/grid legend entirely.
+    expect(legend).not.toContain('导演思维图 / director storyboard sheet')
+  })
+
+  it('buildImageLegend points CASTING 依据 at character refs (never at the empty scene plate)', () => {
+    // Regression: a pack whose image1 is the scene plate (an EMPTY
+    // environment — NO HUMANS by design) used to inherit shoot.md's
+    // hardcoded "casting must match @图片1", sending the model to lock
+    // faces in an image that deliberately has none.
+    const legend = buildImageLegend('https://cam.png', false, [], [
+      { url: 'https://c1.png', label: '角色图「零」', usage: 'u', subject: '零', kind: 'character' },
+      { url: 'https://scene.png', label: '场景图「驾驶舱」', usage: 'u', kind: 'scene' },
+      { url: 'https://grid.png', label: '黑白手绘分镜图', usage: 'u', kind: 'storyboard' },
+      { url: 'https://cam.png', label: '机位截图 / 开场构图', usage: 'u', kind: 'camera' },
+    ])
+    expect(legend).toContain('CASTING 依据 / casting anchor：@图片1（零）')
+  })
+
+  it('buildImageLegend falls back to the camera plate as CASTING 依据 when the pack has no character refs', () => {
+    const legend = buildImageLegend('https://cam.png', false, [], [
+      { url: 'https://scene.png', label: '场景图「驾驶舱」', usage: 'u', kind: 'scene' },
+      { url: 'https://grid.png', label: '黑白手绘分镜图', usage: 'u', kind: 'storyboard' },
+      { url: 'https://cam.png', label: '机位截图 / 开场构图', usage: 'u', kind: 'camera' },
+    ])
+    // Never the scene plate (@图片1) — the camera plate is the only image
+    // in this pack that actually shows the characters.
+    expect(legend).toContain('CASTING 依据 / casting anchor：@图片3（机位截图中的角色造型）')
+    expect(legend).not.toContain('casting anchor：@图片1')
+  })
+
+  it('cinematography block labels the TRUE index of the analyzed keyframe in pack mode', () => {
+    const prompt = assembleShootPrompt({
+      row: { visual_description: 'cockpit' },
+      keyframeUrl: 'https://cam.png',
+      cinematography: '缓慢推进',
+      referencePack: [
+        { url: 'https://scene.png', label: '场景图', usage: 'u', kind: 'scene' },
+        { url: 'https://grid.png', label: '黑白手绘分镜图', usage: 'u', kind: 'storyboard' },
+        { url: 'https://cam.png', label: '机位截图 / 开场构图', usage: 'u', kind: 'camera' },
+      ],
+    })
+    // The describe step read keyframeUrl = the camera plate = @图片3 here.
+    expect(prompt).toContain('【镜头语言 / CINEMATOGRAPHY】（基于 @图片3 / image3 的分析）')
+    expect(prompt).not.toContain('（基于 @图片1 / image1 的分析）')
+  })
+
+  it('buildImageLegend numbers avatar refs AFTER the reference pack', () => {
+    const legend = buildImageLegend('https://clean.png', false,
+      [{ assetUri: 'asset://a1', characterName: '莉安', slotLabel: '角色1' }],
+      [
+        { url: 'https://id1.png', label: '角色身份版「莉安」', usage: 'u' },
+        { url: 'https://cam.png', label: '机位截图', usage: 'u' },
+      ])
+    expect(legend).toContain('image3 / @图片3 = 虚拟人像「莉安」')
+  })
+
+  it('isValidReferenceImageUrl enforces the reference-pack URL discipline', async () => {
+    const { isValidReferenceImageUrl } = await import('@/lib/agents/cinematographer-agent')
+    expect(isValidReferenceImageUrl('https://x.com/a.png')).toBe(true)
+    expect(isValidReferenceImageUrl('data:image/png;base64,AAAA')).toBe(true)
+    expect(isValidReferenceImageUrl('data:image/svg+xml;base64,AAAA')).toBe(false)
+    expect(isValidReferenceImageUrl('asset://abc')).toBe(false)
+    // /uploads/ is where the capability server persists every generated
+    // image (keyframes, identity sheets, grids); it inlines them to data:
+    // URLs server-side before the provider call, so the client must accept
+    // them. Regression: rejecting them stripped 身份版/分镜/机位 from the
+    // reference pack and Seedance shot from the scene image alone.
+    expect(isValidReferenceImageUrl('/uploads/abc123.png')).toBe(true)
+    expect(isValidReferenceImageUrl('/relative/path.png')).toBe(false)
+    expect(isValidReferenceImageUrl('[node:abc123]')).toBe(false)
+    expect(isValidReferenceImageUrl('')).toBe(false)
+    expect(isValidReferenceImageUrl(undefined)).toBe(false)
+  })
+
+  it('buildMotionDescription keeps row.bgm strictly as a mood reference with a no-music negative (No-Music-Bed rule, #94)', () => {
+    const desc = buildMotionDescription({
+      row: { visual_description: 'rooftop', dialogue: 'Alice: go.', bgm: '紧张的弦乐' },
+    })
+    // The bgm text may appear only as 情绪基调参考 + explicit prohibition —
+    // never as a positive "BGM: …" generation instruction.
+    expect(desc).not.toContain('BGM/音乐约束')
+    expect(desc).toContain('情绪基调参考')
+    expect(desc).toContain('紧张的弦乐')
+    expect(desc).toContain('严禁出现任何 BGM/配乐/音乐')
+    expect(desc).toContain('禁止任何配乐')
+  })
+
+  it('buildMotionDescription defers 参考素材用途 to the pack legend in reference-pack mode', () => {
+    const desc = buildMotionDescription({
+      row: { visual_description: 'rooftop' },
+      hasReferencePack: true,
+    })
+    expect(desc).toContain('多参考输入模式')
+    // No hardcoded slot order — pack composition varies per row (身份版/
+    // 场景可能缺席), so the legend is the only index authority.
+    expect(desc).not.toContain('角色身份版 → 场景图 → 分镜图 → 机位截图')
+    expect(desc).toContain('以【参考图】legend 为准')
+    expect(desc).toContain('CASTING 依据见 legend 标注')
+    expect(desc).not.toContain('首帧：当前 keyframe / image1')
+  })
 })
 
 describe('buildContextRefLine', () => {
-  it('returns empty — context refs are no longer baked into the prompt (they biased Seedance away from the keyframe)', async () => {
+  it('formats context refs as text-only Seedance role guidance', async () => {
     const { buildContextRefLine } = await import('@/lib/agents/cinematographer-agent')
     expect(
       buildContextRefLine([
         { role: '角色1', description: 'Alice, grey trench' },
         { role: '场景', description: 'rainy rooftop' },
       ]),
-    ).toBe('')
+    ).toBe('- 角色1：Alice, grey trench\n- 场景：rainy rooftop')
     expect(buildContextRefLine([])).toBe('')
   })
 })
 
 describe('shoot', () => {
-  beforeEach(() => mockedRunCapability.mockReset())
+  beforeEach(() => { mockedRunCapability.mockReset() })
 
   it('routes Seedance 2.0 in omni-reference mode (single image input = keyframe only)', async () => {
     mockedRunCapability.mockResolvedValue({ outputs: [{ kind: 'video', url: 'https://video.mp4' }] })
@@ -183,11 +314,13 @@ describe('shoot', () => {
     expect(result.durationSeconds).toBe(8)
     expect(result.keyframeUrl).toBe('https://k.png')
     expect(result.contextRefs).toHaveLength(2)
-    // motion_prompts is no longer in the prompt — the keyframe (storyboard
-    // panels) carries motion on its own. Only the reference + casting + neg
-    // blocks land here when there's no dialogue/SFX.
+    // Seedance prompt now carries row motion as structured text while keeping
+    // media inputs constrained to text + the single keyframe image.
     expect(result.prompt).toContain('【全能参考 / Director Reference】')
-    expect(result.prompt).not.toContain('push in')
+    expect(result.prompt).toContain('【Seedance 2.0 视频生成指令】')
+    expect(result.prompt).toContain('push in')
+    expect(result.prompt).toContain('角色1：Alice')
+    expect(result.prompt).toContain('场景：rooftop')
 
     // shoot() now fires cinematography-describe BEFORE the text-to-video
     // call; find the Seedance call by capability name rather than index.
@@ -197,13 +330,124 @@ describe('shoot', () => {
     expect(call.params?.model).toBe('dreamina-seedance-2-0-260128')
     expect(call.params?.duration).toBe('8')
     expect(call.params?.aspect).toBe('16:9')
-    // No caller-supplied resolution → falls back to 480p default.
-    expect(call.params?.resolution).toBe('480p')
+    // No caller-supplied resolution → falls back to 1080p default (full Seedance 2.0 look).
+    expect(call.params?.resolution).toBe('1080p')
     expect(call.params?.reference_mode).toBe('omni')
     // Exactly 1 text + 1 image (the keyframe). Context refs do NOT land
     // as additional image inputs.
     expect(call.inputs).toHaveLength(2)
     expect(call.inputs[1]).toEqual({ kind: 'image', url: 'https://k.png' })
+  })
+
+  it('reference-pack mode: ships the pack (角色→场景→分镜→机位) as ordered reference images, replacing keyframe+grid', async () => {
+    mockedRunCapability.mockImplementation(async (...args: unknown[]) => {
+      const req = args[0] as { capability?: string } | undefined
+      if (req?.capability === 'cinematography-describe') {
+        return { outputs: [{ kind: 'text' as const, text: 'push in' }] }
+      }
+      return { outputs: [{ kind: 'video' as const, url: 'https://video.mp4' }] }
+    })
+    const ctx = createMemoryContext({ llm: { complete: async () => '' } })
+
+    const result = await driveAuto(
+      shoot(
+        {
+          row: { shot_number: 'S1', duration: 8 },
+          keyframeUrl: 'https://clean.png',
+          storyboardRefUrl: 'https://grid.png',
+          referencePack: [
+            { url: 'https://id1.png', label: '角色身份版「莉安」', usage: '锁定脸型/服装/比例', subject: '莉安' },
+            { url: 'https://scene.png', label: '场景图「教堂」', usage: '锁定空间与光线' },
+            { url: 'https://grid.png', label: '黑白手绘分镜图', usage: '读取调度' },
+            { url: 'https://clean.png', label: '机位截图 / 开场构图', usage: '开场机位' },
+            // Invalid URLs are dropped by the pack validator, not shipped.
+            { url: 'asset://nope', label: '坏引用', usage: 'x' },
+          ],
+        },
+        ctx,
+      ),
+    )
+
+    const video = mockedRunCapability.mock.calls.find((c) => c[0]!.capability === 'text-to-video')![0]!
+    // Pack REPLACES the [keyframe, grid] pair: 4 valid pack images in order.
+    expect(video.inputs).toHaveLength(5) // text + 4 pack images
+    expect(video.inputs.slice(1)).toEqual([
+      { kind: 'image', url: 'https://id1.png' },
+      { kind: 'image', url: 'https://scene.png' },
+      { kind: 'image', url: 'https://grid.png' },
+      { kind: 'image', url: 'https://clean.png' },
+    ])
+    // Multi-image shipment must be all-reference (never mixed with first_frame).
+    expect(video.params?.mode).toBe('reference')
+    // Prompt legend @-points each pack index at its subject.
+    expect(result.prompt).toContain('image1 / @图片1 = 角色身份版「莉安」')
+    expect(result.prompt).toContain('@莉安 即指向这张图中的主体')
+    expect(result.prompt).toContain('image4 / @图片4 = 机位截图 / 开场构图')
+  })
+
+  it('ships clean + grid as TWO reference images in 全能参考/reference mode and designates roles in the prompt (@图片1=首帧, @图片2=导演思维图)', async () => {
+    mockedRunCapability.mockImplementation(async (...args: unknown[]) => {
+      const req = args[0] as { capability?: string } | undefined
+      if (req?.capability === 'cinematography-describe') {
+        return { outputs: [{ kind: 'text' as const, text: 'slow push-in, soft key light' }] }
+      }
+      return { outputs: [{ kind: 'video' as const, url: 'https://video.mp4' }] }
+    })
+    const ctx = createMemoryContext({ llm: { complete: async () => '' } })
+
+    await driveAuto(
+      shoot(
+        {
+          row: { shot_number: 'S1', duration: 8 },
+          keyframeUrl: 'https://clean.png',
+          storyboardRefUrl: 'https://grid.png',
+        },
+        ctx,
+      ),
+    )
+
+    // The video model gets BOTH images (clean first, grid second), both as
+    // references (mode='reference' → reference-to-video). No literal
+    // first_frame role — that's forbidden alongside a reference_image.
+    const video = mockedRunCapability.mock.calls.find((c) => c[0]!.capability === 'text-to-video')![0]!
+    expect(video.inputs).toHaveLength(3) // text + clean + grid
+    expect(video.inputs[1]).toEqual({ kind: 'image', url: 'https://clean.png' })
+    expect(video.inputs[2]).toEqual({ kind: 'image', url: 'https://grid.png' })
+    expect(video.params?.mode).toBe('reference')
+    expect(video.params?.reference_mode).toBeUndefined()
+
+    // The prompt legend designates the roles in text.
+    const promptText = (video.inputs[0] as { text: string }).text
+    expect(promptText).toContain('@图片1')
+    expect(promptText).toContain('@图片2')
+    expect(promptText).toContain('首帧')
+    expect(promptText).toContain('导演思维图')
+
+    // describe step still reads only the clean keyframe (text + 1 image).
+    const describe = mockedRunCapability.mock.calls.find((c) => c[0]!.capability === 'cinematography-describe')![0]!
+    expect(describe.inputs).toHaveLength(2)
+    expect(describe.inputs[1]).toEqual({ kind: 'image', url: 'https://clean.png' })
+  })
+
+  it('does NOT add a 2nd reference image when grid === clean (dedup → single image, omni hint)', async () => {
+    mockedRunCapability.mockImplementation(async (...args: unknown[]) => {
+      const req = args[0] as { capability?: string } | undefined
+      if (req?.capability === 'cinematography-describe') {
+        return { outputs: [{ kind: 'text' as const, text: 'x' }] }
+      }
+      return { outputs: [{ kind: 'video' as const, url: 'https://video.mp4' }] }
+    })
+    const ctx = createMemoryContext({ llm: { complete: async () => '' } })
+    await driveAuto(
+      shoot(
+        { row: { shot_number: 'S1', duration: 5 }, keyframeUrl: 'https://k.png', storyboardRefUrl: 'https://k.png' },
+        ctx,
+      ),
+    )
+    const video = mockedRunCapability.mock.calls.find((c) => c[0]!.capability === 'text-to-video')![0]!
+    expect(video.inputs).toHaveLength(2) // text + single image
+    expect(video.params?.mode).toBeUndefined()
+    expect(video.params?.reference_mode).toBe('omni')
   })
 
   it('transition mode: routes to first-last-frame capability with prev/next boundary images instead of omni-reference text-to-video', async () => {
@@ -304,7 +548,7 @@ describe('shoot', () => {
     ).rejects.toThrow(/no url/)
   })
 
-  it('does NOT bake context-ref descriptions into the motion text any more (would bias Seedance off the keyframe)', () => {
+  it('bakes context-ref descriptions into text guidance without adding extra image inputs', () => {
     const prompt = assembleShootPrompt({
       row: { motion_prompts: 'm' },
       keyframeUrl: 'https://k.png',
@@ -313,32 +557,41 @@ describe('shoot', () => {
         { role: '场景', description: 'Rooftop' },
       ],
     })
-    expect(prompt).not.toContain('Featuring')
-    expect(prompt).not.toContain('Alice')
-    expect(prompt).not.toContain('Rooftop')
+    expect(prompt).toContain('【参考素材用途】')
+    expect(prompt).toContain('角色1：Alice')
+    expect(prompt).toContain('场景：Rooftop')
+    expect(prompt).toContain('除显式 reference-pack 模式外，不额外塞图片给 Seedance')
     // Legend should still list ONLY image1.
     expect(prompt).toContain('image1 / @图片1 = Keyframe')
     expect(prompt).not.toContain('image2')
   })
 
-  it('keeps the trimmed director-reference + casting-lock + negative blocks in every shoot prompt', () => {
+  it('keeps the director-reference + casting-lock + negative blocks while adding the structured Seedance row prompt', () => {
     const prompt = assembleShootPrompt({
       row: { motion_prompts: 'push in', visual_description: 'rooftop' },
       keyframeUrl: 'https://k.png',
     })
     expect(prompt).toContain('【全能参考 / Director Reference】')
     expect(prompt).toContain('@图片1')
-    expect(prompt).toContain('起始帧')
+    // The header no longer hardcodes @图片1 as 起始帧/casting anchor — the
+    // legend is the authority, and single-keyframe mode declares its own
+    // CASTING 依据 line pointing at @图片1.
+    expect(prompt).toContain('legend 是唯一权威')
+    expect(prompt).toContain('CASTING 依据 / casting anchor：@图片1')
     expect(prompt).toContain('【CASTING LOCK / 角色锁定】')
+    expect(prompt).toContain('CASTING 依据 / casting anchor')
     expect(prompt).toContain('【NEGATIVE】')
     expect(prompt).toContain('不要换角')
-    // visual_description should NOT appear in the assembled prompt — stripped.
-    expect(prompt).not.toContain('rooftop')
+    expect(prompt).toContain('【Seedance 2.0 视频生成指令】')
+    expect(prompt).toContain('【主体 / 场景 / 风格】')
+    expect(prompt).toContain('rooftop')
+    expect(prompt).toContain('【分时段动作与运镜】')
+    expect(prompt).toContain('push in')
   })
 })
 
 describe('revise', () => {
-  beforeEach(() => mockedRunCapability.mockReset())
+  beforeEach(() => { mockedRunCapability.mockReset() })
 
   it('rewrites the prompt addressing each director feedback item, then re-shoots', async () => {
     mockedRunCapability.mockResolvedValue({ outputs: [{ kind: 'video', url: 'https://v2.mp4' }] })
@@ -424,7 +677,7 @@ describe('revise', () => {
 })
 
 describe('shootMultiStrategy', () => {
-  beforeEach(() => mockedRunCapability.mockReset())
+  beforeEach(() => { mockedRunCapability.mockReset() })
 
   it('pickStrategies: 2 → stable+kinetic, 3 → stable+balanced+kinetic, 1 → default', () => {
     expect(pickStrategies(1).map((s) => s.name)).toEqual(['default'])

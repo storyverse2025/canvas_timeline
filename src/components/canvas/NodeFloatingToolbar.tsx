@@ -1,4 +1,5 @@
-import { Wand2, Copy, Trash2, Crosshair, Sparkles, Pencil } from 'lucide-react'
+import { Wand2, Copy, Trash2, Crosshair, Sparkles, Pencil, Box } from 'lucide-react'
+import { startPrevisFromSelection } from '@/lib/previs-export/run'
 import { NodeToolbar, Position } from '@xyflow/react'
 import { useReactFlow } from '@xyflow/react'
 import { useCanvasStore } from '@/stores/canvas-store'
@@ -78,6 +79,15 @@ export function NodeFloatingToolbar({ nodeId, itemId, isVisible }: Props) {
         {item?.kind === 'text' && (
           <button title="按文本生成图" className="p-1 rounded hover:bg-accent" onClick={() => startGen('image')}>
             <Sparkles className="w-3.5 h-3.5 text-primary" />
+          </button>
+        )}
+        {item?.kind === 'video' && item.role !== 'beat-video-alternate' && (
+          <button
+            title="生成 3D 预演：用这个视频的 prompt 和分镜行里的角色/场景/道具，在 3D 导演台搭低模动画（可同时多选更多镜头视频或素材节点）"
+            className="p-1 rounded hover:bg-accent"
+            onClick={() => void startPrevisFromSelection(nodeId)}
+          >
+            <Box className="w-3.5 h-3.5 text-sky-400" />
           </button>
         )}
         <div className="w-px h-4 bg-border mx-0.5" />

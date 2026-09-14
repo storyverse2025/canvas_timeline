@@ -27,6 +27,10 @@ export interface BeatVideoRow {
   /** SFX annotations for this beat (e.g. "footsteps on gravel; door slams").
    *  Kept in the prompt so the model can sync motion to audio cues. */
   sound_effects?: string
+  /** Optional music/BGM instruction. The Seedance prompt formatter includes it
+   *  as an explicit constraint, while global hard constraints may still forbid
+   *  non-diegetic music for dialogue-first StoryVerse shoots. */
+  bgm?: string
 }
 
 /**
@@ -51,6 +55,47 @@ export interface BeatVideoRef extends BeatVideoContextRef {
   imageUrl?: string
 }
 
+/**
+ * One virtual-avatar-library reference shipped to Seedance for a character.
+ * `assetUri` is the `asset://<id>` form the generation API requires; the
+ * resolver in src/lib/virtual-avatar-library produces these for 真人 styles.
+ */
+export interface VirtualAvatarShootRef {
+  /** `asset://<Asset_Id>` — the only form the Seedance content API accepts. */
+  assetUri: string
+  /** Character display name, e.g. "莉安" — surfaced in the prompt legend. */
+  characterName: string
+  /** Slot tag this avatar stands in for, e.g. "角色1". */
+  slotLabel: string
+}
+
+/**
+ * One entry of the ordered multi-reference pack (多参考输入合成). The pack
+ * ships to Seedance as consecutive reference_image parts in array order —
+ * 角色身份版 → 道具图 → 场景图 → 分镜图 → 机位截图 — and the prompt legend
+ * @-points each index at its subject so the model knows which image governs
+ * what.
+ */
+export interface ReferencePackImage {
+  /** http(s)/data raster URL. Validated by the caller before submission. */
+  url: string
+  /** Legend label, e.g. 角色身份版「莉安」 / 场景图 / 黑白分镜图 / 机位截图. */
+  label: string
+  /** What this image locks, spelled into the legend line (e.g. "锁定角色
+   *  「莉安」的脸型/服装/比例"). */
+  usage: string
+  /** Optional named subject for @-referencing (e.g. the character name). */
+  subject?: string
+  /**
+   * Semantic slot in the 角色→道具→场景→分镜→机位 order. buildImageLegend
+   * uses this to point CASTING LOCK at the right indices (character images
+   * when present, else the camera plate) and to label the cinematography
+   * block with the true index of the analyzed keyframe — the pack's
+   * composition varies per row, so nothing may hardcode image numbers.
+   */
+  kind?: 'character' | 'prop' | 'scene' | 'storyboard' | 'camera'
+}
+
 export interface ShootRequest {
   /** The storyboard row this clip realizes. */
   row: BeatVideoRow
@@ -62,6 +107,28 @@ export interface ShootRequest {
    * scene, blocking, and color to.
    */
   keyframeUrl: string
+  /**
+   * Optional second image: the director storyboard grid (multi-panel sheet
+   * with blocking / pacing / multi-beat info). When present it ships to
+   * Seedance as a SECOND reference_image alongside the clean keyframe (全能参考
+   * / omni-reference — both are reference_image, since Seedance rejects mixing
+   * a literal first_frame role with a reference_image). The prompt legend then
+   * designates the roles in text: @图片1 = 首帧 / 开场构图, @图片2 = 导演思维图
+   * (storyboard sheet — read staging, never render its panels). Omit it to keep
+   * the single-image behavior. Ignored in transition (first-last) mode.
+   */
+  storyboardRefUrl?: string
+  /**
+   * Multi-reference pack (多参考输入合成). When present (non-empty), it
+   * REPLACES the [keyframeUrl, storyboardRefUrl] image pair as Seedance's
+   * image inputs: every pack entry ships as a reference_image in array order
+   * — 角色身份版 → 场景图 → 分镜图 → 机位截图 — and buildImageLegend @-points
+   * each index at its subject. keyframeUrl is still required (it grounds the
+   * cinematography-describe step and remains the fallback when the pack is
+   * empty). Virtual-avatar asset refs are appended AFTER the pack by the
+   * capability plugin, continuing the numbering. Ignored in transition mode.
+   */
+  referencePack?: ReferencePackImage[]
   /**
    * Optional context — character / scene / prop names + descriptions.
    * Baked into the motion text so the model knows what to look for in
@@ -103,6 +170,17 @@ export interface ShootRequest {
    * chain in useStoryboardGenerate; empty / undefined in the normal path.
    */
   invitedImageAssetIds?: string[]
+  /**
+   * Virtual-avatar-library references for 真人 / live-action style. Each entry
+   * is a platform (or registered) avatar whose `asset://<id>` URI ships to
+   * Seedance as an extra `reference_image` content part so the character is
+   * sourced from an approved synthetic persona instead of a photoreal face —
+   * the proactive way to avoid the privacy-content (审查) block. The prompt
+   * legend designates each one as @图片N = the named character. Presence forces
+   * reference-to-video mode (asset refs can't be mixed with a first_frame).
+   * Empty / undefined in non-real-person styles. See src/lib/virtual-avatar-library.
+   */
+  virtualAvatarRefs?: VirtualAvatarShootRef[]
   /**
    * When set, generate a transition clip via Seedance's first-last-frame
    * mode using these two boundary images instead of the omni-reference
@@ -173,4 +251,20 @@ export interface ReviseRequest {
   /** Output resolution. Defaults to '720p' when omitted. */
   resolution?: '480p' | '720p' | '1080p'
   durationSecondsOverride?: number
+  /**
+   * Same second-reference grid the original shoot used. Without it the
+   * reshoot loses the storyboard staging reference.
+   */
+  storyboardRefUrl?: string
+  /**
+   * Same multi-reference pack the original shoot used, so the reshoot
+   * keeps the identity-sheet / scene / storyboard / camera anchors.
+   */
+  referencePack?: ReferencePackImage[]
+  /**
+   * Same virtual-avatar refs the original shoot used. Without them a 真人
+   * shot that only passed the privacy filter thanks to approved asset://
+   * personas will fail (or drift faces) on the revise reshoot.
+   */
+  virtualAvatarRefs?: VirtualAvatarShootRef[]
 }

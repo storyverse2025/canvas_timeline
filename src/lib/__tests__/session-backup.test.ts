@@ -71,7 +71,9 @@ describe('tryHydrateFromServerIfIdbEmpty', () => {
     for (const k of [
       'canvas-store', 'canvas-item-store', 'asset-store', 'storyboard-store',
       'project-db', 'timeline-store-v2', 'chat-store', 'mapping-store',
-    ]) full[k] = '{"x":1}'
+    // Must exceed session-backup's MIN_REAL_BYTES (100) — anything smaller
+    // is treated as a wiped/empty store and triggers the server pull.
+    ]) full[k] = `{"x":"${'a'.repeat(120)}"}`
     stubIdb(full)
 
     const { tryHydrateFromServerIfIdbEmpty } = await import('@/lib/session-backup')
@@ -86,19 +88,25 @@ describe('tryHydrateFromServerIfIdbEmpty', () => {
   it('per-store: restores ONLY the missing stores even when others have data (canvas gone, table survives)', async () => {
     // Regression for the "画布不能 load，表格就没问题" bug — old logic
     // skipped the server pull entirely when ANY store had data.
+    // All payloads exceed MIN_REAL_BYTES (100) so they count as real data.
+    const pad = (o: Record<string, unknown>) => JSON.stringify({ ...o, _pad: 'a'.repeat(120) })
+    const serverCanvas = pad({ nodes: [1] })
+    const serverStoryboard = pad({ rows: ['server-version'] })
+    const serverProjectDb = pad({ script: { text: 'server' } })
+    const localStoryboard = pad({ rows: ['local-keep'] })
     const fetchSpy = vi.fn(async () => ({
       ok: true,
       json: async () => ({
         snapshot: {
-          'canvas-store': '{"nodes":[1]}',                       // missing locally → restore
-          'storyboard-store': '{"rows":["server-version"]}',     // present locally → keep local
-          'project-db': '{"script":{"text":"server"}}',          // missing locally → restore
+          'canvas-store': serverCanvas,                       // missing locally → restore
+          'storyboard-store': serverStoryboard,               // present locally → keep local
+          'project-db': serverProjectDb,                      // missing locally → restore
         },
         savedAt: '2026-05-18T02:00:00Z',
       }),
     }))
     vi.stubGlobal('fetch', fetchSpy)
-    const { data } = stubIdb({ 'storyboard-store': '{"rows":["local-keep"]}' })
+    const { data } = stubIdb({ 'storyboard-store': localStoryboard })
 
     const { tryHydrateFromServerIfIdbEmpty } = await import('@/lib/session-backup')
     const r = await tryHydrateFromServerIfIdbEmpty()
@@ -106,19 +114,22 @@ describe('tryHydrateFromServerIfIdbEmpty', () => {
     expect(r.hydrated).toBe(true)
     expect(r.restoredKeys).toEqual(expect.arrayContaining(['canvas-store', 'project-db']))
     expect(r.restoredKeys).not.toContain('storyboard-store')
-    expect(data['canvas-store']).toBe('{"nodes":[1]}')
-    expect(data['project-db']).toBe('{"script":{"text":"server"}}')
+    expect(data['canvas-store']).toBe(serverCanvas)
+    expect(data['project-db']).toBe(serverProjectDb)
     // Local storyboard-store was NOT clobbered.
-    expect(data['storyboard-store']).toBe('{"rows":["local-keep"]}')
+    expect(data['storyboard-store']).toBe(localStoryboard)
   })
 
   it('pulls + writes the server snapshot into IDB when every tracked store is empty', async () => {
+    const pad = (o: Record<string, unknown>) => JSON.stringify({ ...o, _pad: 'a'.repeat(120) })
+    const serverCanvas = pad({ nodes: [1] })
+    const serverProjectDb = pad({ script: { text: 'hello' } })
     const fetchSpy = vi.fn(async () => ({
       ok: true,
       json: async () => ({
         snapshot: {
-          'canvas-store': '{"nodes":[1]}',
-          'project-db': '{"script":{"text":"hello"}}',
+          'canvas-store': serverCanvas,
+          'project-db': serverProjectDb,
           'unknown-store': 'should be ignored',
         },
         savedAt: '2026-05-18T01:00:00Z',
@@ -135,8 +146,8 @@ describe('tryHydrateFromServerIfIdbEmpty', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1)
     expect(fetchSpy.mock.calls[0][0]).toBe('/local-session')
     // The two tracked stores got written; the unknown key was ignored.
-    expect(data['canvas-store']).toBe('{"nodes":[1]}')
-    expect(data['project-db']).toBe('{"script":{"text":"hello"}}')
+    expect(data['canvas-store']).toBe(serverCanvas)
+    expect(data['project-db']).toBe(serverProjectDb)
     expect(data['unknown-store']).toBeUndefined()
   })
 

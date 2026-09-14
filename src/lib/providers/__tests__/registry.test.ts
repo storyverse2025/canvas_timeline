@@ -2,9 +2,9 @@ import { describe, it, expect } from 'vitest'
 import { PROVIDERS, getProvider, getModel, getModelsByKind } from '../registry'
 
 describe('Provider Registry', () => {
-  it('has 5 providers', () => {
-    expect(PROVIDERS).toHaveLength(5)
-    expect(PROVIDERS.map((p) => p.id).sort()).toEqual(['doubao', 'fal', 'gemini', 'libtv', 'openai'])
+  it('has 6 providers', () => {
+    expect(PROVIDERS).toHaveLength(6)
+    expect(PROVIDERS.map((p) => p.id).sort()).toEqual(['doubao', 'fal', 'gemini', 'libtv', 'openai', 'tokenrouter'])
   })
 
   it('has 19+ total models', () => {

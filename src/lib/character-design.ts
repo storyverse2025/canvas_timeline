@@ -66,7 +66,11 @@ export async function runDesignCharactersAndPersist(
   const visualStyle = (db.artDirection.customStyle || '').trim() ||
     styleFragmentFor(db.artDirection.stylePreset)
 
-  const ctx = createMemoryContext({ llm: createCapabilityLLM() })
+  // freeform-text, not the default element-extraction — designCharacters
+  // ships a complete prompt and returns a rich JSON array; routing it
+  // through element-extraction's domain system prompt risks the same
+  // 角色/场景/道具 hijack that broke cast-voices. See voice-binding.ts.
+  const ctx = createMemoryContext({ llm: createCapabilityLLM({ capabilityId: 'freeform-text' }) })
   const designs = await runAgentWithChatBridge(
     'actor-agent',
     designCharacters(

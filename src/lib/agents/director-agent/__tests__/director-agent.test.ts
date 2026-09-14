@@ -6,11 +6,16 @@ import {
   applyTimelineFixes,
   buildBridgePromptText,
   buildCleanKeyframePrompt,
+  buildIdentitySheetPrompt,
+  isHighActionRow,
+  isDanceRow,
   buildKeyframePrompt,
+  collectIdentitySheetRefs,
   composeShots,
   critiqueTimeline,
   critiqueVideoConsistency,
   directorAgent,
+  generateIdentitySheet,
   generateKeyframe,
   generateStoryboardTable,
   KEYFRAME_MODEL,
@@ -112,7 +117,7 @@ describe('generateStoryboardTable', () => {
     expect(sent).toContain('Σ duration == 60')
   })
 
-  it('teaches the LLM the 1-scene + ≤2-character per-row cap and the split rule', async () => {
+  it('teaches the LLM the 1-scene + ≤6-character array per-row cap and the split rule', async () => {
     const { llm, spy } = llmReturning('```json\n[]\n```')
     const ctx = createMemoryContext({ llm })
     await driveAuto(
@@ -128,9 +133,11 @@ describe('generateStoryboardTable', () => {
     )
     const sent = spy.mock.calls[0]![0]![0]!.content as string
     expect(sent).toContain('一个场景')
-    expect(sent).toContain('至多两位主要角色')
-    expect(sent).toContain('必须拆成多行')
-    expect(sent).toContain('character1 + character2')
+    // Characters now live in a `characters` array, up to 6 per row (ensembles
+    // like a K-pop group all ride in one row instead of being truncated to 2).
+    expect(sent).toContain('`characters` 数组')
+    expect(sent).toContain('至多 6')
+    expect(sent).toContain('超过 6')
   })
 })
 
@@ -201,7 +208,7 @@ describe('applyTimelineFixes', () => {
     expect(sent).toContain('duration 必须 ∈ [2, 15] 秒')
   })
 
-  it('preserves the 1-scene + ≤2-character per-row cap during the fix pass', async () => {
+  it('preserves the 1-scene + ≤6-character array per-row cap during the fix pass', async () => {
     const { llm, spy } = llmReturning('```json\n[]\n```')
     const ctx = createMemoryContext({ llm })
     await driveAuto(
@@ -212,12 +219,13 @@ describe('applyTimelineFixes', () => {
     )
     const sent = spy.mock.calls[0]![0]![0]!.content as string
     expect(sent).toContain('每行 scene + character 人数上限')
-    expect(sent).toContain('character1/character2')
+    expect(sent).toContain('`characters` 数组')
+    expect(sent).toContain('至多 6 个')
   })
 })
 
 describe('generateKeyframe (slim diagrammatic storyboard sheet)', () => {
-  beforeEach(() => mockedRunCapability.mockReset())
+  beforeEach(() => { mockedRunCapability.mockReset() })
 
   it('builds a slim diagrammatic prompt: storyboard grid + conditional diagrams, no heavy text modules', () => {
     const prompt = buildKeyframePrompt({
@@ -241,10 +249,26 @@ describe('generateKeyframe (slim diagrammatic storyboard sheet)', () => {
       props: [{ name: 'Pocketwatch', description: 'silver', imageUrls: ['https://p.png'] }],
     })
 
-    // Header reads as a director sheet, not a "Hollywood production board".
-    expect(prompt).toContain('Director storyboard sheet')
+    // Header reads as a B&W HAND-DRAWN director sheet (黑白手绘故事板).
+    expect(prompt).toContain('HAND-DRAWN director storyboard sheet')
+    expect(prompt).toContain('黑白手绘故事板')
     expect(prompt).toContain('Shot duration: 8s')
     expect(prompt).toContain('Cold-toned filmic noir')
+
+    // Hard style constraint: B&W hand-drawn, photoreal banned (photoreal
+    // storyboards break the downstream video step).
+    expect(prompt).toMatch(/NO photorealistic/i)
+    expect(prompt).toContain('黑白手绘')
+
+    // Colored annotation arrow system: 橙=轮廓光方向, 红=人物动作, 蓝=摄影机运动.
+    expect(prompt).toContain('橙色箭头')
+    expect(prompt).toContain('轮廓光方向')
+    expect(prompt).toContain('红色箭头')
+    expect(prompt).toContain('人物动作')
+    expect(prompt).toContain('蓝色箭头')
+    expect(prompt).toContain('摄影机运动')
+    // Exposure + camera moves must be planned into the sheet up front.
+    expect(prompt).toContain('曝光与运镜必须提前写进规划')
 
     // Heavy text modules are GONE: no project info bar, no 3-view column,
     // no technical-param bottom row, no separate concept-art block.
@@ -261,13 +285,15 @@ describe('generateKeyframe (slim diagrammatic storyboard sheet)', () => {
     expect(prompt).toContain('Do NOT render the whole panorama')
     expect(prompt).toContain('Rooftop — wet concrete + neon')
 
-    // Storyboard grid is the primary content with per-panel time labels;
-    // no per-panel camera/lens/lighting text annotations.
+    // Storyboard grid is the primary content with per-panel time labels
+    // AND the 主体/表情/场景/摄像机运动/灯光 annotation strip per panel.
     expect(prompt).toContain('Storyboard panel grid (primary content)')
     expect(prompt).toMatch(/TIME-SLICE LABEL at the top-left/)
     expect(prompt).toContain('sum to exactly 8s')
     expect(prompt).toContain('multi-panel director sheet of rooftop chase')
-    expect(prompt).toMatch(/Do NOT print camera angles \/ focal lengths \/ lighting \/ style names as text/)
+    expect(prompt).toContain('主体 (subject), 表情 (facial expression — 眼神/眉/嘴/下颌 tension), 场景 (scene), 摄像机运动 (camera move), 灯光 (lighting/exposure)')
+    // Facial expression is a first-class panel element (fixes flat/出戏 faces).
+    expect(prompt).toContain('FACIAL EXPRESSION is first-class')
 
     // Diagrams gated by inputs: 2 chars → height strip; 2 chars + 1 prop →
     // size diagram; ≥ 2 chars → spatial floor plan.
@@ -427,7 +453,10 @@ describe('generateKeyframe (slim diagrammatic storyboard sheet)', () => {
   })
 
   it('routes the capability call to TokenRouter (openai/gpt-5.4-image-2) with 4K + HD quality at 16:9 by default', async () => {
-    mockedRunCapability.mockResolvedValue({ outputs: [{ kind: 'image', url: 'https://kf.png' }] })
+    mockedRunCapability.mockImplementation(async (req) =>
+      req.capability === 'freeform-text'
+        ? { outputs: [{ kind: 'text' as const, text: '' }] }
+        : { outputs: [{ kind: 'image' as const, url: 'https://kf.png' }] })
     const ctx = createMemoryContext({ llm: { complete: async () => '' } })
     const result = await driveAuto(
       generateKeyframe(
@@ -446,7 +475,12 @@ describe('generateKeyframe (slim diagrammatic storyboard sheet)', () => {
       'Scene — Rooftop',
       'Character — Alice',
     ])
-    const call = mockedRunCapability.mock.calls[0]![0]
+    // Call 0 is the freeform-text derive pass (结构模板+参考图+主题 →
+    // 黑白手绘故事板提示词); it receives the same ordered ref images.
+    const derive = mockedRunCapability.mock.calls[0]![0]
+    expect(derive.capability).toBe('freeform-text')
+    expect(derive.inputs.filter((i) => i.kind === 'image').length).toBe(2)
+    const call = mockedRunCapability.mock.calls[1]![0]
     expect(call.capability).toBe('text-to-image')
     expect(call.params?.provider).toBe('tokenrouter')
     expect(call.params?.model).toBe('openai/gpt-5.4-image-2')
@@ -457,8 +491,47 @@ describe('generateKeyframe (slim diagrammatic storyboard sheet)', () => {
     expect(call.inputs.length).toBe(3)
   })
 
+  it('uses the LLM-derived storyboard prompt when the derive pass returns a substantial text', async () => {
+    const derived = `黑白手绘故事板：${'格1 主体/场景/运镜/灯光；橙色轮廓光箭头，红色动作箭头，蓝色运镜箭头。'.repeat(8)}`
+    mockedRunCapability.mockImplementation(async (req) =>
+      req.capability === 'freeform-text'
+        ? { outputs: [{ kind: 'text' as const, text: derived }] }
+        : { outputs: [{ kind: 'image' as const, url: 'https://kf.png' }] })
+    const ctx = createMemoryContext({ llm: { complete: async () => '' } })
+    const result = await driveAuto(
+      generateKeyframe(
+        { row: { storyboard_prompts: 'p' }, shotDurationSeconds: 5 },
+        ctx,
+      ),
+    )
+    expect(result.promptDerived).toBe(true)
+    expect(result.prompt).toBe(derived)
+    // The grid render (first text-to-image call) uses the derived prompt.
+    const t2i = mockedRunCapability.mock.calls.find(([r]) => r.capability === 'text-to-image')![0]
+    expect((t2i.inputs[0] as { text: string }).text).toBe(derived)
+  })
+
+  it('falls back to the structure template when the derive pass fails or returns a stub', async () => {
+    mockedRunCapability.mockImplementation(async (req) =>
+      req.capability === 'freeform-text'
+        ? { outputs: [{ kind: 'text' as const, text: '太短' }] } // < 200 chars → rejected
+        : { outputs: [{ kind: 'image' as const, url: 'https://kf.png' }] })
+    const ctx = createMemoryContext({ llm: { complete: async () => '' } })
+    const result = await driveAuto(
+      generateKeyframe(
+        { row: { storyboard_prompts: 'p' }, shotDurationSeconds: 5 },
+        ctx,
+      ),
+    )
+    expect(result.promptDerived).toBe(false)
+    expect(result.prompt).toContain('HAND-DRAWN director storyboard sheet')
+  })
+
   it('respects a custom aspect ratio (e.g., vertical 9:16 for douyin)', async () => {
-    mockedRunCapability.mockResolvedValue({ outputs: [{ kind: 'image', url: 'u' }] })
+    mockedRunCapability.mockImplementation(async (req) =>
+      req.capability === 'freeform-text'
+        ? { outputs: [{ kind: 'text' as const, text: '' }] }
+        : { outputs: [{ kind: 'image' as const, url: 'u' }] })
     const ctx = createMemoryContext({ llm: { complete: async () => '' } })
     await driveAuto(
       generateKeyframe(
@@ -466,7 +539,8 @@ describe('generateKeyframe (slim diagrammatic storyboard sheet)', () => {
         ctx,
       ),
     )
-    expect(mockedRunCapability.mock.calls[0]![0].params?.aspect).toBe('9:16')
+    const t2i = mockedRunCapability.mock.calls.find(([r]) => r.capability === 'text-to-image')![0]
+    expect(t2i.params?.aspect).toBe('9:16')
   })
 
   it('throws when the capability returns no url', async () => {
@@ -477,11 +551,12 @@ describe('generateKeyframe (slim diagrammatic storyboard sheet)', () => {
     ).rejects.toThrow(/no url/)
   })
 
-  it('dual-keyframe: generateKeyframe fires both grid + clean image calls in parallel and returns both URLs', async () => {
-    let call = 0
-    mockedRunCapability.mockImplementation(async () => {
-      call += 1
-      return { outputs: [{ kind: 'image', url: `https://kf-${call}.png` }] }
+  it('dual-keyframe: renders 故事板 then 开场构图 sequentially (clean references the grid) and returns both URLs', async () => {
+    let t2i = 0
+    mockedRunCapability.mockImplementation(async (req) => {
+      if (req.capability === 'freeform-text') return { outputs: [{ kind: 'text' as const, text: '' }] }
+      t2i += 1
+      return { outputs: [{ kind: 'image' as const, url: `https://kf-${t2i}.png` }] }
     })
     const ctx = createMemoryContext({ llm: { complete: async () => '' } })
     const result = await driveAuto(
@@ -494,27 +569,38 @@ describe('generateKeyframe (slim diagrammatic storyboard sheet)', () => {
         ctx,
       ),
     )
-    // Two text-to-image calls: first is the grid (existing buildKeyframePrompt),
-    // second is the clean variant (new buildCleanKeyframePrompt).
-    expect(mockedRunCapability).toHaveBeenCalledTimes(2)
+    // Three capability calls: derive (freeform-text) + grid + clean t2i —
+    // grid FIRST, then clean referencing it (身份版→故事板→开场构图 chain).
+    expect(mockedRunCapability).toHaveBeenCalledTimes(3)
     expect(result.url).toBe('https://kf-1.png')
     expect(result.cleanUrl).toBe('https://kf-2.png')
     expect(result.cleanPrompt).toBeTruthy()
-    // First call carries the grid prompt (multi-panel sheet).
-    const gridCallPrompt = (mockedRunCapability.mock.calls[0]![0].inputs[0] as { text: string }).text
+    expect(result.gridFailReason).toBeUndefined()
+    const t2iCalls = mockedRunCapability.mock.calls.filter(([r]) => r.capability === 'text-to-image')
+    // First t2i call carries the grid prompt (multi-panel sheet).
+    const gridCallPrompt = (t2iCalls[0]![0].inputs[0] as { text: string }).text
     expect(gridCallPrompt).toMatch(/Storyboard panel grid/i)
-    // Second call carries the clean prompt — NO storyboard sheet.
-    const cleanCallPrompt = (mockedRunCapability.mock.calls[1]![0].inputs[0] as { text: string }).text
-    expect(cleanCallPrompt).toMatch(/ONE full-frame composition|cinematic frame/i)
+    // Second t2i call carries the clean prompt — its 开场构图 must render
+    // the storyboard's FIRST panel, so the freshly-rendered grid ships as
+    // an extra ref image and the Composition block anchors to 第1格.
+    const cleanCall = t2iCalls[1]![0]
+    const cleanCallPrompt = (cleanCall.inputs[0] as { text: string }).text
+    expect(cleanCallPrompt).toMatch(/开场构图|OPENING FRAME/)
+    expect(cleanCallPrompt).toContain('第1格')
     expect(cleanCallPrompt).not.toMatch(/Storyboard panel grid/i)
+    const cleanImageUrls = cleanCall.inputs.filter((i) => i.kind === 'image').map((i) => (i as { url: string }).url)
+    expect(cleanImageUrls).toContain('https://kf-1.png') // the grid rides as 构图参考
   })
 
-  it('dual-keyframe: falls back to grid url when clean call fails', async () => {
-    let call = 0
-    mockedRunCapability.mockImplementation(async () => {
-      call += 1
-      if (call === 2) throw new Error('content policy')
-      return { outputs: [{ kind: 'image', url: `https://kf-${call}.png` }] }
+  it('dual-keyframe: falls back to grid url when clean call fails (on both backends)', async () => {
+    // Fail by prompt content so BOTH the primary + nano-banana fallback
+    // attempts for the clean call throw — otherwise the fallback would
+    // silently rescue it and cleanUrl would not be undefined.
+    mockedRunCapability.mockImplementation(async (req) => {
+      if (req.capability === 'freeform-text') return { outputs: [{ kind: 'text' as const, text: '' }] }
+      const prompt = (req.inputs[0] as { text?: string }).text ?? ''
+      if (/开场构图|OPENING FRAME/.test(prompt)) throw new Error('content policy')
+      return { outputs: [{ kind: 'image' as const, url: 'https://grid.png' }] }
     })
     const ctx = createMemoryContext({ llm: { complete: async () => '' } })
     const result = await driveAuto(
@@ -523,17 +609,19 @@ describe('generateKeyframe (slim diagrammatic storyboard sheet)', () => {
         ctx,
       ),
     )
-    expect(result.url).toBe('https://kf-1.png')
+    expect(result.url).toBe('https://grid.png')
     expect(result.cleanUrl).toBeUndefined()
     expect(result.cleanPrompt).toBeUndefined()
+    expect(result.gridFailReason).toBeUndefined()
   })
 
-  it('dual-keyframe: falls back to clean url when grid call fails', async () => {
-    let call = 0
-    mockedRunCapability.mockImplementation(async () => {
-      call += 1
-      if (call === 1) throw new Error('content policy')
-      return { outputs: [{ kind: 'image', url: `https://kf-${call}.png` }] }
+  it('dual-keyframe: falls back to clean url when grid call fails — and flags gridFailReason so callers do not store the clean frame as a 故事板', async () => {
+    // Grid fails on BOTH backends (matched by prompt); clean succeeds.
+    mockedRunCapability.mockImplementation(async (req) => {
+      if (req.capability === 'freeform-text') return { outputs: [{ kind: 'text' as const, text: '' }] }
+      const prompt = (req.inputs[0] as { text?: string }).text ?? ''
+      if (/Storyboard panel grid/i.test(prompt)) throw new Error('content policy')
+      return { outputs: [{ kind: 'image' as const, url: 'https://clean.png' }] }
     })
     const ctx = createMemoryContext({ llm: { complete: async () => '' } })
     const result = await driveAuto(
@@ -542,8 +630,12 @@ describe('generateKeyframe (slim diagrammatic storyboard sheet)', () => {
         ctx,
       ),
     )
-    expect(result.url).toBe('https://kf-2.png')
-    expect(result.cleanUrl).toBe('https://kf-2.png')
+    expect(result.url).toBe('https://clean.png')
+    expect(result.cleanUrl).toBe('https://clean.png')
+    // Regression: url === cleanUrl here. Without gridFailReason the caller
+    // wrote the clean frame into BOTH keyframeUrl and keyframeCleanUrl —
+    // 黑白故事板 and 开场构图 columns silently showed the same image.
+    expect(result.gridFailReason).toBe('content policy')
   })
 
   it('buildCleanKeyframePrompt: explicitly bans panel borders + grid + time labels', () => {
@@ -613,8 +705,273 @@ describe('generateKeyframe (slim diagrammatic storyboard sheet)', () => {
   })
 })
 
+describe('storyboard grid panel count (25格 for high-action shots)', () => {
+  it('fight/chase rows get a fixed 25-panel grid with fast micro-beat pacing', () => {
+    const prompt = buildKeyframePrompt({
+      row: {
+        character_actions: '沈玦挥剑格挡，墨渊锁链反击，二人在断桥交锋',
+        visual_description: '暴雪断桥双人打斗',
+        storyboard_prompts: 'duel on broken bridge',
+      },
+      shotDurationSeconds: 10,
+    })
+    expect(prompt).toContain('25-panel grid（25格，5 columns × 5 rows）')
+    expect(prompt).toContain('HIGH-INTENSITY ACTION')
+    // ≈0.40s per panel for a 10s shot; fast cutting, real weapon-clash rhythm.
+    expect(prompt).toContain('≈ 0.40s')
+    expect(prompt).toContain('打击定格')
+    // Fight must read as a two-fighter exchange with multiple reversals + collisions.
+    expect(prompt).toContain('TWO-FIGHTER EXCHANGE')
+    expect(prompt).toContain('≥4 力量反转')
+    expect(prompt).toContain('兵器碰撞')
+    // Blogger fight camera-language folded in.
+    expect(prompt).toContain('六要素')
+    expect(prompt).toContain('匹配剪辑')
+    expect(prompt).toContain('定格-加速-定格')
+    expect(prompt).not.toContain('choose 3–6 panels')
+    // Time labels still must sum to the shot duration.
+    expect(prompt).toContain('sum to exactly 10s')
+  })
+
+  it('high-action rows override a pre-baked 3-panel plan stored in storyboard_prompts', () => {
+    const prompt = buildKeyframePrompt({
+      row: {
+        character_actions: '二人挥剑交锋，锁链缠斗',
+        storyboard_prompts: 'Panel 1 (0s): MCU blade clash. Panel 2 (5s): mid shot. Panel 3 (10s): wide.',
+      },
+      shotDurationSeconds: 10,
+    })
+    // The baked "Panel 1/2/3" guidance is present but explicitly overridden.
+    expect(prompt).toContain('覆盖预烤格数')
+    expect(prompt).toContain('忽略它的格数')
+  })
+
+  it('calm rows do NOT get the override note even if guidance mentions panels', () => {
+    const prompt = buildKeyframePrompt({
+      row: {
+        character_actions: '两人对坐轻声交谈',
+        storyboard_prompts: 'Panel 1: close-up. Panel 2: two-shot.',
+      },
+      shotDurationSeconds: 9,
+    })
+    expect(prompt).not.toContain('覆盖预烤格数')
+  })
+
+  it('calm dialogue rows keep the 3–6 panel rule', () => {
+    const prompt = buildKeyframePrompt({
+      row: {
+        character_actions: '两人靠在床头轻声交谈，她把头埋进他肩窝',
+        visual_description: '深夜卧室暖光对话',
+      },
+      shotDurationSeconds: 9,
+    })
+    expect(prompt).toContain('choose 3–6 panels')
+    expect(prompt).not.toContain('25-panel grid')
+  })
+
+  it('isHighActionRow keys off action-bearing fields', () => {
+    expect(isHighActionRow({ motion_prompts: 'fast dolly as they clash swords' })).toBe(true)
+    expect(isHighActionRow({ character_actions: '她安静地画画' })).toBe(false)
+  })
+})
+
+describe('storyboard grid panel count (16格 for dance / 群舞 shots)', () => {
+  it('dance rows get a fixed 16-panel (4×4) 漫画式分镜 grid cut on the beat', () => {
+    const prompt = buildKeyframePrompt({
+      row: {
+        character_actions: '五人女团齐舞，队形从箭形展开为横排，C 位与两侧成员中心交换',
+        visual_description: '环形舞台群舞，副歌 drop 全员爆发',
+        storyboard_prompts: 'kpop girl group dance stage',
+      },
+      shotDurationSeconds: 12,
+    })
+    expect(prompt).toContain('16-panel grid（16格，4 columns × 4 rows）')
+    expect(prompt).toContain('DANCE / 群舞')
+    expect(prompt).toContain('ON THE MUSICAL BEAT')
+    // Formation storytelling + all-members-in-frame consistency guidance.
+    expect(prompt).toContain('队形叙事')
+    expect(prompt).toContain('群体同框')
+    // ≈0.75s per panel for a 12s shot.
+    expect(prompt).toContain('≈ 0.75s')
+    // A dance row is NOT a fight — it must not inherit the 25-panel fight sheet.
+    expect(prompt).not.toContain('25-panel grid')
+    expect(prompt).not.toContain('choose 3–6 panels')
+    expect(prompt).toContain('sum to exactly 12s')
+  })
+
+  it('a fight beats dance for the panel count even if both keywords appear', () => {
+    const prompt = buildKeyframePrompt({
+      row: {
+        character_actions: '两名舞者在舞台上拔剑交锋，边跳边打斗',
+        visual_description: '舞台打斗',
+      },
+      shotDurationSeconds: 10,
+    })
+    // High-action wins: 25-panel fight sheet, not the 16-panel dance sheet.
+    expect(prompt).toContain('25-panel grid')
+    expect(prompt).not.toContain('16-panel grid')
+  })
+
+  it('isDanceRow keys off action-bearing fields', () => {
+    expect(isDanceRow({ character_actions: '五人女团齐舞，队形变换' })).toBe(true)
+    expect(isDanceRow({ motion_prompts: 'kpop girl group dance formation' })).toBe(true)
+    expect(isDanceRow({ character_actions: '两人对坐轻声交谈' })).toBe(false)
+  })
+})
+
+describe('generateIdentitySheet (角色身份版)', () => {
+  beforeEach(() => { mockedRunCapability.mockReset() })
+
+  const req = {
+    character: { name: '莉安', description: '灰色风衣，短发', imageUrls: ['https://lian.png'] },
+    props: [{ name: '怀表', description: '银色', imageUrls: ['https://watch.png'] }],
+    scene: { name: '废弃教堂', description: '彩窗漏光', imageUrls: ['https://church.png'] },
+    visualStyle: 'Cold-toned filmic',
+    coreEmotion: '压抑的守护欲',
+    visualMark: '左颊疤痕',
+  }
+
+  it('buildIdentitySheetPrompt lays out 1 anchor + 7 views + 3 silhouettes + 3 expressions + 3 details + ID block on one 16:9 sheet', () => {
+    const prompt = buildIdentitySheetPrompt(req)
+    expect(prompt).toContain('角色身份版 / CHARACTER IDENTITY SHEET — 莉安')
+    expect(prompt).toContain('全身锚点 / Full-body anchor (×1)')
+    expect(prompt).toContain('辅助视角 / Auxiliary views (×7)')
+    // The 7 views: 正/背/左侧/右侧/3/4侧/仰/俯.
+    for (const v of ['正面 front', '背面 back', '左侧 left profile', '右侧 right profile', '仰视 low-angle', '俯视 high-angle']) {
+      expect(prompt).toContain(v)
+    }
+    expect(prompt).toContain('轮廓剪影 / Silhouettes (×3)')
+    expect(prompt).toContain('表情 / Expressions (×3)')
+    expect(prompt).toContain('细节 / Detail close-ups (×3)')
+    expect(prompt).toContain('ID 块 / ID block (×1)')
+    // ID block carries 名字/身份/核心情绪/视觉标志.
+    expect(prompt).toContain('名字「莉安」')
+    expect(prompt).toContain('核心情绪「压抑的守护欲」')
+    expect(prompt).toContain('视觉标志「左颊疤痕」')
+    // Identity is locked to the reference images.
+    expect(prompt).toContain('Identity is NON-NEGOTIABLE')
+  })
+
+  it('locks the character↔prop scale via the prop strip and relights the sheet with the scene lighting (刷光)', () => {
+    const prompt = buildIdentitySheetPrompt(req)
+    expect(prompt).toContain('角色×道具比例条 / Prop scale strip')
+    expect(prompt).toContain('TRUE relative scale')
+    expect(prompt).toContain('怀表')
+    // 刷光: scene ref is the LIGHT source, never a backdrop.
+    expect(prompt).toContain('刷光')
+    expect(prompt).toContain('Relight the ENTIRE sheet')
+    expect(prompt).toContain('do NOT paint the scene as a backdrop')
+  })
+
+  it('prop scale is shown visually side-by-side on one ground line — never as text labels', () => {
+    const prompt = buildIdentitySheetPrompt(req)
+    expect(prompt).toContain('SIDE-BY-SIDE')
+    expect(prompt).toContain('ONE shared ground line')
+    expect(prompt).toContain('DO NOT convey scale with text, numbers, measurements or annotation labels')
+  })
+
+  it('collectIdentitySheetRefs orders refs character-first, props next, scene LAST (lighting source only)', () => {
+    const refs = collectIdentitySheetRefs(req)
+    expect(refs.map((r) => r.role)).toEqual([
+      'Character identity — 莉安',
+      'Prop (scale lock) — 怀表',
+      'Scene LIGHTING source — 废弃教堂',
+    ])
+  })
+
+  it('prior identity sheets ride as costume CANON refs right after the identity anchors', () => {
+    const withPrior = { ...req, priorSheetUrls: ['https://sheet-row1.png'] }
+    const refs = collectIdentitySheetRefs(withPrior)
+    expect(refs.map((r) => r.role)).toEqual([
+      'Character identity — 莉安',
+      'Costume & detail CANON — previous identity sheet of 莉安',
+      'Prop (scale lock) — 怀表',
+      'Scene LIGHTING source — 废弃教堂',
+    ])
+    // Prompt hard-locks costume details to the canon sheet.
+    const prompt = buildIdentitySheetPrompt(withPrior)
+    expect(prompt).toContain('COSTUME DETAIL CANON')
+    expect(prompt).toContain('Do NOT re-invent, add, remove or restyle ANY detail')
+    // Without prior sheets the canon block is absent.
+    expect(buildIdentitySheetPrompt(req)).not.toContain('COSTUME DETAIL CANON')
+  })
+
+  it('row context tailors silhouettes, expressions and views to THIS row', () => {
+    const withRow = {
+      ...req,
+      rowContext: {
+        shotNumber: 'S2',
+        actions: '拔刀回身格挡',
+        shotSize: '近景仰拍',
+        emotionAtmosphere: '压迫下的爆发',
+        performanceGuidance: '先收后放，格挡瞬间眼神变锐',
+      },
+    }
+    const prompt = buildIdentitySheetPrompt(withRow)
+    expect(prompt).toContain("THIS ROW'S SHOOTING CONTEXT（S2）")
+    expect(prompt).toContain('拔刀回身格挡')
+    // Silhouettes come from the row's action arc, not generic poses.
+    expect(prompt).toContain("drawn from THIS ROW's actions")
+    expect(prompt).toContain('wind-up, peak moment, and follow-through')
+    // Expressions center on the row's emotional beat.
+    expect(prompt).toContain('压迫下的爆发')
+    // The view matching the row's camera is prioritized.
+    expect(prompt).toContain('近景仰拍')
+    expect(prompt).toContain('先收后放，格挡瞬间眼神变锐')
+    // Without rowContext the prompt stays generic.
+    expect(buildIdentitySheetPrompt(req)).not.toContain("THIS ROW'S SHOOTING CONTEXT")
+  })
+
+  it('renders the sheet through the pinned keyframe backend at 16:9 with the ordered refs', async () => {
+    mockedRunCapability.mockResolvedValue({ outputs: [{ kind: 'image', url: 'https://sheet.png' }] })
+    const ctx = createMemoryContext({ llm: { complete: async () => '' } })
+    const result = await driveAuto(generateIdentitySheet(req, ctx))
+    expect(result.url).toBe('https://sheet.png')
+    expect(result.imageRefs).toHaveLength(3)
+    const call = mockedRunCapability.mock.calls[0]![0]
+    expect(call.capability).toBe('text-to-image')
+    expect(call.params?.provider).toBe(KEYFRAME_PROVIDER)
+    expect(call.params?.model).toBe(KEYFRAME_MODEL)
+    expect(call.params?.aspect).toBe('16:9')
+    // 1 text + 3 ordered ref images.
+    expect(call.inputs).toHaveLength(4)
+  })
+
+  it('throws when the character name is missing', async () => {
+    const ctx = createMemoryContext({ llm: { complete: async () => '' } })
+    await expect(
+      driveAuto(generateIdentitySheet({ character: { name: '' } }, ctx)),
+    ).rejects.toThrow(/character name/)
+  })
+
+  it('falls back to Gemini flash-image (nano-banana) when the primary image backend times out', async () => {
+    mockedRunCapability.mockReset()
+    // Primary (tokenrouter/gpt-image) times out; fallback (gemini) succeeds.
+    mockedRunCapability
+      .mockRejectedValueOnce(new Error('图片生成失败 (Apimart): task timed out after 180s'))
+      .mockResolvedValueOnce({ outputs: [{ kind: 'image', url: 'https://nano-banana-sheet.png' }] })
+    const ctx = createMemoryContext({ llm: { complete: async () => '' } })
+    const result = await driveAuto(generateIdentitySheet(req, ctx))
+    expect(result.url).toBe('https://nano-banana-sheet.png')
+    expect(mockedRunCapability).toHaveBeenCalledTimes(2)
+    expect(mockedRunCapability.mock.calls[0]![0].params?.provider).toBe(KEYFRAME_PROVIDER)
+    expect(mockedRunCapability.mock.calls[1]![0].params?.provider).toBe('gemini')
+    expect(mockedRunCapability.mock.calls[1]![0].params?.model).toBe('google/gemini-3.1-flash-image-preview')
+  })
+
+  it('propagates the error when BOTH primary and nano-banana backends fail', async () => {
+    mockedRunCapability.mockReset()
+    mockedRunCapability
+      .mockRejectedValueOnce(new Error('primary timed out'))
+      .mockRejectedValueOnce(new Error('fallback also timed out'))
+    const ctx = createMemoryContext({ llm: { complete: async () => '' } })
+    await expect(driveAuto(generateIdentitySheet(req, ctx))).rejects.toThrow(/fallback also timed out/)
+    expect(mockedRunCapability).toHaveBeenCalledTimes(2)
+  })
+})
+
 describe('critiqueVideoConsistency', () => {
-  beforeEach(() => mockedRunCapability.mockReset())
+  beforeEach(() => { mockedRunCapability.mockReset() })
 
   it('routes through storyboard-qc with video + keyframe + expected text', async () => {
     mockedRunCapability.mockResolvedValue({
@@ -673,7 +1030,7 @@ describe('critiqueVideoConsistency', () => {
 })
 
 describe('proposeBridgeRow', () => {
-  beforeEach(() => mockedRunCapability.mockReset())
+  beforeEach(() => { mockedRunCapability.mockReset() })
 
   const baseReq = {
     prevRow: {

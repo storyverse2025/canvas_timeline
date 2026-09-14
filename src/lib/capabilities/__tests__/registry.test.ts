@@ -8,8 +8,8 @@ import {
 import type { CapabilitySpec } from '../types'
 
 describe('CAPABILITIES registry', () => {
-  it('has all 33 capabilities', () => {
-    expect(CAPABILITIES.length).toBe(33)
+  it('has all 35 capabilities', () => {
+    expect(CAPABILITIES.length).toBe(35)
   })
 
   it('has unique ids', () => {
@@ -32,7 +32,10 @@ describe('CAPABILITIES registry', () => {
   it('categories have expected counts', () => {
     const counts = { agent: 0, image: 0, video: 0, audio: 0 }
     for (const c of CAPABILITIES) counts[c.category]++
-    expect(counts.agent).toBe(9)
+    // agent grew to 11 with the dedicated 'storyboard-generation' +
+    // 'voice-casting' capabilities (each pins a contract-reinforcing
+    // system prompt that element-extraction was hijacking).
+    expect(counts.agent).toBe(11)
     expect(counts.image).toBe(11)
     expect(counts.video).toBe(9)
     expect(counts.audio).toBe(4)
@@ -67,7 +70,7 @@ describe('getCapability', () => {
 describe('getCapabilitiesByCategory', () => {
   it('returns only agent capabilities', () => {
     const caps = getCapabilitiesByCategory('agent')
-    expect(caps.length).toBe(9)
+    expect(caps.length).toBe(11)
     expect(caps.every((c) => c.category === 'agent')).toBe(true)
   })
 

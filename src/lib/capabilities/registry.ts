@@ -92,6 +92,24 @@ export const CAPABILITIES: CapabilitySpec[] = [
     outputKind: 'text',
     nodeTypes: ['text', 'image'],
   },
+  {
+    id: 'storyboard-generation',
+    category: 'agent',
+    label: '分镜表生成',
+    description: 'director-agent 生成/修复分镜表专用——只 reinforce「输出 JSON 数组」契约，不像 element-extraction 那样注入会抢走任务的元素提取 system（配合客户端 validate→retry 网关）',
+    inputKinds: ['text'],
+    outputKind: 'text',
+    nodeTypes: ['text'],
+  },
+  {
+    id: 'voice-casting',
+    category: 'agent',
+    label: '音色选角',
+    description: 'actor-agent 为角色匹配音色专用——只 reinforce「输出 {角色名: 音色id} JSON 对象」契约，避免 element-extraction 的元素提取 system 劫持（配合客户端 validate→retry 网关）',
+    inputKinds: ['text'],
+    outputKind: 'text',
+    nodeTypes: ['text'],
+  },
 
   // ─── 图片能力 ──────────────────────────────────────────────────────
   {

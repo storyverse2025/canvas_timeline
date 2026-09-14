@@ -9,6 +9,7 @@ import {
   propImageContext,
   sceneImageContext,
 } from '@/lib/agents/art-director-agent'
+import { toast } from 'sonner'
 import { runAgentWithChatBridge } from '@/lib/agents/chat-bridge'
 import { createMemoryContext } from '@/lib/agents/_shared/context/memory'
 import { createCapabilityLLM } from '@/lib/agents/_shared/llm/capability'
@@ -126,13 +127,28 @@ ${nodeList}` }],
   return inventory
 }
 
-function guessRoleFromName(name: string): ElementRole {
+export function guessRoleFromName(name: string): ElementRole {
   const n = name.toLowerCase()
   if (/角色|character|人物|主角|配角|英雄|导师|反派|盟友/i.test(n)) return 'character'
   if (/道具|prop|物品|武器|工具/i.test(n)) return 'prop'
   if (/场景|scene|背景|环境|地点|森林|城市/i.test(n)) return 'scene'
   if (/keyframe|kf-|分镜|关键帧/i.test(n)) return 'keyframe'
   return 'unknown'
+}
+
+/**
+ * Guard against a scene/prop mislabeled as a 'character' (seen when the
+ * extractor buckets 场景/道具 as characters, or the 开白 asset library's
+ * add-to-canvas hardcodes role='character'). Applying the character three-view
+ * portrait template to a bridge/sword produces a "front-face close-up of a
+ * scene" — the exact 场景：悬空断桥 bug. Only DOWNGRADES a 'character' whose
+ * NAME decisively says scene/prop; never upgrades (a real character name won't
+ * match the scene/prop keywords), so legitimate characters are untouched.
+ */
+export function correctElementRole(name: string, role: ElementRole): ElementRole {
+  if (role !== 'character') return role
+  const guessed = guessRoleFromName(name)
+  return guessed === 'scene' || guessed === 'prop' ? guessed : role
 }
 
 // ─── Extraction from script ─────────────────────────────────────────
@@ -368,25 +384,53 @@ async function runAssetImageGenerationInBackground(
   onStatus: (msg: string) => void,
 ): Promise<void> {
   const tasks = queued.map(async (q) => {
-    onStatus(`art-director: → 生成 ${q.kind} ${q.name}…`)
+    // Guard against a 场景/道具 that got bucketed as 'character': never apply the
+    // character three-view portrait template (or 开白-register) to a bridge/
+    // sword. correctElementRole downgrades only when the NAME decisively says
+    // scene/prop, so real characters are untouched.
+    const kind = correctElementRole(q.name, q.kind) as 'character' | 'scene' | 'prop'
+    onStatus(`art-director: → 生成 ${kind} ${q.name}…`)
     const imgCtx =
-      q.kind === 'character' ? characterImageContext(artStyle)
-        : q.kind === 'scene' ? sceneImageContext(artStyle)
+      kind === 'character' ? characterImageContext(artStyle)
+        : kind === 'scene' ? sceneImageContext(artStyle)
         : propImageContext(artStyle)
     const timeoutMs =
-      q.kind === 'scene' ? ASSET_TIMEOUT_MS.scene
-        : q.kind === 'character' ? ASSET_TIMEOUT_MS.character
+      kind === 'scene' ? ASSET_TIMEOUT_MS.scene
+        : kind === 'character' ? ASSET_TIMEOUT_MS.character
         : ASSET_TIMEOUT_MS.prop
     try {
-      const { url, prompt } = await artDirectorGenerateOneImage(q.element, imgCtx, ctx, timeoutMs)
+      // Characters opt into auto 开白: register the generated face as a BytePlus
+      // asset (its OWN likeness) + bind, so downstream video passes the
+      // real-person privacy filter. THIS is the pipeline's character-image path
+      // (generateAssetImages is a separate, unused-by-pipeline entry point), so
+      // the flag has to be set HERE or registration never happens.
+      const isChar = kind === 'character'
+      const { url, prompt, byteplusAssetId, byteplusAssetActive } =
+        await artDirectorGenerateOneImage(q.element, imgCtx, ctx, timeoutMs, isChar)
       if (url) {
         useCanvasItemStore.getState().updateItem(q.itemId, { content: url, prompt })
-        onStatus(`art-director: ✓ ${q.kind} ${q.name} 完成`)
+        onStatus(`art-director: ✓ ${kind} ${q.name} 完成`)
+        if (isChar) {
+          if (byteplusAssetId) {
+            const note = byteplusAssetActive ? 'Active' : 'Processing…'
+            onStatus(`art-director: ✓ 开白 ${q.name} → asset ${byteplusAssetId} (${note})`)
+            toast.success(`开白成功：${q.name}`, { description: `asset ${byteplusAssetId} (${note})` })
+          } else {
+            onStatus(`art-director: ⚠️ ${q.name} 开白注册未成功（视频可能触发真人风控）`)
+            toast.warning(`开白未成功：${q.name}`, { description: '视频可能触发真人风控，可稍后重试' })
+          }
+        }
       } else {
-        onStatus(`art-director: ✗ ${q.kind} ${q.name} 失败 — provider 返回空 URL`)
+        onStatus(`art-director: ✗ ${kind} ${q.name} 失败 — provider 返回空 URL`)
+        if (kind === 'character') toast.error(`角色图生成失败：${q.name}`, { description: 'provider 返回空 URL' })
       }
     } catch (e) {
-      onStatus(`art-director: ✗ ${q.kind} ${q.name} 失败 — ${(e as Error).message}`)
+      const msg = (e as Error).message
+      onStatus(`art-director: ✗ ${kind} ${q.name} 失败 — ${msg}`)
+      // Character failures are otherwise invisible (pipeline onStatus is silent)
+      // yet they cascade: empty character image → keyframe/storyboard base64
+      // decode errors. Surface them so the user knows to retry / check provider.
+      if (kind === 'character') toast.error(`角色图生成失败：${q.name}`, { description: msg.slice(0, 160) })
     }
   })
   await Promise.allSettled(tasks)

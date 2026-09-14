@@ -48,3 +48,6 @@ public/voices/
 # Per-IP session snapshots written by vite-session-snapshot-plugin.ts —
 # these are user-state mirrors, not source.
 public/sessions/
+
+# Virtual avatar catalog (scraped from BytePlus — contains account-specific asset ids)
+public/virtual-avatars.json

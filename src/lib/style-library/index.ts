@@ -68,8 +68,8 @@ const PHOTOREAL_RISK_IDS: ReadonlySet<string> = new Set([
  * pipeline — keep facial detail, drop the photographed-real cue.
  */
 export const PHOTOREAL_AVOIDANCE_RIDER = {
-  zh: '3D CG风格化，UE5 风格 — 保留面部细节但避免被识别为真实拍摄的演员。',
-  en: '3D CG stylized, Unreal Engine 5 look — preserve facial detail but avoid being read as a photographed real actor.',
+  zh: 'AAA 电影级 CG 渲染，虚幻引擎 5 品质（Lumen 全局光照、光线追踪反射、次表面散射皮肤、基于物理的 PBR 材质、微表情与毛发级细节、电影级浅景深与轻微胶片颗粒）。这是高精度渲染的 CG 角色而非实拍真人镜头——保留全部面部与皮肤细节、把真实感与材质质感拉满，仅作为"渲染角色"存在以免被判定为真实拍摄的演员。严禁 2D 动漫 / 卡通 / 赛璐璐平涂 / 廉价塑料感或低精度 3D。',
+  en: 'AAA cinematic CG render, Unreal Engine 5 quality (Lumen global illumination, ray-traced reflections, subsurface-scattering skin, physically-based PBR materials, micro-expression and hair-level detail, cinematic shallow depth of field with subtle film grain). A high-fidelity rendered CG character, NOT live-action footage — preserve every facial and skin detail and push realism and material quality to the maximum; it exists only as a rendered character so it is not judged to be a photographed real actor. Strictly NO 2D anime, NO cartoon, NO flat cel shading, NO cheap plastic-looking or low-fidelity 3D.',
 }
 
 function applyPhotorealRider(preset: StylePresetDefinition): StylePresetDefinition {
@@ -81,7 +81,7 @@ function applyPhotorealRider(preset: StylePresetDefinition): StylePresetDefiniti
     ...preset,
     global_style_guide: {
       ...guide,
-      goal: guide.goal.includes('3D CG') ? guide.goal : `${guide.goal}${goalRider}`,
+      goal: guide.goal.includes('[安全]') ? guide.goal : `${guide.goal}${goalRider}`,
       consistency_rules: [
         ...guide.consistency_rules,
         PHOTOREAL_AVOIDANCE_RIDER.en,

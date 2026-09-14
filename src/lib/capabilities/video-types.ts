@@ -32,7 +32,10 @@ export function detectVideoType(inputs: VideoInputs): VideoGenType {
 
   if (hasVideo || hasAudio) return 'universal-to-video'
   if (imgCount === 0) return 'text-to-video'
-  if (imgCount === 1) return 'image-to-video-first'
+  // mode:'reference' forces reference-to-video even for a single image — the
+  // caller is adding extra reference media (e.g. asset:// virtual-avatar refs)
+  // that can't be mixed with a literal first_frame role.
+  if (imgCount === 1) return inputs.mode === 'reference' ? 'reference-to-video' : 'image-to-video-first'
   if (imgCount === 2 && inputs.mode !== 'reference') return 'image-to-video-first-last'
   return 'reference-to-video'
 }

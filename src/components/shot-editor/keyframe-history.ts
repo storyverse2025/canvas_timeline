@@ -11,6 +11,17 @@ export interface KeyframeHistoryEntry {
   isStoredVersion: boolean
 }
 
+export interface BeatVideoHistoryEntry {
+  id: string
+  content: string
+  name: string
+  role?: CanvasItemRole
+  createdAt: number
+  sourceItemId?: string
+  isStoredVersion: boolean
+  isRowOnly: boolean
+}
+
 function matchesShot(item: CanvasItem, namePrefix: string): boolean {
   if (item.kind !== 'image') return false
   if (item.role !== 'keyframe' && item.role !== 'keyframe-clean') return false
@@ -54,6 +65,73 @@ export function collectKeyframeHistory(row: StoryboardRow, allItems: Record<stri
     .sort((a, b) => {
       const aCurrent = a.content === row.keyframeUrl || a.content === row.reference_image
       const bCurrent = b.content === row.keyframeUrl || b.content === row.reference_image
+      if (aCurrent !== bCurrent) return aCurrent ? -1 : 1
+      return b.createdAt - a.createdAt
+    })
+    .filter((entry) => {
+      if (seen.has(entry.content)) return false
+      seen.add(entry.content)
+      return true
+    })
+}
+
+function matchesBeatVideoShot(item: CanvasItem, namePrefix: string): boolean {
+  if (item.kind !== 'video') return false
+  if (item.role !== 'beat-video' && item.role !== 'beat-video-alternate') return false
+  const n = item.name ?? ''
+  return n === namePrefix || n.startsWith(`${namePrefix}-`) || n.startsWith(`${namePrefix} `)
+}
+
+export function collectBeatVideoHistory(row: StoryboardRow, allItems: Record<string, CanvasItem>): BeatVideoHistoryEntry[] {
+  const namePrefix = `BV-${row.shot_number}`
+  const entries: BeatVideoHistoryEntry[] = []
+
+  for (const item of Object.values(allItems)) {
+    if (!matchesBeatVideoShot(item, namePrefix)) continue
+    if (item.content) {
+      entries.push({
+        id: item.id,
+        content: item.content,
+        name: item.name,
+        role: item.role,
+        createdAt: item.createdAt ?? 0,
+        sourceItemId: item.id,
+        isStoredVersion: false,
+        isRowOnly: false,
+      })
+    }
+    for (const [index, version] of (item.versions ?? []).entries()) {
+      if (!version.content) continue
+      entries.push({
+        id: `${item.id}:v${index}`,
+        content: version.content,
+        name: `${item.name} · v${index + 1}`,
+        role: item.role,
+        createdAt: version.timestamp ?? 0,
+        sourceItemId: item.id,
+        isStoredVersion: true,
+        isRowOnly: false,
+      })
+    }
+  }
+
+  if (row.beatVideoUrl && !entries.some((entry) => entry.content === row.beatVideoUrl)) {
+    entries.push({
+      id: `${row.id}:beatVideoUrl`,
+      content: row.beatVideoUrl,
+      name: `${namePrefix} · 当前采用`,
+      role: 'beat-video',
+      createdAt: Date.now(),
+      isStoredVersion: false,
+      isRowOnly: true,
+    })
+  }
+
+  const seen = new Set<string>()
+  return entries
+    .sort((a, b) => {
+      const aCurrent = a.content === row.beatVideoUrl
+      const bCurrent = b.content === row.beatVideoUrl
       if (aCurrent !== bCurrent) return aCurrent ? -1 : 1
       return b.createdAt - a.createdAt
     })

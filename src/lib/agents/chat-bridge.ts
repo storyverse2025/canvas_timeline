@@ -77,3 +77,72 @@ export async function runAgentWithChatBridge<TResult>(
     throw err
   }
 }
+
+/**
+ * validate→retry gate around an agent verb.
+ *
+ * Some verbs (cast-voices, generate-storyboard-table, apply-timeline-fixes)
+ * must return a precise JSON shape. Even with a dedicated capability whose
+ * system prompt reinforces the contract, an LLM occasionally emits a
+ * malformed / wrong-shaped payload. Rather than silently swallowing it
+ * (the old behavior — empty 音色 / empty 分镜表), this re-prompts the agent
+ * to regenerate up to `retries` extra times, validating each attempt.
+ *
+ * `makeGen` MUST return a FRESH generator each call (generators are
+ * single-use), and SHOULD build a fresh agent context inside itself —
+ * reusing one memory context across retries makes every retry see the
+ * previous (bad) turn. `validate` returns `true` on success or an error
+ * string describing what was wrong (surfaced in the retry log + final
+ * throw). A throwing attempt (e.g. the verb's own schema check) is
+ * retried like a validation miss — EXCEPT clearly non-retryable errors
+ * (user abort, auth/key problems), which propagate immediately instead
+ * of burning `retries`× the cost and then masquerading as a validation
+ * failure.
+ */
+
+/** Errors that identical immediate retries can never fix. */
+function isNonRetryableAgentError(msg: string): boolean {
+  return (
+    /abort|cancell?ed|用户取消/i.test(msg) ||
+    /401|403|unauthorized|forbidden|invalid.*(api.?key|token)|api.?key.*(invalid|missing|not set)/i.test(msg)
+  )
+}
+
+export async function runAgentValidated<TResult>(
+  agentName: string,
+  makeGen: () => AgentGenerator<TResult>,
+  validate: (result: TResult) => true | string,
+  opts: ChatBridgeOptions & { retries?: number } = {},
+): Promise<TResult> {
+  const retries = opts.retries ?? 2
+  const label = makeLabel(agentName, opts.verb)
+  let lastErr = '未知错误'
+  let lastWasThrow = false
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const result = await runAgentWithChatBridge(agentName, makeGen(), opts)
+      const verdict = validate(result)
+      if (verdict === true) return result
+      lastErr = verdict
+      lastWasThrow = false
+    } catch (err) {
+      lastErr = (err as Error).message ?? String(err)
+      lastWasThrow = true
+      if (isNonRetryableAgentError(lastErr)) throw err
+    }
+    if (attempt < retries) {
+      useChatStore
+        .getState()
+        .addMessage('system', `[${label}] ${lastWasThrow ? '运行失败' : '输出未通过校验'}（${lastErr}），重新生成 ${attempt + 1}/${retries}`)
+    }
+  }
+  // Report the true failure class: an infra/runtime error is not a
+  // "validation" failure — calling it one sends the user debugging the
+  // wrong layer.
+  throw new Error(
+    lastWasThrow
+      ? `${label} 运行失败，已重试 ${retries} 次：${lastErr}`
+      : `${label} 校验失败，已重试 ${retries} 次后仍无效：${lastErr}`,
+  )
+}

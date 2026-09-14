@@ -17,7 +17,13 @@ describe('generation API routing', () => {
     expect(code).toContain('APIMART_IMAGE_MODEL')
     expect(code).toContain('runApimartImage')
     expect(code).toContain('runFalFluxImage')
-    expect(code).toContain('DISABLE_FAL_IMAGE_FALLBACK')
+    // Fallback is unconditional now (the DISABLE_FAL_IMAGE_FALLBACK
+    // kill-switch went away with the task-based Apimart refactor) — what
+    // matters is that a failed Apimart run degrades to FAL. FAL results
+    // now go through persistExternalImageUrl (same as Apimart results)
+    // so they get a stable local /uploads/ path.
+    expect(code).toContain('runFalFluxImage(')
+    expect(code).toContain('persistExternalImageUrl')
   })
 
   it('uses BytePlus海外 Ark Seedance task create/poll endpoint for video generation', () => {
