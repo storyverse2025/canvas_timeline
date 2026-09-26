@@ -323,6 +323,37 @@ export const CAPABILITIES: CapabilitySpec[] = [
     ],
   },
   {
+    id: 'music-video',
+    category: 'video',
+    label: '生成 MV',
+    description: '一张人物图 + 一首 MP3 ，出一支卡点且口型对得上的音乐 MV。看得清嘴的镜头走音频直驱真唱，远景与俯角走闭口情绪镜头。',
+    inputKinds: ['image', 'audio', 'text'],
+    outputKind: 'video',
+    nodeTypes: ['image'],
+    params: [
+      { key: 'mvStyle', label: 'MV 风格', type: 'select', default: 'cinematic', options: [
+        { value: 'cinematic', label: '电影感：冷调、浅景深、克制运镜' },
+        { value: 'warm-film', label: '日系胶片：暖光、柔和、生活感' },
+        { value: 'moody-night', label: '夜色情绪：霓虹、雨、反光' },
+        { value: 'ancient-china', label: '古风：国风服饰、自然景、水墨感' },
+        { value: 'stage-concert', label: '舞台：灯光、烟雾、高能量' },
+        { value: 'anime', label: '动漫：赛璐璐、爆闪、夸张光效' },
+      ]},
+      { key: 'duration', label: '成片时长', type: 'select', default: '30', options: [
+        { value: '15', label: '15s' }, { value: '30', label: '30s' }, { value: '60', label: '60s' },
+      ]},
+      { key: 'segment', label: '用歌的哪一段', type: 'select', default: 'auto', options: [
+        { value: 'auto', label: '自动：取能量最高的段（通常是副歌）' },
+        { value: 'intro', label: '从头开始' },
+        { value: 'chorus', label: '副歌' },
+      ]},
+      { key: 'shotDensity', label: '镜头强度', type: 'select', default: 'calm', options: [
+        { value: 'calm', label: '保守：4–5 镜，以景别变化为主' },
+        { value: 'busy', label: '密集：8+ 镜，卡点切' },
+      ]},
+    ],
+  },
+  {
     id: 'universal-video',
     category: 'video',
     label: '全能参考生视频',
