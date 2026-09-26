@@ -2167,12 +2167,13 @@ async function musicVideo(req: CapReq): Promise<CapRes> {
   const style = (req.params?.mvStyle as string) || 'cinematic'
   const duration = String(req.params?.duration ?? '30')
   const segment = (req.params?.segment as string) || 'auto'
-  // Shot count follows the density choice; the planner rotates framings so
-  // more shots means more framing variety, not just more cuts.
-  const shots = (req.params?.shotDensity as string) === 'busy' ? '8' : '5'
+  // Density, not a shot count: the planner derives how many shots that length
+  // needs and keeps each one inside the per-call limits of whichever backend
+  // it routes to. duration '0' means the whole mp3.
+  const density = (req.params?.shotDensity as string) === 'busy' ? 'busy' : 'calm'
 
   const args = [script, '--image', imagePath, '--audio', audioPath, '--style', style,
-                '--duration', duration, '--segment', segment, '--shots', shots,
+                '--duration', duration, '--segment', segment, '--density', density,
                 '--outdir', job]
   console.log(`[cap] music-video spawn: python3 ${args.join(' ')}`)
 

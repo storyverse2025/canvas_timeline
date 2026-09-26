@@ -243,7 +243,7 @@ function CapabilityDialog({ state, onClose }: {
             <button
               className="shrink-0 h-14 w-14 rounded border border-dashed border-border flex flex-col items-center justify-center hover:bg-accent/30"
               onClick={() => addRefFileRef.current?.click()}
-              title="上传本地图片"
+              title={isVideo ? '上传本地图片或音频' : '上传本地图片'}
             >
               <Plus className="w-4 h-4 text-muted-foreground" />
               <span className="text-[8px] text-muted-foreground">上传</span>

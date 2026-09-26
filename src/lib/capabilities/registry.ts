@@ -330,8 +330,12 @@ export const CAPABILITIES: CapabilitySpec[] = [
         { value: 'stage-concert', label: '舞台：灯光、烟雾、高能量' },
         { value: 'anime', label: '动漫：赛璐璐、爆闪、夸张光效' },
       ]},
+      // Length follows the music, not any single model's ceiling: the film is
+      // assembled from clips, so the per-call limits only bound one shot.
       { key: 'duration', label: '成片时长', type: 'select', default: '30', options: [
-        { value: '15', label: '15s' }, { value: '30', label: '30s' }, { value: '60', label: '60s' },
+        { value: '15', label: '15s' }, { value: '30', label: '30s' },
+        { value: '60', label: '60s' }, { value: '90', label: '90s' },
+        { value: '0', label: '整首歌（按 mp3 长度）' },
       ]},
       { key: 'segment', label: '用歌的哪一段', type: 'select', default: 'auto', options: [
         { value: 'auto', label: '自动：取能量最高的段（通常是副歌）' },
@@ -339,8 +343,8 @@ export const CAPABILITIES: CapabilitySpec[] = [
         { value: 'chorus', label: '副歌' },
       ]},
       { key: 'shotDensity', label: '镜头强度', type: 'select', default: 'calm', options: [
-        { value: 'calm', label: '保守：4–5 镜，以景别变化为主' },
-        { value: 'busy', label: '密集：8+ 镜，卡点切' },
+        { value: 'calm', label: '保守：每镜约 6.5s，以景别变化为主' },
+        { value: 'busy', label: '密集：每镜约 3s，卡点切' },
       ]},
     ],
   },
