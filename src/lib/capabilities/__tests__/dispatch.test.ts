@@ -13,6 +13,7 @@ describe('dispatch coverage', () => {
     'text-to-video', 'first-last-frame', 'multi-ref-video', 'universal-video',
     'upscale-video', 'lip-sync', 'motion-imitation', 'video-split', 'video-style-transfer',
     'preset-voice', 'voice-clone', 'polyphonic', 'sound-effects',
+    'music-video',
   ]
 
   it('every registered capability has a handler', () => {
@@ -27,9 +28,9 @@ describe('dispatch coverage', () => {
     }
   })
 
-  it('handler count matches capability count (35)', () => {
-    expect(expectedHandlers.length).toBe(35)
-    expect(CAPABILITIES.length).toBe(35)
+  it('handler count matches capability count (36)', () => {
+    expect(expectedHandlers.length).toBe(36)
+    expect(CAPABILITIES.length).toBe(36)
   })
 })
 

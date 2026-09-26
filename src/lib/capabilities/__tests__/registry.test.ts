@@ -8,8 +8,8 @@ import {
 import type { CapabilitySpec } from '../types'
 
 describe('CAPABILITIES registry', () => {
-  it('has all 35 capabilities', () => {
-    expect(CAPABILITIES.length).toBe(35)
+  it('has all 36 capabilities', () => {
+    expect(CAPABILITIES.length).toBe(36)
   })
 
   it('has unique ids', () => {
@@ -37,7 +37,8 @@ describe('CAPABILITIES registry', () => {
     // system prompt that element-extraction was hijacking).
     expect(counts.agent).toBe(11)
     expect(counts.image).toBe(11)
-    expect(counts.video).toBe(9)
+    // video grew to 10 with 'music-video' (image + mp3 -> beat-cut MV).
+    expect(counts.video).toBe(10)
     expect(counts.audio).toBe(4)
   })
 
@@ -82,7 +83,7 @@ describe('getCapabilitiesByCategory', () => {
 
   it('returns only video capabilities', () => {
     const caps = getCapabilitiesByCategory('video')
-    expect(caps.length).toBe(9)
+    expect(caps.length).toBe(10)
   })
 
   it('returns only audio capabilities', () => {
