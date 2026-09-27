@@ -317,6 +317,11 @@ export const CAPABILITIES: CapabilitySpec[] = [
     id: 'music-video',
     category: 'video',
     label: '生成 MV',
+    // Owns its own pipeline: song analysis, shot planning, then OmniHuman for
+    // the sung shots and Seedance for the closed-mouth ones. A single model
+    // choice is meaningless here, and `duration` below is the length of the
+    // finished MV, not of any one clip.
+    pipeline: true,
     description: '一张人物图 + 一首 MP3 ，出一支卡点且口型对得上的音乐 MV。看得清嘴的镜头走音频直驱真唱，远景与俯角走闭口情绪镜头。',
     inputKinds: ['image', 'audio', 'text'],
     outputKind: 'video',
