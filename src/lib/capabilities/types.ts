@@ -48,6 +48,16 @@ export interface CapabilityOutput {
   kind: OutputKind
   url?: string
   text?: string
+  /**
+   * What this output is within a multi-step capability, when it is part of a
+   * structure rather than one of several equal results. 'shot' outputs are the
+   * pieces, 'final' is what they were assembled into, and the client wires each
+   * shot into the final instead of hanging everything off the source node.
+   * Absent for ordinary capabilities, which keep the flat fan-out.
+   */
+  role?: 'storyboard' | 'shot' | 'final'
+  /** Shown on the node instead of the capability label, e.g. "S003 真唱". */
+  label?: string
 }
 
 export interface CapabilityResponse {

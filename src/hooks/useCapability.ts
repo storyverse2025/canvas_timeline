@@ -75,6 +75,14 @@ export function useCapability() {
       const srcItem = args.itemId ? useCanvasItemStore.getState().items[args.itemId] : undefined
       const inheritBeatVideoRole = srcItem?.role === 'beat-video'
 
+      // A capability that returns roles is describing a graph, not a list: the
+      // shots feed the final cut, so they are wired to it rather than all
+      // hanging off the source. Everything else keeps the flat fan-out.
+      const shotNodeIds: string[] = []
+      let finalNodeId: string | null = null
+      const shotCount = result.outputs.filter((o) => o.role === 'shot').length
+      let shotIndex = 0
+
       for (let i = 0; i < result.outputs.length; i++) {
         const output = result.outputs[i]
         if (output.kind === 'text') {
@@ -95,22 +103,44 @@ export function useCapability() {
             kind: isVideoOutput ? 'video' : 'image',
             ...(isVideoOutput && inheritBeatVideoRole
               ? { role: 'beat-video', name: srcItem!.name }   // preserve "BV-S1"
-              : { name: result.outputs.length > 1 ? `${cap.label} ${i + 1}` : cap.label }),
+              : { name: output.label ?? (result.outputs.length > 1 ? `${cap.label} ${i + 1}` : cap.label) }),
             content: output.url ?? '',
           })
           const size = isVideoOutput
             ? { width: 360, height: 200 }
             : { width: 280, height: 200 }
+          // Shots stack in a column between the source and the final cut, so
+          // the film reads left to right: source -> storyboard + shots -> final.
+          let at = { x: pos.x + srcW + 60 + i * (280 + nodeGap), y: pos.y }
+          if (output.role === 'shot') {
+            at = { x: pos.x + srcW + 380, y: pos.y + shotIndex * (200 + nodeGap) }
+            shotIndex += 1
+          } else if (output.role === 'final') {
+            at = { x: pos.x + srcW + 820, y: pos.y + Math.max(0, (shotCount - 1) / 2) * (200 + nodeGap) }
+          } else if (output.role === 'storyboard') {
+            at = { x: pos.x + srcW + 60, y: pos.y }
+          }
           const newNodeId = useCanvasStore.getState().addItemNode(
-            newItemId, isVideoOutput ? 'video' : 'image',
-            { x: pos.x + srcW + 60 + i * (280 + nodeGap), y: pos.y },
-            size,
+            newItemId, isVideoOutput ? 'video' : 'image', at, size,
           )
-          useCanvasStore.getState().addEdge(args.nodeId, newNodeId)
+          if (output.role === 'shot') {
+            shotNodeIds.push(newNodeId)
+            useCanvasStore.getState().addEdge(args.nodeId, newNodeId)
+          } else if (output.role === 'final') {
+            finalNodeId = newNodeId
+          } else {
+            useCanvasStore.getState().addEdge(args.nodeId, newNodeId)
+          }
         }
       }
 
-      const output = result.outputs[0]
+      // The final cut is fed by its shots, not by the image the run started from.
+      if (finalNodeId) {
+        const sources = shotNodeIds.length ? shotNodeIds : [args.nodeId]
+        for (const s of sources) useCanvasStore.getState().addEdge(s, finalNodeId)
+      }
+
+      const output = result.outputs.find((o) => o.role === 'final') ?? result.outputs[0]
       updateTask(taskId, { status: 'done', resultUrl: output.url ?? '', resultKind: (output.kind === 'video' ? 'video' : 'image') as 'image' | 'video' })
       // Log to generation history
       useProjectDB.getState().addHistoryEntry({
