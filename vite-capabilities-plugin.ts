@@ -2172,9 +2172,12 @@ async function musicVideo(req: CapReq): Promise<CapRes> {
   // it routes to. duration '0' means the whole mp3.
   const density = (req.params?.shotDensity as string) === 'busy' ? 'busy' : 'calm'
 
+  const scene = String(req.params?.scene ?? '').trim()
+
   const args = [script, '--image', imagePath, '--audio', audioPath, '--style', style,
                 '--duration', duration, '--segment', segment, '--density', density,
                 '--outdir', job]
+  if (scene) args.push('--scene', scene)
   console.log(`[cap] music-video spawn: python3 ${args.join(' ')}`)
 
   const code = await new Promise<number>((res) => {

@@ -351,6 +351,10 @@ export const CAPABILITIES: CapabilitySpec[] = [
         { value: 'calm', label: '保守：每镜约 6.5s，以景别变化为主' },
         { value: 'busy', label: '密集：每镜约 3s，卡点切' },
       ]},
+      // The establishing frame is generated once and every framing derives from
+      // it, so this one line decides where the whole film takes place. Left
+      // blank it falls back to the style's default location.
+      { key: 'scene', label: '场景（留空按风格）', type: 'string' },
     ],
   },
   {
