@@ -66,6 +66,8 @@ export interface CanvasItemVersion {
   prompt?: string;
   refImages?: string[];
   refAudios?: string[];
+  refVideos?: string[];
+  genParams?: Record<string, string>;
   provider?: string;
   model?: string;
   timestamp: number;
@@ -89,12 +91,26 @@ export interface CanvasItem {
    *  The Edit panel renders these so the user sees exactly what the
    *  model received — distinct from the transitive canvas upstream. */
   refAudios?: string[];
+  /** Reference videos the model received (e.g. the 3D 预演 blockout clip of
+   *  「按白模重拍」). Public URLs — Seedance only reads reference video by URL. */
+  refVideos?: string[];
+  /** Generation params this item was produced with (duration / resolution /
+   *  aspect / …), so a regenerate can start from the same settings. */
+  genParams?: Record<string, string>;
   provider?: string;
   model?: string;
   /** Prior heads, newest first. Written by canvas-api mutations before
    *  overwriting `content` / `prompt`. Absent on items that have never
    *  been regenerated. */
   versions?: CanvasItemVersion[];
+  /** External editor session this item can be reopened in — e.g. the 3D
+   *  导演台 `?bundle=` link of a canvas「生成 3D 预演」result. */
+  sessionUrl?: string;
+  /** Download of that session as a .previs.json bundle, for loading into the
+   *  导演台 by hand (「场景文件 → 从本地加载项目」). */
+  bundleUrl?: string;
+  /** Director report (report.html) of that previs run. */
+  reportUrl?: string;
   createdAt: number;
 }
 

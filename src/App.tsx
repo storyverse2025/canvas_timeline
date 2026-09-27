@@ -8,6 +8,8 @@ import { initCanvasStoryboardSync } from '@/lib/canvas-storyboard-sync'
 import { useServerBackupSync } from '@/lib/session-backup'
 import { migrateInlineDataUrlsOnce } from '@/lib/storage/data-url-migration'
 import { useProjectDB } from '@/stores/project-db'
+import { resumePrevisRuns } from '@/lib/previs-export/run'
+import { installClientLog } from '@/lib/client-log'
 import { toast } from 'sonner'
 
 interface ErrorBoundaryState {
@@ -78,9 +80,11 @@ function AppWithMigration() {
 
   useEffect(() => {
     // Run once after all persisted stores have rehydrated
+    installClientLog()
     migrateStores()
     initStoryboardTimelineLink()
     initCanvasStoryboardSync()
+    resumePrevisRuns()
     // Initialize ProjectDB: force a write to localStorage so it's visible in DevTools.
     // Zustand persist only writes on set(), not on getState(), so we trigger a no-op update.
     const db = useProjectDB.getState()

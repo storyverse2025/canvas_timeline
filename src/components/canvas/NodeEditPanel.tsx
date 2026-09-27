@@ -9,6 +9,8 @@ import { gatherUpstream } from '@/lib/canvas-graph'
 import { findVoiceByUrl, getVoice, normalizeVoiceUrl } from '@/lib/voice-library'
 import { getCapability } from '@/lib/capabilities/registry'
 import { thumb } from '@/lib/thumb'
+import { playableBlockoutUrl } from '@/lib/previs-export/blockout-reshoot-prompt'
+import { logAction } from '@/lib/client-log'
 
 interface Props {
   nodeId: string;
@@ -34,6 +36,8 @@ export function NodeEditPanel({ nodeId, itemId, onClose }: Props) {
   const live = gatherUpstream(nodeId)
   const storedRefs = item.refImages ?? []
   const storedAudios = item.refAudios ?? []
+  // Reference videos (3D 白模预演 clip of 按白模重拍) — shipped as @视频1.
+  const storedVideos = item.refVideos ?? []
   const isVideo = item.kind === 'video' || /\.(mp4|webm|mov)(\?|$)/i.test(item.content)
 
   // For the stale-voice-warning fix: the original UI showed "没有音色文件
@@ -97,22 +101,77 @@ export function NodeEditPanel({ nodeId, itemId, onClose }: Props) {
     onClose()
   }
 
-  const regenerate = () => {
+  /** Read duration / frame size off the video file itself, for items generated
+   *  before genParams existed (imported shots, older beat videos). */
+  const probeVideo = (url: string): Promise<{ duration?: number; width?: number; height?: number }> =>
+    new Promise((resolve) => {
+      if (!url || !/^(https?:|\/)/.test(url)) return resolve({})
+      const v = document.createElement('video')
+      const done = (r: { duration?: number; width?: number; height?: number }) => { v.src = ''; resolve(r) }
+      const timer = setTimeout(() => done({}), 4000)
+      v.preload = 'metadata'
+      v.onloadedmetadata = () => {
+        clearTimeout(timer)
+        done({ duration: v.duration, width: v.videoWidth, height: v.videoHeight })
+      }
+      v.onerror = () => { clearTimeout(timer); done({}) }
+      v.src = url
+    })
+
+  /** The source video's own settings, so 重新生成 doesn't reset to 5s / 480p. */
+  const sourceVideoParams = async (): Promise<Record<string, string>> => {
+    const stored = item.genParams ?? {}
+    const params: Record<string, string> = { ...stored }
+    const probe = stored.duration && stored.resolution && stored.aspect ? {} : await probeVideo(item.content)
+    if (!params.duration) {
+      const seconds = probe.duration ?? shotRow?.duration
+      if (seconds) params.duration = String(Math.max(4, Math.min(15, Math.round(seconds))))
+    }
+    if (!params.resolution && probe.height) {
+      params.resolution = probe.height >= 1000 ? '1080p' : probe.height >= 700 ? '720p' : '480p'
+    }
+    if (!params.aspect && probe.width && probe.height) {
+      const r = probe.width / probe.height
+      params.aspect = r > 1.5 ? '16:9' : r < 0.75 ? '9:16' : r > 1.15 ? '4:3' : '1:1'
+    }
+    return params
+  }
+
+  const regenerate = async () => {
     updateItem(itemId, { name: name.trim() || item.name, prompt: prompt.trim() })
     if (isVideo) {
       const cap = getCapability('universal-video')
       if (cap) {
-        const keyframeUrl = storedRefs[0] ?? shotRow?.keyframeUrl ?? ''
-        const voiceUrls = liveVoicesNow
-          .map((b) => normalizeVoiceUrl(b.voice.urlPath))
-          .filter((u): u is string => Boolean(u))
-        const refImages = [keyframeUrl, ...voiceUrls].filter((u): u is string => Boolean(u))
+        // Carry over EVERYTHING the last shot used — images, reference videos
+        // (@视频1 白模片段) and voice files — so the regen starts from the same
+        // input set instead of a lone keyframe. The dialog sorts them by kind.
+        const images = storedRefs.length ? storedRefs : [shotRow?.keyframeUrl ?? '']
+        // Local copy: the server maps it back to the public URL Seedance needs.
+        // Provider outputs (signed TOS links, 24h) are NOT durable references —
+        // an expired one makes the next generation hang on a fetch it can't do.
+        const videos = storedVideos
+          .filter((u) => u !== item.content && !/tos-[a-z0-9-]+\.volces\.com/i.test(u))
+          .map(playableBlockoutUrl)
+        const voiceUrls = (storedAudios.length
+          ? storedAudios
+          : liveVoicesNow.map((b) => b.voice.urlPath)
+        ).map((u) => normalizeVoiceUrl(u)).filter((u): u is string => Boolean(u))
+        const refImages = [...images, ...videos, ...voiceUrls].filter((u): u is string => Boolean(u))
+        const seeded = await sourceVideoParams()
+        logAction('edit-panel.regenerate', {
+          itemId, capability: cap.id, params: seeded,
+          images: images.length, videos: videos.length, audios: voiceUrls.length, refs: refImages,
+        })
         openCapDialog({
           capability: cap,
           nodeId,
           itemId,
           prompt: prompt.trim() || name || '',
           refImages,
+          params: seeded,
+          // A re-shoot: refs above ARE the whole input set. Shipping the node's
+          // own (previous) video as well sent Seedance two reference videos.
+          includeSourceContent: false,
         })
         onClose()
         return
@@ -210,7 +269,7 @@ export function NodeEditPanel({ nodeId, itemId, onClose }: Props) {
             and clearly separate them from the transitive canvas upstream
             (which walks UP from keyframe → assets that fed the keyframe,
             and is confusing because none of those ship to Seedance). */}
-        {isVideo && (storedRefs.length > 0 || storedAudios.length > 0) && (
+        {isVideo && (storedRefs.length > 0 || storedAudios.length > 0 || storedVideos.length > 0) && (
           <div className="rounded border border-primary/40 bg-primary/5 p-3 space-y-2">
             <div className="flex items-center gap-1.5 text-[11px] font-medium text-primary">
               <Film className="w-3 h-3" />
@@ -219,11 +278,26 @@ export function NodeEditPanel({ nodeId, itemId, onClose }: Props) {
             {storedRefs.length > 0 && (
               <div>
                 <div className="text-[10px] text-muted-foreground uppercase mb-1">
-                  Keyframe 图 ({storedRefs.length}) — omni-reference
+                  参考图 ({storedRefs.length}) — 顺序对应 prompt 里的 @图片1 / @图片2 …
                 </div>
                 <div className="flex gap-1.5 overflow-x-auto">
                   {storedRefs.map((u, i) => (
                     <img key={`s${i}`} src={thumb(u, 256)} alt="" loading="lazy" decoding="async" className="h-16 w-16 object-cover rounded border border-border shrink-0" title={u} />
+                  ))}
+                </div>
+              </div>
+            )}
+            {storedVideos.length > 0 && (
+              <div>
+                <div className="text-[10px] text-muted-foreground uppercase mb-1">
+                  参考视频 ({storedVideos.length}) — 顺序对应 prompt 里的 @视频1 / @视频2
+                </div>
+                <div className="space-y-1">
+                  {storedVideos.map((u, i) => (
+                    <div key={`v${i}`} className="flex items-center gap-2 text-[10px]">
+                      <span className="text-sky-400 font-mono shrink-0">@视频{i + 1}</span>
+                      <video src={playableBlockoutUrl(u)} controls preload="metadata" className="h-20 rounded border border-border" title={u} />
+                    </div>
                   ))}
                 </div>
               </div>
@@ -305,7 +379,7 @@ export function NodeEditPanel({ nodeId, itemId, onClose }: Props) {
         <div className="flex justify-between gap-2 pt-1">
           <button
             className="px-3 py-1.5 text-xs rounded border border-border hover:bg-accent inline-flex items-center gap-1"
-            onClick={regenerate}
+            onClick={() => void regenerate()}
           >
             <Sparkles className="w-3 h-3" /> 用 Prompt 重新生成
           </button>

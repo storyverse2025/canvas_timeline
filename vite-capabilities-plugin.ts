@@ -1,11 +1,24 @@
 import type { Plugin } from 'vite'
 import type { IncomingMessage, ServerResponse } from 'http'
 import { writeFileSync, mkdirSync, existsSync, statSync, createReadStream, readFileSync, readdirSync, rmSync } from 'fs'
-import { join } from 'path'
+import { join, resolve } from 'path'
 import { tmpdir } from 'os'
 import { spawn } from 'child_process'
 import { randomUUID, createHash, createHmac } from 'crypto'
 import sharp from 'sharp'
+import { withStageSkills } from './skill-hub-client'
+import {
+  gatewayModelFor,
+  isGateway25,
+  svgwConfigured,
+  svgwFetchVideo,
+  svgwRequest,
+  svgwModeFor,
+  svgwRegisterAsset,
+  svgwSubmitVideo,
+  QUOTA_PER_USD,
+  type SvgwMode,
+} from './svgw-client'
 
 interface CapInput { kind: string; url?: string; text?: string }
 interface CapReq {
@@ -13,7 +26,7 @@ interface CapReq {
   inputs: CapInput[]
   params?: Record<string, unknown>
 }
-interface CapOut { kind: string; url?: string; text?: string }
+interface CapOut { kind: string; url?: string; text?: string; role?: string; label?: string }
 interface CapRes { outputs: CapOut[] }
 
 async function readJson(req: IncomingMessage): Promise<CapReq> {
@@ -791,7 +804,8 @@ async function freeformText(req: CapReq): Promise<CapRes> {
   // user's instructions literally". The caller's full prompt + content
   // is already inside `text` (createCapabilityLLM flattens it). Anything
   // stronger here risks overriding the caller's intent.
-  const sys = '你是有用的中文创作助手。严格按用户指令输出，不要添加解释、不要 markdown 围栏、不要 emoji。'
+  const baseSys = '你是有用的中文创作助手。严格按用户指令输出，不要添加解释、不要 markdown 围栏、不要 emoji。'
+  const sys = await withStageSkills(baseSys, req.params?.stage)
   const result = images.length > 0
     ? await apimartChat(sys, text, images[0], 0.5)
     : await apimartChat(sys, text, undefined, 0.6)
@@ -813,7 +827,8 @@ async function freeformText(req: CapReq): Promise<CapRes> {
 async function storyboardGeneration(req: CapReq): Promise<CapRes> {
   const text = getText(req.inputs)
   if (!text) throw new Error('storyboard-generation: text input required')
-  const sys = '你是分镜生成助手。严格遵循用户消息中的完整指令与输出格式，最终只输出一个 JSON 数组（每个分镜一个对象），不要 markdown 围栏、不要解释、不要 emoji、不要把分镜拆成 {角色/场景/道具} 这种元素清单。'
+  const baseSys = '你是分镜生成助手。严格遵循用户消息中的完整指令与输出格式，最终只输出一个 JSON 数组（每个分镜一个对象），不要 markdown 围栏、不要解释、不要 emoji、不要把分镜拆成 {角色/场景/道具} 这种元素清单。'
+  const sys = await withStageSkills(baseSys, req.params?.stage)
   const result = await apimartChat(sys, text, undefined, 0.5)
   return { outputs: [{ kind: 'text', text: result }] }
 }
@@ -1290,6 +1305,19 @@ async function textToImage(req: CapReq): Promise<CapRes> {
   const text = getText(req.inputs)
   const refs = getImages(req.inputs)
   const aspect = (req.params?.aspect as string) || '16:9'
+  // staging 的景别术语 → 出图能听懂的说法。只写「景别与第一张图一致」压不住，
+  // 实测中近景特写被画成了全身，所以这里把景别显式点名。
+  const SHOT_CN: Record<string, string> = {
+    wide: '全景（人物占画面高度约三分之一，环境为主）',
+    full: '全身（人物头顶到脚都在画面内）',
+    medium: '中景（大约拍到人物腰部以上）',
+    medium_close: '中近景（大约拍到人物胸部以上）',
+    close: '特写（人物头肩充满画面）',
+    insert: '插入特写（局部细节充满画面）',
+  }
+  const shotNote = typeof req.params?.shotSize === 'string' && SHOT_CN[req.params.shotSize]
+    ? `这一张的景别必须是${SHOT_CN[req.params.shotSize]}，和第一张图一致，不要拍得更宽。`
+    : ''
   // Character images can opt into auto-registering as a BytePlus 开白 asset so
   // the character's OWN generated face is whitelisted (not a stranger's) and
   // downstream video passes the real-person privacy filter.
@@ -1318,6 +1346,19 @@ async function batchImage(req: CapReq): Promise<CapRes> {
   const text = getText(req.inputs)
   const refs = getImages(req.inputs)
   const aspect = (req.params?.aspect as string) || '16:9'
+  // staging 的景别术语 → 出图能听懂的说法。只写「景别与第一张图一致」压不住，
+  // 实测中近景特写被画成了全身，所以这里把景别显式点名。
+  const SHOT_CN: Record<string, string> = {
+    wide: '全景（人物占画面高度约三分之一，环境为主）',
+    full: '全身（人物头顶到脚都在画面内）',
+    medium: '中景（大约拍到人物腰部以上）',
+    medium_close: '中近景（大约拍到人物胸部以上）',
+    close: '特写（人物头肩充满画面）',
+    insert: '插入特写（局部细节充满画面）',
+  }
+  const shotNote = typeof req.params?.shotSize === 'string' && SHOT_CN[req.params.shotSize]
+    ? `这一张的景别必须是${SHOT_CN[req.params.shotSize]}，和第一张图一致，不要拍得更宽。`
+    : ''
   const urls = await runFluxImage(text || 'a beautiful scene', aspect, 4, refs, modelFromParams(req.params))
   return { outputs: urls.map((url) => ({ kind: 'image' as const, url })) }
 }
@@ -1442,6 +1483,19 @@ async function cropImage(req: CapReq): Promise<CapRes> {
   const images = getImages(req.inputs)
   if (!images.length) throw new Error('需要输入图片')
   const aspect = (req.params?.aspect as string) || '16:9'
+  // staging 的景别术语 → 出图能听懂的说法。只写「景别与第一张图一致」压不住，
+  // 实测中近景特写被画成了全身，所以这里把景别显式点名。
+  const SHOT_CN: Record<string, string> = {
+    wide: '全景（人物占画面高度约三分之一，环境为主）',
+    full: '全身（人物头顶到脚都在画面内）',
+    medium: '中景（大约拍到人物腰部以上）',
+    medium_close: '中近景（大约拍到人物胸部以上）',
+    close: '特写（人物头肩充满画面）',
+    insert: '插入特写（局部细节充满画面）',
+  }
+  const shotNote = typeof req.params?.shotSize === 'string' && SHOT_CN[req.params.shotSize]
+    ? `这一张的景别必须是${SHOT_CN[req.params.shotSize]}，和第一张图一致，不要拍得更宽。`
+    : ''
   const prompt = `Crop this image to ${aspect} aspect ratio, keeping the most important subject in frame`
   return smartEdit({ ...req, inputs: [{ kind: 'text', text: prompt }, { kind: 'image', url: images[0] }] })
 }
@@ -1675,8 +1729,15 @@ async function inlineLocalRefsInContentParts(
     } else if (type === 'video_url') {
       const url = (part.video_url as { url?: string } | undefined)?.url
       if (typeof url === 'string' && url.startsWith('/')) {
-        const inlined = await readLocalAsDataUrl(url)
-        return { ...part, video_url: { ...(part.video_url as object), url: inlined } }
+        // Seedance rejects inline video ("reference_video must be provided as a
+        // web url"), so a local path only works when it has a public twin. The
+        // previs server publishes every 白模 clip on the studio host; anything
+        // else has to be fixed by the caller.
+        const publicUrl = blockoutPublicUrl(url)
+        if (!publicUrl) {
+          throw new Error(`参考视频必须是公网可访问的 URL，收到本地路径 ${url}（Seedance 不接受内联视频）`)
+        }
+        return { ...part, video_url: { ...(part.video_url as object), url: publicUrl } }
       }
     } else if (type === 'audio_url') {
       const url = (part.audio_url as { url?: string } | undefined)?.url
@@ -1754,6 +1815,40 @@ async function trimAudioToDataUrl(src: string, maxSeconds: number): Promise<stri
   }
 }
 
+/**
+ * `/uploads/previs-<shortId>-beat<NN>.mp4` (the canvas-playable copy of a 3D 预演
+ * blockout clip) → the studio host's public copy, which Seedance can fetch.
+ * Returns null for any other local path. Mirror of vite-previs-plugin.ts.
+ */
+export function blockoutPublicUrl(localPath: string): string | null {
+  const m = /^\/uploads\/previs-([0-9a-z]{8})-beat(\d{2})\.mp4$/.exec(localPath.split('?')[0])
+  if (!m) return null
+  const base = (process.env.PREVIS_STUDIO_PUBLIC_URL || 'http://studio.35.168.148.47.nip.io').replace(/\/+$/, '')
+  return `${base}/canvas-import/${m[1]}/blockout/beat${m[2]}.mp4`
+}
+
+/** Reverse of blockoutPublicUrl: a blockout clip URL (local or studio) → its file on disk. */
+export function localVideoPath(url: string): string | null {
+  const clean = url.split('?')[0]
+  const studio = /\/canvas-import\/([0-9a-z]{8})\/blockout\/beat(\d{2})\.mp4$/.exec(clean)
+  const local = clean.startsWith('/uploads/') ? clean : studio ? `/uploads/previs-${studio[1]}-beat${studio[2]}.mp4` : null
+  if (!local) return null
+  return join(process.cwd(), 'public', decodeURIComponent(local))
+}
+
+/** Duration in seconds of a local media file, or null when ffprobe can't tell. */
+async function probeSeconds(path: string): Promise<number | null> {
+  try {
+    if (!existsSync(path)) return null
+    const { execFileSync } = await import('child_process')
+    const out = execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', path], { timeout: 10_000 }).toString().trim()
+    const n = Number(out)
+    return Number.isFinite(n) && n > 0 ? n : null
+  } catch {
+    return null
+  }
+}
+
 /** Generic local-file → data URL reader for non-image media (audio, video).
  *  Picks the mime type from the extension. */
 async function readLocalAsDataUrl(localPath: string): Promise<string> {
@@ -1776,10 +1871,40 @@ async function readLocalAsDataUrl(localPath: string): Promise<string> {
 }
 
 /** Convert a local /uploads/ path to a file:// readable buffer, or fetch remote URL as base64 data URL */
+/**
+ * Reference images travel INLINE (base64) inside the task-creation request, so
+ * their raw size is request-body size. A pack of 4K PNGs is ~2.5 MB each → an
+ * ~18 MB body, which made BytePlus sit on the request until our fetch hit Node's
+ * 300 s header timeout ("fetch failed" after 301.6 s, verified 2026-09-19).
+ * 1600 px on the long edge is well above what a 720p/1080p shot can use.
+ */
+const SEEDANCE_REF_MAX_EDGE = 1600
+const SEEDANCE_REF_MAX_BYTES = 900 * 1024
+
+async function shrinkForSeedance(buf: Buffer, mime: string): Promise<{ buf: Buffer; mime: string }> {
+  try {
+    const meta = await sharp(buf).metadata()
+    const longEdge = Math.max(meta.width ?? 0, meta.height ?? 0)
+    if (longEdge <= SEEDANCE_REF_MAX_EDGE && buf.length <= SEEDANCE_REF_MAX_BYTES) return { buf, mime }
+    const out = await sharp(buf)
+      .resize({ width: SEEDANCE_REF_MAX_EDGE, height: SEEDANCE_REF_MAX_EDGE, fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: 88, mozjpeg: true })
+      .toBuffer()
+    console.log(`[seedance] ref image ${(buf.length / 1024).toFixed(0)}KB ${meta.width}×${meta.height} → ${(out.length / 1024).toFixed(0)}KB ≤${SEEDANCE_REF_MAX_EDGE}px`)
+    return { buf: out, mime: 'image/jpeg' }
+  } catch (e) {
+    console.warn(`[seedance] ref image resize failed (${(e as Error).message.slice(0, 80)}); sending original`)
+    return { buf, mime }
+  }
+}
+
 async function resolveImageToDataUrl(imageUrl: string): Promise<string> {
   if (imageUrl.startsWith('data:')) {
     if (!isSupportedRasterDataUrl(imageUrl)) throw new Error('unsupported image data URL for Seedance')
-    return imageUrl
+    const comma = imageUrl.indexOf(',')
+    const raw = Buffer.from(imageUrl.slice(comma + 1), 'base64')
+    const shrunk = await shrinkForSeedance(raw, imageUrl.slice(5, imageUrl.indexOf(';')))
+    return `data:${shrunk.mime};base64,${shrunk.buf.toString('base64')}`
   }
   if (imageUrl.startsWith('/')) {
     const { readFileSync } = await import('fs')
@@ -1790,7 +1915,8 @@ async function resolveImageToDataUrl(imageUrl: string): Promise<string> {
     const buf = readFileSync(join(process.cwd(), 'public', decoded))
     const ext = decoded.split('.').pop()?.toLowerCase() ?? 'png'
     const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'webp' ? 'image/webp' : 'image/png'
-    return `data:${mime};base64,${buf.toString('base64')}`
+    const shrunk = await shrinkForSeedance(buf, mime)
+    return `data:${shrunk.mime};base64,${shrunk.buf.toString('base64')}`
   }
   // Remote URL — fetch and convert
   const r = await fetch(imageUrl)
@@ -1800,7 +1926,8 @@ async function resolveImageToDataUrl(imageUrl: string): Promise<string> {
   if (!/^image\/(png|jpe?g|webp)$/i.test(contentType)) {
     throw new Error(`unsupported fetched image type for Seedance: ${contentType}`)
   }
-  return `data:${contentType};base64,${buf.toString('base64')}`
+  const shrunk = await shrinkForSeedance(buf, contentType)
+  return `data:${shrunk.mime};base64,${shrunk.buf.toString('base64')}`
 }
 
 function svgDataUrl(svg: string): string {
@@ -2040,20 +2167,294 @@ function defaultSeedanceModel(): string {
  * Mirrors the resolver in vite-providers-plugin.ts. Kept duplicated to avoid
  * coupling the two Vite plugin files (they run as independent middleware).
  */
+/**
+ * How a universal model id maps to something BytePlus accepts. `fallback` means
+ * "no endpoint for THIS model — the generic SEEDANCE_ENDPOINT was used", i.e. the
+ * render will not be the model that was asked for. Surfaced in /capabilities/models
+ * so the picker can say so instead of silently shooting on another model.
+ */
+const SEEDANCE_ENDPOINT_TABLE: Record<string, string> = {
+  'dreamina-seedance-2-0-fast-260128': 'ep-20260423151341-p2zm9',
+}
+
+export function seedanceEndpointSource(model: string): 'endpoint-id' | 'per-model-env' | 'table' | 'fallback' | 'passthrough' {
+  if (/^ep-/.test(model)) return 'endpoint-id'
+  if (process.env[`SEEDANCE_ENDPOINT_${model.replace(/[^a-z0-9]/gi, '_').toUpperCase()}`]) return 'per-model-env'
+  if (SEEDANCE_ENDPOINT_TABLE[model]) return 'table'
+  if (process.env.SEEDANCE_ENDPOINT || process.env.ARK_SEEDANCE_ENDPOINT) return 'fallback'
+  return 'passthrough'
+}
+
 function resolveSeedanceModel(model: string): string {
   if (/^ep-/.test(model)) return model
   const envSlug = `SEEDANCE_ENDPOINT_${model.replace(/[^a-z0-9]/gi, '_').toUpperCase()}`
   const perModelEnv = process.env[envSlug]
   if (perModelEnv) return perModelEnv
-  const table: Record<string, string> = {
-    'dreamina-seedance-2-0-fast-260128': 'ep-20260423151341-p2zm9',
-  }
-  if (table[model]) return table[model]!
+  if (SEEDANCE_ENDPOINT_TABLE[model]) return SEEDANCE_ENDPOINT_TABLE[model]!
   return process.env.SEEDANCE_ENDPOINT || process.env.ARK_SEEDANCE_ENDPOINT || model
 }
 
+/**
+ * Per-model Seedance duration ceiling (seconds). Seedance 2.5 lifts the cap to
+ * 30s; earlier models top out at 15s. Mirror of the helper in
+ * vite-providers-plugin.ts — kept duplicated to avoid coupling the plugins.
+ */
+function seedanceMaxDuration(model: string): number {
+  return /seedance-2-5/.test(model) ? 30 : 15
+}
+
+// ─── StoryVerse 网关出片路径 ────────────────────────────────────────────
+// 「以后统一用 storyverse 的网关」。直连 Ark 只有本账号那一个 fast endpoint，
+// 2.5 拿不到；网关上 sv-seedance-2.5 / 2.0 都现成，而且 /v1/assets 的开白
+// 是自助的（Ark 那边要 AK/SK 有 ark:CreateAsset 权限）。
+
+/** 出片走哪条路：'sv-gateway'（默认）| 'ark'（直连 BytePlus，保留回退）。 */
+function videoProvider(): 'sv-gateway' | 'ark' {
+  const raw = (process.env.VIDEO_PROVIDER || 'sv-gateway').toLowerCase()
+  if (raw === 'ark' || raw === 'byteplus') return 'ark'
+  return svgwConfigured() ? 'sv-gateway' : 'ark'
+}
+
+const STUDIO_ROOT = resolve(process.env.PREVIS_STUDIO_ROOT || '/data/repos/storyai-director-studio')
+const STUDIO_PUBLIC_URL = (process.env.PREVIS_STUDIO_PUBLIC_URL || 'http://studio.35.168.148.47.nip.io').replace(/\/+$/, '')
+/** 公网素材落盘目录（studio vite 的 public/，没有 IP 白名单，BytePlus 拉得到）。 */
+const GATEWAY_REF_DIR = join(STUDIO_ROOT, 'public', 'canvas-import', '_refs')
+
+/**
+ * 把一份素材字节发布到公网并返回 URL。按内容 hash 命名 —— 同一张图重复用只
+ * 发布一次，URL 也能永久缓存。
+ *
+ * 网关（和它背后的 Ark）只收公网 URL，不吃 base64：画布的 `/uploads/` 有 IP
+ * 白名单拉不到，所以每一个本地/内联素材都必须先过这里。这同时也根治了之前
+ * 把 6 张 4K 图内联成 18MB 请求体、把 fetch 拖到 300s 超时的问题。
+ */
+function publishBytesPublicly(buf: Buffer, ext: string): string {
+  if (!existsSync(join(STUDIO_ROOT, 'public'))) {
+    throw new Error(`找不到 3D 导演台仓库的 public 目录（${STUDIO_ROOT}）：网关出片需要它来发布公网素材，配 PREVIS_STUDIO_ROOT 指过去`)
+  }
+  mkdirSync(GATEWAY_REF_DIR, { recursive: true })
+  const name = `${createHash('sha1').update(buf).digest('hex').slice(0, 16)}.${ext}`
+  const target = join(GATEWAY_REF_DIR, name)
+  if (!existsSync(target) || statSync(target).size !== buf.length) writeFileSync(target, buf)
+  return `${STUDIO_PUBLIC_URL}/canvas-import/_refs/${name}`
+}
+
+/** 读一个素材引用（本地 /uploads 路径 / data: URL / http URL）成字节。 */
+async function readRefBytes(url: string): Promise<{ buf: Buffer; ext: string; mime: string }> {
+  const extOf = (p: string, fallback: string) => (p.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || fallback)
+  if (url.startsWith('data:')) {
+    const mime = url.slice(5, url.indexOf(';'))
+    const buf = Buffer.from(url.slice(url.indexOf(',') + 1), 'base64')
+    const ext = mime.split('/')[1]?.replace('jpeg', 'jpg').replace('mpeg', 'mp3') || 'bin'
+    return { buf, ext, mime }
+  }
+  if (url.startsWith('/')) {
+    const decoded = decodeURIComponent(url.split('?')[0])
+    return { buf: readFileSync(join(process.cwd(), 'public', decoded)), ext: extOf(decoded, 'bin'), mime: mimeForExt(decoded) }
+  }
+  const r = await fetch(url, { signal: AbortSignal.timeout(60_000) })
+  if (!r.ok) throw new Error(`拉取素材失败 ${r.status}: ${url.slice(0, 120)}`)
+  const buf = Buffer.from(await r.arrayBuffer())
+  const mime = r.headers.get('content-type') || 'application/octet-stream'
+  return { buf, ext: extOf(url.split('?')[0], mime.split('/')[1] || 'bin'), mime }
+}
+
+/**
+ * 素材引用 → 网关能用的公网 URL。
+ *   - `asset://…`（已开白）和已经是 http(s) 的，原样透传。
+ *   - 白模片段走 blockoutPublicUrl（previs 插件已经发布过了，别重复复制）。
+ *   - 图片先缩到 1600px/JPEG 再发布；音频先裁到 4s（音色参考只需要几秒，
+ *     而且参考音总长超过视频时长会被拒）。
+ */
+async function publicRefUrl(ref: string, kind: 'image' | 'video' | 'audio'): Promise<string> {
+  if (ref.startsWith('asset://')) return ref
+  // 浏览器会把 /uploads/x.png 发成自家绝对 URL（http://35.168.148.47/uploads/…），
+  // 而 nginx 恰好 403 掉服务端回拉这些路径 —— 直接透传等于给网关一个它拉不到的
+  // URL。先折回本地路径，读文件再发布。
+  const local = maybeLocalPathFor(ref)
+  const url = local ?? ref
+  if (!local && /^https?:\/\//i.test(url)) return url
+  if (kind === 'video') {
+    const published = blockoutPublicUrl(url)
+    if (published) return published
+  }
+  if (kind === 'audio') {
+    const trimmed = await trimAudioToDataUrl(url, REFERENCE_AUDIO_MAX_SECONDS)
+    const { buf } = await readRefBytes(trimmed)
+    return publishBytesPublicly(buf, 'mp3')
+  }
+  const { buf, ext, mime } = await readRefBytes(url)
+  if (kind === 'image') {
+    const shrunk = await shrinkForSeedance(buf, mime)
+    return publishBytesPublicly(shrunk.buf, shrunk.mime === 'image/jpeg' ? 'jpg' : ext)
+  }
+  return publishBytesPublicly(buf, ext || 'mp4')
+}
+
+/** 已注册过的开白素材：公网 URL → asset id。进程内缓存，避免重复注册（每次 30–60s）。 */
+const gatewayAssetCache = new Map<string, string>()
+
+async function gatewayAssetUri(publicUrl: string, type: 'Image' | 'Video'): Promise<string> {
+  if (publicUrl.startsWith('asset://')) return publicUrl
+  const cached = gatewayAssetCache.get(publicUrl)
+  if (cached) return `asset://${cached}`
+  // asset id 是账号级的，跟出片用哪个模型无关；svgw.py 一直用 2.0 注册，照做。
+  const id = await svgwRegisterAsset(publicUrl, type, { model: 'sv-seedance-2.0' })
+  gatewayAssetCache.set(publicUrl, id)
+  console.log(`[svgw] 开白素材注册完成 ${type} → asset://${id}  (${publicUrl.slice(-40)})`)
+  return `asset://${id}`
+}
+
+/** Ark 的风控拒绝（真人素材没开白）。这是提交阶段被拒，不计费。 */
+function isPrivacyRejection(msg: string): boolean {
+  return /SensitiveContentDetected|PrivacyInformation|real person/i.test(msg)
+}
+
+/** contentParts（Ark 的信封）→ 网关的 images/videos/audios + genMode。 */
+function gatewayInputsFromParts(contentParts: Array<Record<string, unknown>>, modeOverride?: SvgwMode): {
+  prompt: string
+  images: string[]
+  videos: string[]
+  audios: string[]
+  mode: SvgwMode
+} {
+  const urlOf = (part: Record<string, unknown>, key: string) =>
+    ((part[key] as { url?: string } | undefined)?.url ?? '').trim()
+  const prompt = contentParts.filter((p) => p.type === 'text').map((p) => String(p.text ?? '')).join('\n')
+  const imageParts = contentParts.filter((p) => p.type === 'image_url')
+  const images = imageParts.map((p) => urlOf(p, 'image_url')).filter(Boolean)
+  const videos = contentParts.filter((p) => p.type === 'video_url').map((p) => urlOf(p, 'video_url')).filter(Boolean)
+  const audios = contentParts.filter((p) => p.type === 'audio_url').map((p) => urlOf(p, 'audio_url')).filter(Boolean)
+  const roles = imageParts.map((p) => String(p.role ?? ''))
+  const imageRole = roles.includes('last_frame') ? 'first-last' : roles.includes('first_frame') ? 'first' : 'reference'
+  return {
+    prompt,
+    images,
+    videos,
+    audios,
+    mode: modeOverride ?? svgwModeFor({ images: images.length, videos: videos.length, audios: audios.length, imageRole }),
+  }
+}
+
+/**
+ * 网关出片：发布素材 → 提交 /v1/videos → 轮询 /v1/videos/{id}。
+ *
+ * 真人素材被风控拒时自动重试一次：把所有图（和视频）过 /v1/assets 注册成
+ * 开白素材再提交。注册结果按 URL 缓存，第二次起不再等。
+ */
+async function submitGatewayTaskOnce(opts: SubmitVideoOpts): Promise<string> {
+  const asked = gatewayModelFor(opts.model)
+  if (opts.model && asked !== opts.model) {
+    console.log(`[svgw] model ${opts.model} → ${asked}（网关只认 sv- 契约模型）`)
+  }
+  // genMode 默认按素材推断；调用方可以显式指定（例如两段式重拍的第二段要用
+  // video-edit：在已经跟对运镜的成片上只换人物，不重新编镜头）。
+  const parsed = gatewayInputsFromParts(opts.contentParts, opts.genMode)
+  // 不做自动升档：2.0 实测能吃 video-ref（Ark 的 r2v），偷偷升到 2.5 等于把单价
+  // 翻倍还不告诉用户。模型就按调用方点的来。
+  const model = asked
+
+  const [images, videos, audios] = await Promise.all([
+    Promise.all(parsed.images.slice(0, 9).map((u) => publicRefUrl(u, 'image'))),
+    Promise.all(parsed.videos.slice(0, 3).map((u) => publicRefUrl(u, 'video'))),
+    Promise.all(parsed.audios.slice(0, 3).map((u) => publicRefUrl(u, 'audio'))),
+  ])
+  // 本地开白拿到的 asset:// id 在这里一律丢掉：那些 id 是在**我们自己**的
+  // BytePlus 账号下注册的，网关是用 StoryVerse 的账号出片，id 对不上。网关这边
+  // 的开白是下面那条 /v1/assets 重试路径 —— 被风控拒了才注册，注册结果有缓存。
+  if (opts.avatarAssetUris?.length || opts.invitedImageAssetIds?.length) {
+    console.log(`[svgw] 忽略 ${(opts.avatarAssetUris?.length ?? 0) + (opts.invitedImageAssetIds?.length ?? 0)} 个本地开白 asset id（跨账号无效），改由网关 /v1/assets 按需注册`)
+  }
+
+  // 参考视频决定出片时长下限：比素材短会被 Ark 直接拒（"video total duration"）。
+  let videoFloor = 0
+  if (videos.length) {
+    const seconds = await Promise.all(parsed.videos.slice(0, 3).map(async (u) => {
+      const path = localVideoPath(u)
+      return path ? probeSeconds(path) : null
+    }))
+    videoFloor = Math.ceil(seconds.reduce<number>((a, b) => a + (b ?? 0), 0))
+    console.log(`[svgw] reference videos: ${videos.length} × ${seconds.map((x) => (x === null ? '?' : `${x.toFixed(1)}s`)).join(' + ')} → floor ${videoFloor || '?'}s`)
+  }
+  const audioFloor = audios.length * REFERENCE_AUDIO_DURATION_BUDGET
+  const ceiling = isGateway25(model) ? 30 : 15
+  if (videoFloor > ceiling) {
+    throw new Error(`参考视频总时长 ${videoFloor}s 超过 ${model} 的上限 ${ceiling}s（共 ${videos.length} 段）：去掉多余的参考视频，或改用更短的片段`)
+  }
+  // video-edit / video-extend 是「在原片上改」，时长由原片决定 —— 网关要求必须传
+  // Auto(-1)，传具体秒数会被 build_request_failed 拒掉（提交前拒，不计费）。
+  const autoDuration = parsed.mode === 'video-edit' || parsed.mode === 'video-extend'
+  const duration = autoDuration
+    ? -1
+    : Math.max(4, Math.min(ceiling, Math.max(opts.duration ?? 5, audioFloor, videoFloor)))
+
+  const base = {
+    model,
+    prompt: parsed.prompt || 'cinematic video',
+    mode: parsed.mode,
+    // 这些模式下画幅由原片决定，网关要求必须传 adaptive，传 16:9 会被
+    // build_request_failed 拒掉（提交前拒，不计费）。svgw.py 也警告过这条。
+    ratio: autoDuration ? 'adaptive' : (opts.aspect ?? '16:9'),
+    duration,
+    resolution: opts.resolution ?? '480p',
+    seed: opts.seed,
+    generateAudio: opts.generateAudio ?? true,
+  }
+  console.log(`[svgw] create ${model} ${parsed.mode} ${duration === -1 ? 'auto' : `${duration}s`} ${base.resolution} — ${images.length} 图 / ${videos.length} 视频 / ${audios.length} 音频`)
+
+  let taskId: string
+  try {
+    taskId = await svgwSubmitVideo({ ...base, images, videos, audios })
+  } catch (e) {
+    const msg = String((e as Error).message ?? e)
+    if (!isPrivacyRejection(msg) || (!images.length && !videos.length)) throw e
+    // 含真人的素材必须先注册成开白素材（网关注册时带 Moderation.Strategy=Skip）。
+    console.warn(`[svgw] 风控拒绝，改用开白素材重试：${msg.slice(0, 160)}`)
+    const [assetImages, assetVideos] = await Promise.all([
+      Promise.all(images.map((u) => gatewayAssetUri(u, 'Image'))),
+      Promise.all(videos.map((u) => gatewayAssetUri(u, 'Video'))),
+    ])
+    taskId = await svgwSubmitVideo({ ...base, images: assetImages, videos: assetVideos, audios })
+  }
+  // 任务一提交就落日志：轮询超时/进程重启之后，这是唯一能把已经计费的任务
+  // 找回来的线索（pitfalls #7）。
+  console.log(`[svgw] task ${taskId} submitted → ${model}`)
+
+  return poll<string>(async () => {
+    const r = await svgwFetchVideo(taskId)
+    if (r.done && r.url) {
+      if (r.quota) console.log(`[svgw] task ${taskId} 完成，花费 $${(r.quota / QUOTA_PER_USD).toFixed(3)}`)
+      return { done: true, result: r.url }
+    }
+    if (r.failed) return { done: false, error: `任务失败: ${r.failure ?? r.status}` }
+    return { done: false }
+    // 网关是排队制，svgw.py 给到 3600s。超时只是我们不等了，任务照跑照计费 ——
+    // 所以宁可等久一点，也别把一条已经付过钱的片子丢掉。
+  }, { intervalMs: 5000, timeoutMs: 40 * 60 * 1000 })
+}
+
+interface SubmitVideoOpts {
+  contentParts: Array<Record<string, unknown>>
+  /** 覆盖推断出来的网关 genMode（text-to-video / image-ref / video-ref / video-edit …）。 */
+  genMode?: SvgwMode
+  model?: string
+  resolution?: string
+  aspect?: string
+  duration?: number
+  generateAudio?: boolean
+  seed?: number
+  invitedImageAssetIds?: string[]
+  avatarAssetUris?: string[]
+}
+
+/** 出片入口：按 VIDEO_PROVIDER 选网关还是直连 Ark。 */
+async function submitSeedanceTaskOnce(opts: SubmitVideoOpts): Promise<string> {
+  if (videoProvider() === 'sv-gateway') return submitGatewayTaskOnce(opts)
+  return submitArkTaskOnce(opts)
+}
+
 /** Shared Seedance task submission — handles content parts + polling. */
-async function submitSeedanceTaskOnce(opts: {
+async function submitArkTaskOnce(opts: {
   contentParts: Array<Record<string, unknown>>
   model?: string
   resolution?: string
@@ -2090,17 +2491,44 @@ async function submitSeedanceTaskOnce(opts: {
     content.push({ type: 'image_url', role: 'reference_image', image_url: { url: u } })
   }
 
+  // Reference videos: BytePlus rejects "video total duration" when the clips do
+  // not fit the generated video, so the output is never shorter than the material
+  // it must follow. Only our own clips can be measured (local file); remote refs
+  // are left to the provider's own validation.
+  const videoParts = content.filter((p) => (p.type as string) === 'video_url')
+  let videoFloor = 0
+  if (videoParts.length) {
+    const seconds = await Promise.all(videoParts.map(async (p) => {
+      const url = (p.video_url as { url?: string } | undefined)?.url ?? ''
+      const path = localVideoPath(url)
+      return path ? probeSeconds(path) : null
+    }))
+    videoFloor = Math.ceil(seconds.reduce<number>((a, b) => a + (b ?? 0), 0))
+    console.log(`[seedance] reference videos: ${videoParts.length} × ${seconds.map((x) => (x === null ? '?' : `${x.toFixed(1)}s`)).join(' + ')} → floor ${videoFloor || '?'}s`)
+  }
+
   // Audio-aware duration: BytePlus rejects when the summed reference_audio
   // exceeds the video duration. Each clip is trimmed to 4s; budget 5s/clip
   // so the video is always long enough to hold every timbre reference.
   const audioClipCount = content.filter((p) => (p.type as string) === 'audio_url').length
   const audioFloor = audioClipCount * REFERENCE_AUDIO_DURATION_BUDGET
+  const seedanceModel = opts.model ?? defaultSeedanceModel()
+  const durationCeiling = seedanceMaxDuration(seedanceModel)
+  if (videoFloor > durationCeiling) {
+    throw new Error(
+      `参考视频总时长 ${videoFloor}s 超过 ${seedanceModel} 的上限 ${durationCeiling}s（共 ${videoParts.length} 段）：去掉多余的参考视频，或改用更短的片段`,
+    )
+  }
+  const seconds = Math.max(4, Math.min(durationCeiling, Math.max(opts.duration ?? 5, audioFloor, videoFloor)))
+  if (videoFloor > (opts.duration ?? 5)) {
+    console.log(`[seedance] duration ${opts.duration ?? 5}s → ${seconds}s to fit ${videoFloor}s of reference video`)
+  }
   const body: Record<string, unknown> = {
-    model: resolveSeedanceModel(opts.model ?? defaultSeedanceModel()),
+    model: resolveSeedanceModel(seedanceModel),
     content,
     resolution: opts.resolution ?? '480p',
     ratio: opts.aspect ?? '16:9',
-    duration: Math.max(4, Math.min(15, Math.max(opts.duration ?? 5, audioFloor))),
+    duration: seconds,
     generate_audio: opts.generateAudio ?? true,
   }
   if (opts.seed != null && opts.seed >= 0) body.seed = opts.seed
@@ -2111,10 +2539,24 @@ async function submitSeedanceTaskOnce(opts: {
     body.invited_images = opts.invitedImageAssetIds.map((id) => ({ asset_id: id }))
   }
 
-  const createRes = await fetch(`${base}/contents/generations/tasks`, {
-    method: 'POST', headers,
-    body: JSON.stringify(body),
+  const payload = JSON.stringify(body)
+  const source = seedanceEndpointSource(seedanceModel)
+  console.log(`[seedance] create ${seedanceModel} → ${body.model} (${source}) ${seconds}s ${body.resolution} — body ${(payload.length / 1024 / 1024).toFixed(1)}MB, ${content.length} parts`)
+  if (source === 'fallback') {
+    console.warn(`[seedance] ⚠ 没有为 ${seedanceModel} 配置 endpoint，实际用的是 SEEDANCE_ENDPOINT=${body.model}，出片不一定是这个模型。要真正用它，配 SEEDANCE_ENDPOINT_${seedanceModel.replace(/[^a-z0-9]/gi, '_').toUpperCase()}=ep-xxxx`)
+  }
+  // Node's fetch gives up waiting for response headers after 300 s; a slow
+  // create then surfaces as a bare "fetch failed". Be explicit, and retry once.
+  const postCreate = () => fetch(`${base}/contents/generations/tasks`, {
+    method: 'POST', headers, body: payload, signal: AbortSignal.timeout(240_000),
   })
+  let createRes: Response
+  try {
+    createRes = await postCreate()
+  } catch (e) {
+    console.warn(`[seedance] create request failed (${(e as Error).message}); retrying once`)
+    createRes = await postCreate()
+  }
   if (!createRes.ok) throw new Error(`BytePlus create ${createRes.status}: ${await createRes.text()}`)
   const taskId = ((await createRes.json()) as { id?: string }).id
   if (!taskId) throw new Error('BytePlus: no task id')
@@ -2129,7 +2571,9 @@ async function submitSeedanceTaskOnce(opts: {
     if (status === 'succeeded' && video) return { done: true, result: video }
     if (status === 'failed' || status === 'cancelled') return { done: false, error: `task ${status}` }
     return { done: false }
-  }, { intervalMs: 4000, timeoutMs: 6 * 60 * 1000 })
+    // Longer clips render proportionally longer: 6 min baseline + 30s of
+    // polling headroom per output-second (a 30s clip gets ~21 min).
+  }, { intervalMs: 4000, timeoutMs: 6 * 60 * 1000 + seconds * 30 * 1000 })
 }
 
 /**
@@ -2209,6 +2653,17 @@ async function submitSeedanceTaskWithGridRetry(opts: {
   }
 }
 
+/**
+ * 白模定帧（图生图）：白模首帧当构图基准 + 角色图/场景图 → 一张实拍定帧。
+ *
+ * 为什么要这一步：出片时「风格一致」和「跟住白模」原本是互斥的 —— 关键帧能给风格，
+ * 但它自带一套和白模打架的构图，喂进去模型就自己重编镜头（2026-09 实测多次）。
+ * 先用白模自己的帧当结构重绘一张定帧，它的构图**就是**白模的构图，于是同一张图
+ * 可以一次钉死人物、场景、光线、画风而不抢机位。出片只喂这一张，参考图数量也降到 1。
+ *
+ * 输入顺序：第 1 张必须是白模首帧，后面是角色图/场景图。
+ * `mapping` 由调用方按白模里的假人颜色生成（这段文字只进这一步，出片的 prompt 仍然通用）。
+ */
 async function textToVideo(req: CapReq): Promise<CapRes> {
   const text = getText(req.inputs)
   const images = filterValidRefs(getImages(req.inputs))
@@ -2231,6 +2686,19 @@ async function textToVideo(req: CapReq): Promise<CapRes> {
   const model = (req.params?.model as string) || 'dreamina-seedance-2-0-fast-260128'
   const resolution = (req.params?.resolution as string) || '480p'
   const aspect = (req.params?.aspect as string) || '16:9'
+  // staging 的景别术语 → 出图能听懂的说法。只写「景别与第一张图一致」压不住，
+  // 实测中近景特写被画成了全身，所以这里把景别显式点名。
+  const SHOT_CN: Record<string, string> = {
+    wide: '全景（人物占画面高度约三分之一，环境为主）',
+    full: '全身（人物头顶到脚都在画面内）',
+    medium: '中景（大约拍到人物腰部以上）',
+    medium_close: '中近景（大约拍到人物胸部以上）',
+    close: '特写（人物头肩充满画面）',
+    insert: '插入特写（局部细节充满画面）',
+  }
+  const shotNote = typeof req.params?.shotSize === 'string' && SHOT_CN[req.params.shotSize]
+    ? `这一张的景别必须是${SHOT_CN[req.params.shotSize]}，和第一张图一致，不要拍得更宽。`
+    : ''
   const duration = Number(req.params?.duration ?? 5)
   // eslint-disable-next-line no-console
   console.log('[voice-debug][text-to-video] dispatch', {
@@ -2249,6 +2717,9 @@ async function textToVideo(req: CapReq): Promise<CapRes> {
     resolution,
     aspect,
     duration,
+    // 网关的 genMode 默认按素材推断；显式传 genMode 可以强制某个模式，
+    // 例如两段式重拍的第二段要 video-edit（只换人物，不重编镜头）。
+    genMode: typeof req.params?.genMode === 'string' ? (req.params.genMode as SvgwMode) : undefined,
     generateAudio: req.params?.generate_audio !== false,
     seed: req.params?.seed != null ? Number(req.params.seed) : undefined,
     invitedImageAssetIds: Array.isArray(req.params?.invitedImageAssetIds)
@@ -2288,6 +2759,7 @@ async function universalToVideo(req: CapReq): Promise<CapRes> {
     resolution: (req.params?.resolution as string) || '480p',
     aspect: (req.params?.aspect as string) || '16:9',
     duration: Number(req.params?.duration ?? 5),
+    genMode: typeof req.params?.genMode === 'string' ? (req.params.genMode as SvgwMode) : undefined,
     generateAudio: req.params?.generate_audio !== false,
     seed: req.params?.seed != null ? Number(req.params.seed) : undefined,
     invitedImageAssetIds: Array.isArray(req.params?.invitedImageAssetIds)
@@ -2653,20 +3125,66 @@ const handlers: Record<string, (req: CapReq) => Promise<CapRes>> = {
   'sound-effects': soundEffects,
 }
 
+/** One-line summary of a capability request: params plus every input's kind, size and head. */
+function summarizeCapRequest(req: CapReq): string {
+  const parts = (req.inputs ?? []).map((i) => {
+    if (i.kind === 'text') return `text(${(i.text ?? '').length}字)`
+    const url = i.url ?? ''
+    const head = url.startsWith('data:') ? `${url.slice(0, 24)}…(${Math.round(url.length * 0.75 / 1024)}KB)` : url.slice(0, 120)
+    return `${i.kind}=${head}`
+  })
+  const params = Object.entries(req.params ?? {})
+    .map(([k, v]) => `${k}=${Array.isArray(v) ? `[${v.length}]` : String(v).slice(0, 40)}`)
+    .join(' ')
+  return `${params} | ${parts.join(' ')}`
+}
+
 export function capabilitiesPlugin(): Plugin {
   return {
     name: 'capabilities-api',
     configureServer(server) {
       server.middlewares.use('/capabilities/run', async (req, res) => {
         if (req.method !== 'POST') { sendJson(res, 405, { error: 'POST only' }); return }
+        const runId = Math.random().toString(36).slice(2, 8)
+        let body: CapReq | undefined
+        const started = Date.now()
         try {
-          const body = await readJson(req)
+          body = await readJson(req)
+          // Every run is logged with the exact inputs, so a provider rejection can
+          // be diagnosed from the server log alone (the browser only sees the toast).
+          console.log(`[cap] ${runId} ${body.capability} ${summarizeCapRequest(body)}`)
           const handler = handlers[body.capability]
-          if (!handler) { sendJson(res, 400, { error: `unknown capability: ${body.capability}` }); return }
+          if (!handler) {
+            console.warn(`[cap] ${runId} unknown capability: ${body.capability}`)
+            sendJson(res, 400, { error: `unknown capability: ${body.capability}` })
+            return
+          }
           const result = await handler(body)
+          console.log(`[cap] ${runId} ok ${((Date.now() - started) / 1000).toFixed(1)}s → ${(result.outputs ?? []).map((o) => `${o.kind}:${String(o.url ?? o.text ?? '').slice(0, 80)}`).join(' ')}`)
           sendJson(res, 200, result)
         } catch (e) {
-          sendJson(res, 500, { error: String((e as Error).message ?? e) })
+          const msg = String((e as Error).message ?? e)
+          console.error(`[cap] ${runId} FAILED ${body?.capability ?? '?'} after ${((Date.now() - started) / 1000).toFixed(1)}s: ${msg}`)
+          sendJson(res, 500, { error: msg })
+        }
+      })
+
+      // Browser-side log sink: console errors, unhandled rejections and the
+      // canvas's own action log all land in the dev server log next to [cap]
+      // lines, so a failed run can be reconstructed without the user's console.
+      server.middlewares.use('/client-log', async (req, res) => {
+        if (req.method !== 'POST') { sendJson(res, 405, { error: 'POST only' }); return }
+        try {
+          const body = await readJson(req) as unknown as { entries?: { level?: string; event?: string; data?: unknown; at?: number }[] }
+          for (const entry of body.entries ?? []) {
+            const line = `[client] ${entry.event ?? 'log'}${entry.data === undefined ? '' : ` ${typeof entry.data === 'string' ? entry.data : JSON.stringify(entry.data)}`}`
+            if (entry.level === 'error') console.error(line)
+            else if (entry.level === 'warn') console.warn(line)
+            else console.log(line)
+          }
+          sendJson(res, 200, { ok: true })
+        } catch (e) {
+          sendJson(res, 400, { error: String((e as Error).message ?? e) })
         }
       })
 
@@ -2688,6 +3206,7 @@ export function capabilitiesPlugin(): Plugin {
             { id: 'gpt-image-1', label: 'GPT Image 1', provider: 'openai', costPer: 0.04, supportsRef: false },
           ],
           video: [
+            { id: 'dreamina-seedance-2-5-260628', label: 'Seedance 2.5 (30s)', provider: 'doubao', costPer: 0.70, supportsAudio: true, supportsRef: true, durations: [5, 10, 15, 20, 25, 30] },
             { id: 'dreamina-seedance-2-0-fast-260128', label: 'Seedance 2.0 Fast', provider: 'doubao', costPer: 0.35, supportsAudio: true, supportsRef: true, durations: [5, 10] },
             { id: 'dreamina-seedance-2-0-260128', label: 'Seedance 2.0', provider: 'doubao', costPer: 0.70, supportsAudio: true, supportsRef: true, durations: [5, 10] },
             { id: 'dreamina-seedance-1-5-pro-251215', label: 'Seedance 1.5 Pro', provider: 'doubao', costPer: 0.50, supportsAudio: true, supportsRef: true, durations: [5, 10] },
@@ -2698,7 +3217,23 @@ export function capabilitiesPlugin(): Plugin {
             { id: 'fal-ai/hunyuan-video', label: 'HunyuanVideo', provider: 'fal', costPer: 0.25, supportsAudio: false, supportsRef: false, durations: [5] },
           ],
         }
-        sendJson(res, 200, modelList)
+        // 走网关时每个 seedance 档位都是真的能用的（2.5 在直连那条路上拿不到），
+        // 只需要说明它落到哪个契约模型 —— 网关没有 fast 档，fast 会归到 2.0。
+        // 直连 Ark 时才需要那套「这个 model 没配 endpoint，会静默回退」的警告。
+        const gateway = videoProvider() === 'sv-gateway'
+        const annotated = {
+          ...modelList,
+          provider: gateway ? 'sv-gateway' : 'ark',
+          video: modelList.video.map((m) => ({
+            ...m,
+            ...(m.provider !== 'doubao'
+              ? {}
+              : gateway
+                ? { endpoint: gatewayModelFor(m.id), endpointSource: 'gateway' as const }
+                : { endpoint: resolveSeedanceModel(m.id), endpointSource: seedanceEndpointSource(m.id) }),
+          })),
+        }
+        sendJson(res, 200, annotated)
       })
 
       // File upload endpoint — saves to public/uploads/, returns URL path
