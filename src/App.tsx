@@ -9,6 +9,7 @@ import { useServerBackupSync } from '@/lib/session-backup'
 import { migrateInlineDataUrlsOnce } from '@/lib/storage/data-url-migration'
 import { useProjectDB } from '@/stores/project-db'
 import { resumePrevisRuns } from '@/lib/previs-export/run'
+import { installClientLog } from '@/lib/client-log'
 import { toast } from 'sonner'
 
 interface ErrorBoundaryState {
@@ -79,6 +80,7 @@ function AppWithMigration() {
 
   useEffect(() => {
     // Run once after all persisted stores have rehydrated
+    installClientLog()
     migrateStores()
     initStoryboardTimelineLink()
     initCanvasStoryboardSync()

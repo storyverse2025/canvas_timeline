@@ -94,7 +94,7 @@ function buildVirtualAvatarRefs(
  * fetch is best-effort (cached ~5min server-listed via AK/SK): on IAM /
  * network errors we fall back to the library refs alone and surface why.
  */
-async function resolveShootAvatarRefs(
+export async function resolveShootAvatarRefs(
   row: StoryboardRow,
   db: ReturnType<typeof useProjectDB.getState>,
 ): Promise<{ refs: VirtualAvatarShootRef[]; byteplusMatched: VirtualAvatarShootRef[] }> {

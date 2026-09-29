@@ -775,8 +775,8 @@ describe('storyboard grid panel count (25格 for high-action shots)', () => {
   })
 })
 
-describe('storyboard grid panel count (16格 for dance / 群舞 shots)', () => {
-  it('dance rows get a fixed 16-panel (4×4) 漫画式分镜 grid cut on the beat', () => {
+describe('storyboard grid panel count (25格 KPOP-MV for dance / 群舞 shots)', () => {
+  it('dance rows get a 25-panel (5×5) KPOP-MV grid cut on the beat', () => {
     const prompt = buildKeyframePrompt({
       row: {
         character_actions: '五人女团齐舞，队形从箭形展开为横排，C 位与两侧成员中心交换',
@@ -785,21 +785,40 @@ describe('storyboard grid panel count (16格 for dance / 群舞 shots)', () => {
       },
       shotDurationSeconds: 12,
     })
-    expect(prompt).toContain('16-panel grid（16格，4 columns × 4 rows）')
+    expect(prompt).toContain('25-panel grid（25格，5 columns × 5 rows）')
     expect(prompt).toContain('DANCE / 群舞')
     expect(prompt).toContain('ON THE MUSICAL BEAT')
-    // Formation storytelling + all-members-in-frame consistency guidance.
-    expect(prompt).toContain('队形叙事')
+    // Anti-死板 MV grammar: real-KPOP motion anchor, never front-only, face
+    // punch-ins between wides, long-lens close-ups, all-members consistency.
+    expect(prompt).toContain('真实 KPOP 直拍')
+    expect(prompt).toContain('绝不全程正面平拍')
+    expect(prompt).toContain('punch-in')
+    expect(prompt).toContain('135mm')
     expect(prompt).toContain('群体同框')
-    // ≈0.75s per panel for a 12s shot.
-    expect(prompt).toContain('≈ 0.75s')
-    // A dance row is NOT a fight — it must not inherit the 25-panel fight sheet.
-    expect(prompt).not.toContain('25-panel grid')
+    // ≈0.48s per panel for a 12s shot.
+    expect(prompt).toContain('≈ 0.48s')
     expect(prompt).not.toContain('choose 3–6 panels')
     expect(prompt).toContain('sum to exactly 12s')
+    // A real extracted 25-panel move example (from prompt_rag) is injected as
+    // the choreography + cutting blueprint.
+    expect(prompt).toContain('真实女团直拍 25 格动作范例')
   })
 
-  it('a fight beats dance for the panel count even if both keywords appear', () => {
+  it('injects the member-count-matched dance move example (5 members → 4/5-member ref)', () => {
+    const prompt = buildKeyframePrompt({
+      row: { character_actions: '五人女团齐舞，队形变换', visual_description: '舞台群舞' },
+      shotDurationSeconds: 12,
+      characters: [
+        { name: 'A' }, { name: 'B' }, { name: 'C' }, { name: 'D' }, { name: 'E' },
+      ],
+    })
+    // With 5 characters the picker lands on a group ref (4- or 5-member), not
+    // the solo 1-member 专业编舞 reference.
+    expect(prompt).toContain('真实女团直拍 25 格动作范例')
+    expect(prompt).not.toContain('性感powerful专业编舞')
+  })
+
+  it('a fight beats dance when both keywords appear (fight choreography, not MV)', () => {
     const prompt = buildKeyframePrompt({
       row: {
         character_actions: '两名舞者在舞台上拔剑交锋，边跳边打斗',
@@ -807,9 +826,11 @@ describe('storyboard grid panel count (16格 for dance / 群舞 shots)', () => {
       },
       shotDurationSeconds: 10,
     })
-    // High-action wins: 25-panel fight sheet, not the 16-panel dance sheet.
-    expect(prompt).toContain('25-panel grid')
-    expect(prompt).not.toContain('16-panel grid')
+    // Both branches are 25-panel now, so distinguish by content: high-action
+    // wins → two-fighter exchange, not the KPOP-MV dance grammar.
+    expect(prompt).toContain('TWO-FIGHTER EXCHANGE')
+    expect(prompt).not.toContain('KPOP-MV')
+    expect(prompt).not.toContain('绝不全程正面平拍')
   })
 
   it('isDanceRow keys off action-bearing fields', () => {
@@ -959,14 +980,29 @@ describe('generateIdentitySheet (角色身份版)', () => {
     expect(mockedRunCapability.mock.calls[1]![0].params?.model).toBe('google/gemini-3.1-flash-image-preview')
   })
 
-  it('propagates the error when BOTH primary and nano-banana backends fail', async () => {
+  it('falls back to Seedream 5.0 Lite when both primary and nano-banana backends fail', async () => {
+    mockedRunCapability.mockReset()
+    mockedRunCapability
+      .mockRejectedValueOnce(new Error('图片生成失败 (Apimart): task timed out after 180s'))
+      .mockRejectedValueOnce(new Error('nano-banana also timed out'))
+      .mockResolvedValueOnce({ outputs: [{ kind: 'image', url: 'https://seedream-sheet.png' }] })
+    const ctx = createMemoryContext({ llm: { complete: async () => '' } })
+    const result = await driveAuto(generateIdentitySheet(req, ctx))
+    expect(result.url).toBe('https://seedream-sheet.png')
+    expect(mockedRunCapability).toHaveBeenCalledTimes(3)
+    expect(mockedRunCapability.mock.calls[2]![0].params?.provider).toBe('apimart')
+    expect(mockedRunCapability.mock.calls[2]![0].params?.model).toBe('doubao-seedream-5-0-lite')
+  })
+
+  it('propagates the error when ALL THREE backends (primary, nano-banana, Seedream) fail', async () => {
     mockedRunCapability.mockReset()
     mockedRunCapability
       .mockRejectedValueOnce(new Error('primary timed out'))
-      .mockRejectedValueOnce(new Error('fallback also timed out'))
+      .mockRejectedValueOnce(new Error('nano-banana also timed out'))
+      .mockRejectedValueOnce(new Error('seedream also timed out'))
     const ctx = createMemoryContext({ llm: { complete: async () => '' } })
-    await expect(driveAuto(generateIdentitySheet(req, ctx))).rejects.toThrow(/fallback also timed out/)
-    expect(mockedRunCapability).toHaveBeenCalledTimes(2)
+    await expect(driveAuto(generateIdentitySheet(req, ctx))).rejects.toThrow(/seedream also timed out/)
+    expect(mockedRunCapability).toHaveBeenCalledTimes(3)
   })
 })
 

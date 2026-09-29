@@ -8,8 +8,8 @@ import {
 import type { CapabilitySpec } from '../types'
 
 describe('CAPABILITIES registry', () => {
-  it('has all 35 capabilities', () => {
-    expect(CAPABILITIES.length).toBe(35)
+  it('has all 37 capabilities', () => {
+    expect(CAPABILITIES.length).toBe(37)
   })
 
   it('has unique ids', () => {
@@ -34,10 +34,12 @@ describe('CAPABILITIES registry', () => {
     for (const c of CAPABILITIES) counts[c.category]++
     // agent grew to 11 with the dedicated 'storyboard-generation' +
     // 'voice-casting' capabilities (each pins a contract-reinforcing
-    // system prompt that element-extraction was hijacking).
-    expect(counts.agent).toBe(11)
+    // system prompt that element-extraction was hijacking), then to 12
+    // with 'six-criteria-judge' (evolution-loop verifier, not UI-exposed).
+    expect(counts.agent).toBe(12)
     expect(counts.image).toBe(11)
-    expect(counts.video).toBe(9)
+    // video grew to 10 with 'music-video' (image + mp3 -> beat-cut MV).
+    expect(counts.video).toBe(10)
     expect(counts.audio).toBe(4)
   })
 
@@ -70,7 +72,7 @@ describe('getCapability', () => {
 describe('getCapabilitiesByCategory', () => {
   it('returns only agent capabilities', () => {
     const caps = getCapabilitiesByCategory('agent')
-    expect(caps.length).toBe(11)
+    expect(caps.length).toBe(12)
     expect(caps.every((c) => c.category === 'agent')).toBe(true)
   })
 
@@ -82,7 +84,7 @@ describe('getCapabilitiesByCategory', () => {
 
   it('returns only video capabilities', () => {
     const caps = getCapabilitiesByCategory('video')
-    expect(caps.length).toBe(9)
+    expect(caps.length).toBe(10)
   })
 
   it('returns only audio capabilities', () => {

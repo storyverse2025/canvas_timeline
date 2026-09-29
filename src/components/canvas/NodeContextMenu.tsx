@@ -57,7 +57,7 @@ const CAP_ICONS: Record<string, React.ElementType> = {
   'motion-imitation': Move3d, 'video-split': SplitSquareHorizontal,
   'video-style-transfer': PaintBucket, 'preset-voice': AudioLines,
   'voice-clone': Mic, 'polyphonic': TextCursorInput,
-  'sound-effects': Music,
+  'sound-effects': Music, 'music-video': Music,
 }
 
 export function NodeContextMenu({ menu, onClose }: Props) {

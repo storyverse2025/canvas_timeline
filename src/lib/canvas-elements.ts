@@ -220,20 +220,18 @@ export async function ensureElements(
 ): Promise<ElementInventory> {
   onStatus('正在分析画布元素…')
   const inventory = await classifyCanvasElements()
-
-  const missing: string[] = []
-  if (inventory.characters.length === 0) missing.push('角色')
-  if (inventory.scenes.length === 0) missing.push('场景')
-
-  if (missing.length === 0) {
-    onStatus(`画布元素齐全：${inventory.characters.length} 角色, ${inventory.props.length} 道具, ${inventory.scenes.length} 场景`)
-    return inventory
-  }
-
-  onStatus(`缺少 ${missing.join('、')}，正在从剧本提取并生成…`)
   const artStyle = getArtStyle(opts)
 
-  // Get extraction (from director pipeline or do it now)
+  // Get extraction (from director pipeline or do it now). Extraction is
+  // pulled up ahead of the missing-check below so we can name-match against
+  // inventory instead of just checking whether each bucket is non-empty —
+  // a canvas that already has ANY character portrait (e.g. left over from a
+  // previous script/session on the same canvas) used to short-circuit ALL
+  // character generation for the CURRENT script, even when none of its
+  // extracted names matched anything on the canvas. Result: new characters
+  // silently got no portrait, and findMissingAssets() couldn't catch it
+  // after the fact because it only flags EXISTING empty-content items, not
+  // "an extracted character with no canvas item at all".
   let extraction = opts?.extraction
   if (!extraction && opts?.scriptText) {
     onStatus('正在从剧本提取角色和场景…')
@@ -245,14 +243,28 @@ export async function ensureElements(
     onStatus(`提取完成：${extraction.characters.length} 角色, ${extraction.scenes.length} 场景, ${extraction.props.length} 道具`)
   }
 
+  const existingCharacterNames = new Set(inventory.characters.map((c) => c.name))
+  const existingSceneNames = new Set(inventory.scenes.map((s) => s.name))
+  const existingPropNames = new Set(inventory.props.map((p) => p.name))
+  const missingCharacterExtracts = (extraction?.characters ?? []).filter((c) => !existingCharacterNames.has(c.name))
+  const missingSceneExtracts = (extraction?.scenes ?? []).filter((s) => !existingSceneNames.has(s.name))
+  const missingPropExtracts = (extraction?.props ?? []).filter((p) => !existingPropNames.has(p.name))
+
+  if (!extraction || (missingCharacterExtracts.length === 0 && missingSceneExtracts.length === 0 && missingPropExtracts.length === 0)) {
+    onStatus(`画布元素齐全：${inventory.characters.length} 角色, ${inventory.props.length} 道具, ${inventory.scenes.length} 场景`)
+    return inventory
+  }
+
+  onStatus(`缺少 ${missingCharacterExtracts.length} 角色 / ${missingSceneExtracts.length} 场景 / ${missingPropExtracts.length} 道具，正在生成…`)
+
   // Generate missing characters + scenes + props — image generation routed
   // through art-director-agent.generateAssetImages, then results are written
   // back to the canvas stores here (the agent stays pure of side effects).
-  const needCharacters = inventory.characters.length === 0 && (extraction?.characters?.length ?? 0) > 0
-  const needScenes = inventory.scenes.length === 0 && (extraction?.scenes?.length ?? 0) > 0
-  const needProps = inventory.props.length === 0 && (extraction?.props?.length ?? 0) > 0
+  const needCharacters = missingCharacterExtracts.length > 0
+  const needScenes = missingSceneExtracts.length > 0
+  const needProps = missingPropExtracts.length > 0
 
-  if (extraction && (needCharacters || needScenes || needProps)) {
+  if (needCharacters || needScenes || needProps) {
     // Wrap AI-generated image_prompts with global-style guidance before
     // sending; the per-asset background tasks forward them as-is.
     //   characters → three-view material system prompt
@@ -268,7 +280,14 @@ export async function ensureElements(
     // Each template references {{artStyle}} so the style still threads
     // through; it's just sourced from the agent boundary rather than
     // injected by the caller.
-    const preppedExtraction = extraction
+    // Only the subset that isn't already on the canvas (name-matched above) —
+    // extraction may also contain characters/scenes/props that already have
+    // a canvas portrait, which must NOT be regenerated.
+    const preppedExtraction: ExtractionResult = {
+      characters: missingCharacterExtracts,
+      scenes: missingSceneExtracts,
+      props: missingPropExtracts,
+    }
 
     // Generate an image for EVERY extracted character — the earlier
     // CHAR_CAP=2 was dropping 3rd/4th characters silently (user reported:

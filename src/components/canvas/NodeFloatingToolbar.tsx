@@ -1,5 +1,6 @@
-import { Wand2, Copy, Trash2, Crosshair, Sparkles, Pencil, Box } from 'lucide-react'
+import { Wand2, Copy, Trash2, Crosshair, Sparkles, Pencil, Box, Clapperboard } from 'lucide-react'
 import { startPrevisFromSelection } from '@/lib/previs-export/run'
+import { blockoutClipOf, isPrevisResultItem, reshootInputsWithBlockout, reshootOneBeatFromClip } from '@/lib/previs-export/blockout-reshoot'
 import { NodeToolbar, Position } from '@xyflow/react'
 import { useReactFlow } from '@xyflow/react'
 import { useCanvasStore } from '@/stores/canvas-store'
@@ -79,6 +80,24 @@ export function NodeFloatingToolbar({ nodeId, itemId, isVisible }: Props) {
         {item?.kind === 'text' && (
           <button title="按文本生成图" className="p-1 rounded hover:bg-accent" onClick={() => startGen('image')}>
             <Sparkles className="w-3.5 h-3.5 text-primary" />
+          </button>
+        )}
+        {blockoutClipOf(item) && (
+          <button
+            title="用这段白模重拍这一镜：以它作为 Seedance 2.0 的参考视频（运镜 + 走位动作），在右边新建一个视频节点，已有节点不动"
+            className="p-1 rounded hover:bg-accent"
+            onClick={() => void reshootOneBeatFromClip(nodeId)}
+          >
+            <Clapperboard className="w-3.5 h-3.5 text-sky-400" />
+          </button>
+        )}
+        {isPrevisResultItem(item) && (
+          <button
+            title="按白模重拍：把连进这个 3D 预演的镜头视频重新生成，用对应时间段的白模视频作为 Seedance 2.0 参考视频（运镜 + 走位动作），每个人物对应一种颜色的假人"
+            className="p-1 rounded hover:bg-accent"
+            onClick={() => void reshootInputsWithBlockout(nodeId)}
+          >
+            <Clapperboard className="w-3.5 h-3.5 text-amber-400" />
           </button>
         )}
         {item?.kind === 'video' && item.role !== 'beat-video-alternate' && (

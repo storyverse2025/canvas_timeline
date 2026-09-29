@@ -194,7 +194,18 @@ export function propImageContext(artStyle: string): AssetImageContext {
 // remote image models on a cold start; aggressive enough to fail-and-
 // move-on instead of waiting forever.
 export const ASSET_TIMEOUT_MS = {
-  character: 3 * 60_000,
+  // character wraps image generation (60-90s+ under load) PLUS 开白
+  // registration server-side (CreateAsset + up to 120s GetAsset polling
+  // for Status=Active — see createByteplusAssetActive in
+  // vite-capabilities-plugin.ts). At 3min this outer timeout frequently
+  // fired WHILE registration was still polling toward Active, silently
+  // dropping the character → asset binding (no error shown — the client
+  // just never got byteplusAssetId back) even though registration would
+  // have succeeded moments later. Root-caused from a live BytePlus
+  // privacy rejection ("InputImageSensitiveContentDetected") on a shoot
+  // for a character whose portrait existed but had no registered asset.
+  // 6min comfortably covers slow image-gen + the full registration cycle.
+  character: 6 * 60_000,
   prop: 3 * 60_000,
   // 4K HD equirectangular panoramas can legitimately take 90-150s on
   // gpt-image-2; give them more headroom but still cap the wait.
@@ -250,6 +261,7 @@ export async function generateOneImage(
   const IMAGE_BACKENDS: Array<Record<string, unknown>> = [
     {}, // default provider/model (env-configured; director pins gpt-image elsewhere)
     { provider: 'gemini', model: 'google/gemini-3.1-flash-image-preview' }, // nano-banana fallback
+    { provider: 'apimart', model: 'doubao-seedream-5-0-lite' }, // Seedream 5.0 Lite — last resort when nano-banana also fails
   ]
   let r: Awaited<ReturnType<typeof runCapability>> | undefined
   let lastErr: unknown
@@ -278,11 +290,11 @@ export async function generateOneImage(
       // No exception but no url either — retry on the next backend; on the
       // last backend keep the (empty) result so the caller degrades gracefully
       // to an undefined img_url instead of throwing.
-      if (i < lastIdx) console.warn(`[art-director] image backend ${i} returned no url for ${element.name}; trying nano-banana fallback`)
+      if (i < lastIdx) console.warn(`[art-director] image backend ${i} returned no url for ${element.name}; trying ${JSON.stringify(IMAGE_BACKENDS[i + 1])}`)
     } catch (e) {
       lastErr = e
       if (i < lastIdx) {
-        console.warn(`[art-director] image backend ${i} failed for ${element.name} (${String((e as Error)?.message ?? e).slice(0, 120)}); trying nano-banana fallback`)
+        console.warn(`[art-director] image backend ${i} failed for ${element.name} (${String((e as Error)?.message ?? e).slice(0, 120)}); trying ${JSON.stringify(IMAGE_BACKENDS[i + 1])}`)
       }
     }
   }

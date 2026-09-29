@@ -1,4 +1,5 @@
 import type { CapabilityInput, CapabilityRequest, CapabilityResponse } from './types'
+import { emitCapabilityTrace, serverBaseUrl } from './trace'
 
 /**
  * Inputs whose `url` is a `data:` URL big enough to risk pushing the JSON
@@ -21,7 +22,7 @@ const INLINE_DATA_URL_LIMIT_BYTES = 256 * 1024
  * the body limit if nothing else is big).
  */
 async function uploadDataUrl(dataUrl: string): Promise<string> {
-  const res = await fetch('/uploads/save', {
+  const res = await fetch(`${serverBaseUrl()}/uploads/save`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ dataUrl }),
@@ -61,15 +62,22 @@ async function normalizeLargeDataUrls(inputs: CapabilityInput[]): Promise<Capabi
 }
 
 export async function runCapability(req: CapabilityRequest): Promise<CapabilityResponse> {
+  const startedAt = Date.now()
   const normalized: CapabilityRequest = {
     ...req,
     inputs: await normalizeLargeDataUrls(req.inputs),
   }
-  const res = await fetch('/capabilities/run', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(normalized),
-  })
+  let res: Response
+  try {
+    res = await fetch(`${serverBaseUrl()}/capabilities/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(normalized),
+    })
+  } catch (e) {
+    emitCapabilityTrace({ req: normalized, error: (e as Error).message, durationMs: Date.now() - startedAt })
+    throw e
+  }
   const raw = await res.text()
 
   // nginx returns 413 with a plain HTML body when client_max_body_size is
@@ -88,9 +96,16 @@ export async function runCapability(req: CapabilityRequest): Promise<CapabilityR
   try {
     data = JSON.parse(raw)
   } catch {
-    throw new Error(`非 JSON 响应 (HTTP ${res.status}): ${raw.slice(0, 200).replace(/<[^>]+>/g, '').trim()}`)
+    const err = `非 JSON 响应 (HTTP ${res.status}): ${raw.slice(0, 200).replace(/<[^>]+>/g, '').trim()}`
+    emitCapabilityTrace({ req: normalized, error: err, durationMs: Date.now() - startedAt })
+    throw new Error(err)
   }
-  if (!res.ok || data?.error) throw new Error(data?.error ?? `capability error: ${res.status}`)
+  if (!res.ok || data?.error) {
+    const err = data?.error ?? `capability error: ${res.status}`
+    emitCapabilityTrace({ req: normalized, error: err, durationMs: Date.now() - startedAt })
+    throw new Error(err)
+  }
   if (!data) throw new Error('empty response')
+  emitCapabilityTrace({ req: normalized, res: data, durationMs: Date.now() - startedAt })
   return data
 }

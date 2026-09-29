@@ -51,3 +51,9 @@ public/sessions/
 
 # Virtual avatar catalog (scraped from BytePlus — contains account-specific asset ids)
 public/virtual-avatars.json
+
+# HarnessX evolution loop artifacts (traces/results only grow; never committed)
+evolution/traces/
+evolution/results/
+evolution/evolve.log
+evolution/evolve.lock

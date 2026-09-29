@@ -10,6 +10,7 @@ import { sessionSnapshotPlugin } from './vite-session-snapshot-plugin'
 import { assetProxyPlugin } from './vite-asset-proxy-plugin'
 import { timelineExportPlugin } from './vite-timeline-export-plugin'
 import { avatarsPlugin } from './vite-avatars-plugin'
+import { tracePlugin } from './vite-trace-plugin'
 import { storyversePlugin } from './vite-storyverse-plugin'
 import { previsPlugin } from './vite-previs-plugin'
 
@@ -18,7 +19,7 @@ import { previsPlugin } from './vite-previs-plugin'
 const useHttps = process.env.DEV_HTTPS !== '0'
 
 export default defineConfig({
-  plugins: [react(), ...(useHttps ? [basicSsl()] : []), libtvPlugin(), providersPlugin(), capabilitiesPlugin(), sessionSnapshotPlugin(), assetProxyPlugin(), timelineExportPlugin(), avatarsPlugin(), storyversePlugin(), previsPlugin()],
+  plugins: [react(), ...(useHttps ? [basicSsl()] : []), libtvPlugin(), providersPlugin(), capabilitiesPlugin(), sessionSnapshotPlugin(), assetProxyPlugin(), timelineExportPlugin(), avatarsPlugin(), tracePlugin(), storyversePlugin(), previsPlugin()],
   server: {
     host: '0.0.0.0',
     port: 8080,

@@ -1,9 +1,10 @@
 import type { Plugin } from 'vite'
 import type { IncomingMessage, ServerResponse } from 'http'
-import { spawn } from 'child_process'
-import { existsSync, mkdirSync, openSync, closeSync, readFileSync, writeFileSync, copyFileSync, statSync, rmSync, createReadStream } from 'fs'
+import { spawn, execFile } from 'child_process'
+import { existsSync, mkdirSync, openSync, closeSync, readFileSync, writeFileSync, copyFileSync, statSync, rmSync, renameSync, createReadStream } from 'fs'
 import { homedir } from 'os'
 import { dirname, join, resolve, relative, isAbsolute } from 'path'
+import sharp from 'sharp'
 
 /**
  * 画布「生成 3D 预演」的服务端：把画布导出的 manifest 交给本地 headless Claude Code，
@@ -12,6 +13,7 @@ import { dirname, join, resolve, relative, isAbsolute } from 'path'
  *   POST /previs/run      { manifest, shortId, images[] } → { shortId }
  *   GET  /previs/status?shortId=                          → PrevisRunStatus
  *   POST /previs/cancel?shortId=                          → { cancelled }
+ *   GET  /previs/beats?shortId=                           → { beats: PrevisBeatClip[] }（按白模重拍用的每镜白模片段）
  *
  * 为什么这样搭（详见 docs/plans/2026-09-13-canvas-previs-node.md）：
  * - MCP 的 Chrome 用独立 profile、加载 127.0.0.1:5173，用户浏览器看不到它的 IndexedDB，
@@ -448,6 +450,292 @@ function handleReport(req: IncomingMessage, res: ServerResponse) {
   createReadStream(file).pipe(res)
 }
 
+/** Seedance 2.0 reference_video: 4–15 s per clip, web URL only (base64 is rejected). */
+const REF_VIDEO_MIN_S = 4
+const REF_VIDEO_MAX_S = 15
+/** Mirror of the studio's draft PALETTE (src/staging/draft.ts), for runs without staging.json. */
+const DRAFT_PALETTE = ['#4f8cff', '#ff6b6b', '#ffd166', '#06d6a0', '#c77dff', '#f4a261', '#8ecae6', '#ffafcc']
+
+/** staging.json 里一个人物在某个 beat 的表演数据。白模演的就是这些。 */
+interface StagingBeatCharacter {
+  start?: { anchor?: string | null } | null
+  end?: { anchor?: string | null } | null
+  pose?: string | null
+  poseEnd?: string | null
+  moveWindow?: [number, number] | null
+  motion?: string | null
+  motionWindow?: [number, number] | null
+  actions?: string[] | null
+}
+
+interface StagingFile {
+  fps?: number
+  characters?: Record<string, { name?: string; color?: string }>
+  beats?: {
+    beat: number
+    startFrame?: number
+    durationFrames?: number
+    duration?: number
+    /** 这一镜要演什么，一句中文。白模就是照它搭的 —— prompt 里最该有的一句。 */
+    goal?: string
+    characters?: Record<string, StagingBeatCharacter>
+    segments?: { t0: number; t1: number; shotSize?: string; subject?: string; partner?: string; cameraPreset?: string | null; cameraMotion?: { id?: string } | null }[]
+  }[]
+}
+
+/**
+ * 动作 id → 中文名。动作库目录在导演台仓库里（35 个 Mixamo 动作，带 displayName），
+ * 手势/姿态那套小词表沿用导演台 report 的 ACT_CN。
+ *
+ * 为什么要做这件事：白模是灰模假人，Seedance 的 `video-ref` 只能稳住时间轴
+ * （时长、剪辑点、帧对齐），**画面内容只是倾向**——几乎所有像素都要重绘时，
+ * 模型会把动作整个重新解读（实测：白模里「踉跄后退」被演成「向镜头走近」）。
+ * 能钉住内容的只有文字，所以白模里的动作必须翻成中文写进 prompt。
+ */
+const ACTION_CN: Record<string, string> = {
+  hurry: '疾走', lower_prop: '放下道具', withdraw_hand: '缩手', raise_cup: '举杯', drop_cup: '放杯',
+  recoil: '后缩', lean_forward: '前倾', tense: '紧绷', sit_down: '坐下', stand_up: '起身',
+  kneel_down: '跪下', look_down: '低头', gaze_up: '抬眼', shout: '吼叫', talk: '说话',
+  nod: '点头', shake_head: '摇头', turn_away: '转身', hand_chest: '手抚胸', reach: '伸手',
+  raise_hand: '抬手', shield: '护挡', fidget: '小动作', look_partner: '注视对方', walk: '行走',
+}
+
+let motionLabels: Record<string, string> | null = null
+function motionLabel(id: string): string {
+  if (!motionLabels) {
+    motionLabels = {}
+    try {
+      const cat = JSON.parse(readFileSync(join(STUDIO_ROOT, 'src', 'previs-app', 'library', 'xyq', 'catalog.json'), 'utf8')) as {
+        motions?: { id?: string; displayName?: string; name?: string }[]
+      }
+      for (const m of cat.motions ?? []) {
+        if (m.id) motionLabels[m.id] = m.displayName || m.name || m.id
+      }
+    } catch { /* 目录读不到就退回 slug，照样比没有强 */ }
+  }
+  // 兜底：asset_library_motion_jump_attack → jump attack
+  return motionLabels[id] ?? id.replace(/^asset_library_motion_/, '').replace(/_/g, ' ')
+}
+
+function actionLabel(id: string): string {
+  return ACTION_CN[id] ?? id.replace(/_/g, ' ')
+}
+
+/**
+ * 数一帧里各个假人的颜色占了多少像素 → 这一帧真正出场的是谁。
+ *
+ * 为什么不信 staging 的 `subject`/`partner`：2026-09-26 在 beat 3 实测，它和白模渲出来的
+ * 画面对不上（seg1 标的是鬼面客，画面里占主导的却是蓝色假人；seg3 反过来）。按元数据喂
+ * 角色图就会喂错人。假人是纯色的，直接从画面数颜色对任何项目都成立。
+ */
+export async function castInFrame(
+  framePath: string,
+  characters: { key: string; color: string }[],
+  minRatio = 0.002,
+): Promise<string[]> {
+  // 按**色相**匹配，不按 RGB 距离：白模有明暗变化，渲出来的像素和调色板 hex 差很远，
+  // 按距离匹配几乎全落空（实测 6 帧里 5 帧检出 0%）。色相对亮度变化不敏感。
+  const hueOf = (r: number, g: number, b: number) => {
+    const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min
+    if (d === 0) return { hue: -1, sat: 0, val: max }
+    const hue = max === r ? ((g - b) / d + (g < b ? 6 : 0)) : max === g ? (b - r) / d + 2 : (r - g) / d + 4
+    return { hue: hue * 60, sat: d / max, val: max }
+  }
+  const hueGap = (a: number, b: number) => {
+    const d = Math.abs(a - b) % 360
+    return d > 180 ? 360 - d : d
+  }
+  try {
+    const { data, info } = await sharp(framePath).resize(320, null, { fit: 'inside' })
+      .raw().toBuffer({ resolveWithObject: true })
+    const total = info.width * info.height
+    const hit = new Map(characters.map((c) => [c.key, 0]))
+    const targets = characters.map((c) => {
+      const hex = c.color.replace('#', '')
+      const t = hueOf(parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16))
+      return { key: c.key, hue: t.hue }
+    })
+    for (let i = 0; i < data.length; i += info.channels) {
+      const px = hueOf(data[i], data[i + 1], data[i + 2])
+      if (px.hue < 0 || px.sat < 0.25 || px.val < 40) continue   // 灰/暗像素不参与
+      let best: { key: string; gap: number } | null = null
+      for (const t of targets) {
+        const gap = hueGap(px.hue, t.hue)
+        if (gap < 22 && (!best || gap < best.gap)) best = { key: t.key, gap }
+      }
+      if (best) hit.set(best.key, (hit.get(best.key) ?? 0) + 1)
+    }
+    return characters.filter((c) => (hit.get(c.key) ?? 0) / total >= minRatio).map((c) => c.key)
+  } catch {
+    return []   // 数不出来就别硬猜，调用方会退回 staging 的 subject/partner
+  }
+}
+
+function ffmpeg(args: string[]): Promise<void> {
+  return new Promise((ok, fail) => {
+    execFile('ffmpeg', args, { timeout: 120_000, maxBuffer: 4 * 1024 * 1024 }, (err, _out, stderr) =>
+      err ? fail(new Error(`ffmpeg 失败：${String(stderr).slice(-300) || err.message}`)) : ok())
+  })
+}
+
+/**
+ * Per-beat blockout clips for 「按白模重拍」: cut each beat's time interval out of
+ * the episode, normalise it for Seedance (24 fps H.264 yuv420p, no audio, padded
+ * to ≥4 s / trimmed to ≤15 s) and publish it on the studio's public host —
+ * BytePlus can't reach the canvas (IP allowlist) and rejects inline video.
+ * Also returns the character colours and shot segments the prompt needs.
+ */
+async function handleBeats(req: IncomingMessage, res: ServerResponse) {
+  const shortId = new URL(req.url ?? '', 'http://x').searchParams.get('shortId') ?? ''
+  if (!SHORT_ID_RE.test(shortId)) return sendJson(res, 400, { error: 'shortId 不合法' })
+  const dir = runDir(shortId)
+  let manifest: { assets?: { key: string; name: string; category: string }[]; beats?: { beat: number; shotId: string; duration: number; continuity?: { characterPositions?: { characterId: string }[] } }[] }
+  try {
+    manifest = JSON.parse(readFileSync(join(dir, 'canvas-manifest.json'), 'utf8'))
+  } catch {
+    return sendJson(res, 404, { error: `没有任务 ${shortId}` })
+  }
+  const episode = [join(dir, 'out', 'episode.mp4'), join(process.cwd(), 'public', 'uploads', `previs-${shortId}.mp4`)].find((p) => existsSync(p))
+  if (!episode) return sendJson(res, 409, { error: '这个预演还没有渲染出白模视频' })
+  let staging: StagingFile | null = null
+  try { staging = JSON.parse(readFileSync(join(dir, 'staging.json'), 'utf8')) } catch { /* older / failed runs */ }
+
+  const fps = staging?.fps || 30
+  const manifestChars = (manifest.assets ?? []).filter((a) => a.category === 'character')
+  const publishDir = join(STUDIO_ROOT, 'public', 'canvas-import', shortId, 'blockout')
+  mkdirSync(publishDir, { recursive: true })
+  const episodeMtime = statSync(episode).mtimeMs
+
+  let cursor = 0
+  const beats = []
+  for (const mb of manifest.beats ?? []) {
+    const sb = staging?.beats?.find((b) => b.beat === mb.beat)
+    const start = sb?.startFrame !== undefined ? sb.startFrame / fps : cursor
+    const duration = sb?.durationFrames ? sb.durationFrames / fps : sb?.duration || mb.duration
+    cursor = start + duration
+
+    const file = `beat${String(mb.beat).padStart(2, '0')}.mp4`
+    const target = join(publishDir, file)
+    if (!existsSync(target) || statSync(target).mtimeMs < episodeMtime) {
+      const take = Math.min(duration, REF_VIDEO_MAX_S)
+      const pad = Math.max(0, REF_VIDEO_MIN_S - take)
+      const tmp = `${target}.tmp.mp4`
+      await ffmpeg([
+        '-v', 'error', '-y', '-ss', start.toFixed(3), '-i', episode, '-t', take.toFixed(3),
+        '-vf', `fps=24${pad ? `,tpad=stop_mode=clone:stop_duration=${pad.toFixed(3)}` : ''},format=yuv420p`,
+        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-an', '-movflags', '+faststart', tmp,
+      ])
+      renameSync(tmp, target)
+    }
+
+    const keys = sb?.characters ? Object.keys(sb.characters) : (mb.continuity?.characterPositions ?? []).map((p) => p.characterId)
+    const characters = keys.map((key) => {
+      const sc = staging?.characters?.[key]
+      const idx = manifestChars.findIndex((a) => a.key === key)
+      const bc = sb?.characters?.[key]
+      const clampWindow = (w?: [number, number] | null) =>
+        Array.isArray(w) && w.length === 2 && w[1] > w[0]
+          ? ([Math.max(0, w[0]), Math.min(w[1], REF_VIDEO_MAX_S)] as [number, number])
+          : null
+      return {
+        key,
+        name: sc?.name ?? manifestChars[idx]?.name ?? key,
+        color: sc?.color ?? DRAFT_PALETTE[Math.max(0, idx) % DRAFT_PALETTE.length],
+        // 表演数据：白模里这个人做了什么、什么时候做。prompt 要把它写成中文，
+        // 否则模型只会照着灰模自由发挥。
+        motion: bc?.motion ? motionLabel(bc.motion) : null,
+        motionWindow: clampWindow(bc?.motionWindow),
+        moveWindow: clampWindow(bc?.moveWindow),
+        moved: Boolean(bc?.start?.anchor && bc?.end?.anchor && bc.start.anchor !== bc.end.anchor),
+        actions: (bc?.actions ?? []).map(actionLabel),
+        pose: bc?.pose ?? null,
+        poseEnd: bc?.poseEnd ?? null,
+      }
+    })
+    // Second copy under the canvas's own /uploads/ so the canvas page (HTTPS) can
+    // play the clip — the studio host is plain HTTP and would be blocked as mixed
+    // content. Seedance still gets the studio URL; it can't reach /uploads/.
+    // 每个镜头一张定帧：按 staging 的 segment（=硬切边界）取中点帧，没有 segment 时
+    // 退回头/中/尾。为什么按镜头取而不是按时间等分：一个 beat 里往往有几次硬切，
+    // 每个镜头的机位和景别都不同，按时间切会取到镜头中间的无意义位置，也覆盖不全。
+    // 构图必须来自白模，不能来自关键帧 —— 关键帧自带另一套构图。
+    const take = Math.min(duration, REF_VIDEO_MAX_S)
+    const segs = (sb?.segments ?? []).filter((g) => g.t1 > g.t0 && g.t0 < take)
+    const frameAt = segs.length
+      ? segs.map((g) => Math.min(take - 0.1, (g.t0 + Math.min(g.t1, take)) / 2))
+      : [0.2, take / 2, Math.max(0.3, take - 0.3)]
+    const frameUrls: string[] = []
+    const framePaths: string[] = []
+    for (const [i, at] of frameAt.entries()) {
+      const frameFile = `beat${String(mb.beat).padStart(2, '0')}-frame${i}.png`
+      const framePath = join(publishDir, frameFile)
+      if (!existsSync(framePath) || statSync(framePath).mtimeMs < statSync(target).mtimeMs) {
+        const tmpFrame = `${framePath}.tmp.png`
+        await ffmpeg(['-v', 'error', '-y', '-ss', at.toFixed(2), '-i', target, '-frames:v', '1', tmpFrame])
+        renameSync(tmpFrame, framePath)
+      }
+      const localFrameFile = `previs-${shortId}-beat${String(mb.beat).padStart(2, '0')}-frame${i}.png`
+      const localFramePath = join(process.cwd(), 'public', 'uploads', localFrameFile)
+      if (!existsSync(localFramePath) || statSync(localFramePath).mtimeMs < statSync(framePath).mtimeMs) {
+        copyFileSync(framePath, localFramePath)
+      }
+      frameUrls.push(`/uploads/${localFrameFile}`)
+      framePaths.push(framePath)
+    }
+
+    const localFile = `previs-${shortId}-beat${String(mb.beat).padStart(2, '0')}.mp4`
+    const localPath = join(process.cwd(), 'public', 'uploads', localFile)
+    if (!existsSync(localPath) || statSync(localPath).mtimeMs < statSync(target).mtimeMs) {
+      mkdirSync(dirname(localPath), { recursive: true })
+      copyFileSync(target, localPath)
+    }
+    beats.push({
+      beat: mb.beat,
+      shotId: mb.shotId,
+      start,
+      duration,
+      // 「Beat 8. 」这种前缀对模型没用，去掉只留内容。
+      goal: (sb?.goal ?? '').replace(/^Beat\s*\d+[.:、]?\s*/i, '').trim() || null,
+      localUrl: `/uploads/${localFile}`,
+      frameUrls,
+      // 每张定帧对应的镜头信息：景别用来锁住定帧的景别，主体/对手决定这一帧喂谁的角色图。
+      frameShots: await Promise.all(frameAt.map(async (at, i) => ({
+        /** 这一帧在 beat 里的秒数。客户端据此算出每个人物的出镜时段。 */
+        at,
+        shotSize: segs[i]?.shotSize ?? null,
+        subject: segs[i]?.subject ?? null,
+        partner: segs[i]?.partner ?? null,
+        // 真正出场的是谁：直接从画面数假人颜色。staging 的 subject/partner 和渲出来的
+        // 画面对不上（beat 3 实测），按它喂角色图会喂错人。
+        present: framePaths[i] ? await castInFrame(framePaths[i], characters) : [],
+      }))),
+      clipUrl: `${STUDIO_PUBLIC_URL}/canvas-import/${shortId}/blockout/${file}?v=${Math.round(statSync(target).mtimeMs)}`,
+      characters,
+      segments: (sb?.segments ?? []).map((g) => ({
+        t0: g.t0,
+        t1: Math.min(g.t1, REF_VIDEO_MAX_S),
+        shotSize: g.shotSize ?? null,
+        cameraMotion: g.cameraMotion?.id ?? null,
+        cameraPreset: g.cameraPreset ?? null,
+        subject: g.subject ?? null,
+        // 这一段谁在画面里。定帧那一步据此只喂在场人物的角色图 —— 不然模型会把
+        // 所有给过角色图的人都塞进每一张定帧（实测：单人镜头被画成一群蒙面人）。
+        partner: g.partner ?? null,
+      })).filter((g) => g.t0 < REF_VIDEO_MAX_S),
+    })
+  }
+  if (beats.length === 0) return sendJson(res, 409, { error: '预演里没有 beat' })
+
+  // Seedance fetches the clip itself; fail here with a readable reason instead of a vague task failure.
+  try {
+    const probe = await fetch(beats[0].clipUrl, { method: 'HEAD', signal: AbortSignal.timeout(8000) })
+    if (!probe.ok) throw new Error(`HTTP ${probe.status}`)
+  } catch (e) {
+    return sendJson(res, 503, { error: `白模片段的公网地址访问不到（${(e as Error).message}）：Seedance 只能从公网 URL 读参考视频，确认 3D 导演台（${STUDIO_PUBLIC_URL}）在运行` })
+  }
+  sendJson(res, 200, { shortId, beats })
+}
+
 function handleCancel(req: IncomingMessage, res: ServerResponse) {
   const shortId = new URL(req.url ?? '', 'http://x').searchParams.get('shortId') ?? ''
   if (!SHORT_ID_RE.test(shortId)) return sendJson(res, 400, { error: 'shortId 不合法' })
@@ -480,6 +768,7 @@ export function previsPlugin(): Plugin {
       server.middlewares.use('/previs/cancel', wrap('POST', handleCancel))
       server.middlewares.use('/previs/bundle', wrap('GET', handleBundle))
       server.middlewares.use('/previs/report', wrap('GET', handleReport))
+      server.middlewares.use('/previs/beats', wrap('GET', handleBeats))
     },
   }
 }

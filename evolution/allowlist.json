@@ -1,0 +1,10 @@
+{
+  "_comment": "HarnessX Evolver editable surface (D2/D3 harness assets). Shared by src/lib/evolution/config.ts (TS) and scripts/evolution/lib/candidates.mjs (Node) so the two runtimes never drift. Judge prompts, gates, registry, plugins, and the evolution scripts themselves are NEVER listed here.",
+  "patterns": [
+    "^src/lib/agents/[\\w-]+/prompts/[\\w-]+\\.md$",
+    "^src/lib/agents/[\\w-]+/SKILL\\.md$",
+    "^src/lib/agents/[\\w-]+/dance-library/[\\w-]+\\.json$",
+    "^src/lib/agents/[\\w-]+/[\\w-]+-library/[\\w-]+\\.json$",
+    "^evolution/self-corpus\\.jsonl$"
+  ]
+}

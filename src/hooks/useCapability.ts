@@ -1,4 +1,5 @@
 import { useCallback } from 'react'
+import { logAction } from '@/lib/client-log'
 import { v4 as uuid } from 'uuid'
 import { toast } from 'sonner'
 import { runCapability } from '@/lib/capabilities/client'
@@ -15,6 +16,8 @@ export interface RunCapabilityArgs {
   itemId: string
   params?: Record<string, unknown>
   extraInputs?: CapabilityInput[]
+  /** false → do not ship the node's own content as an input (re-shoot). */
+  includeSourceContent?: boolean
 }
 
 export function useCapability() {
@@ -37,24 +40,39 @@ export function useCapability() {
       // the dialog already composed prompt + refs before calling us).
       const inputs: CapabilityInput[] = []
 
-      // Source node content
-      if ((item.kind === 'image' || item.kind === 'video') && item.content) {
+      // Source node content. Skipped for a re-shoot (includeSourceContent: false):
+      // the node's own previous OUTPUT would otherwise ship as an extra
+      // reference_video — it blew the reference-video budget and, once its signed
+      // TOS link expired, made the provider hang on a fetch it could never do.
+      const dialogRefs = new Set((args.extraInputs ?? []).map((i) => i.url).filter(Boolean) as string[])
+      const includeSource = args.includeSourceContent !== false
+      if (includeSource && (item.kind === 'image' || item.kind === 'video') && item.content && !dialogRefs.has(item.content)) {
         if (item.kind === 'video' || /\.(mp4|webm|mov)(\?|$)/i.test(item.content)) {
           inputs.push({ kind: 'video', url: item.content })
         } else {
           inputs.push({ kind: 'image', url: item.content })
         }
       }
-      if (item.kind === 'audio' && item.content) {
+      if (includeSource && item.kind === 'audio' && item.content && !dialogRefs.has(item.content)) {
         inputs.push({ kind: 'audio', url: item.content })
       }
-      if (item.kind === 'text' && item.content) {
+      if (includeSource && item.kind === 'text' && item.content) {
         inputs.push({ kind: 'text', text: item.content })
       }
 
-      // Extra inputs from dialog (prompt text, ref images, etc.)
-      if (args.extraInputs) inputs.push(...args.extraInputs)
+      // Extra inputs from dialog (prompt text, ref images, etc.), deduped.
+      const seenUrls = new Set(inputs.map((i) => i.url).filter(Boolean) as string[])
+      for (const extra of args.extraInputs ?? []) {
+        if (extra.url && seenUrls.has(extra.url)) continue
+        if (extra.url) seenUrls.add(extra.url)
+        inputs.push(extra)
+      }
 
+      logAction('capability.run', {
+        capability: args.capabilityId,
+        params: args.params,
+        inputs: inputs.map((i) => (i.kind === 'text' ? `text(${(i.text ?? '').length})` : `${i.kind}=${i.url ?? ''}`)),
+      })
       const result = await runCapability({
         capability: args.capabilityId,
         inputs,
@@ -74,6 +92,31 @@ export function useCapability() {
       // the canvas (same UX as the keyframe pattern).
       const srcItem = args.itemId ? useCanvasItemStore.getState().items[args.itemId] : undefined
       const inheritBeatVideoRole = srcItem?.role === 'beat-video'
+
+      // Record what this generation actually received, so the node's Edit panel
+      // ("Seedance 实际输入") and any later regen start from the same inputs
+      // instead of an empty set.
+      const urlsOfKind = (kind: 'image' | 'video' | 'audio') =>
+        inputs.filter((i) => i.kind === kind && i.url).map((i) => i.url as string)
+      const usedInputs = {
+        prompt: inputs.filter((i) => i.kind === 'text').map((i) => i.text ?? '').join('\n').trim() || undefined,
+        refImages: urlsOfKind('image'),
+        refVideos: urlsOfKind('video'),
+        refAudios: urlsOfKind('audio'),
+        provider: args.params?.provider as string | undefined,
+        model: args.params?.model as string | undefined,
+        genParams: Object.fromEntries(
+          Object.entries(args.params ?? {}).filter(([, v]) => v != null).map(([k, v]) => [k, String(v)]),
+        ),
+      }
+
+      // A capability that returns roles is describing a graph, not a list: the
+      // shots feed the final cut, so they are wired to it rather than all
+      // hanging off the source. Everything else keeps the flat fan-out.
+      const shotNodeIds: string[] = []
+      let finalNodeId: string | null = null
+      const shotCount = result.outputs.filter((o) => o.role === 'shot').length
+      let shotIndex = 0
 
       for (let i = 0; i < result.outputs.length; i++) {
         const output = result.outputs[i]
@@ -95,22 +138,45 @@ export function useCapability() {
             kind: isVideoOutput ? 'video' : 'image',
             ...(isVideoOutput && inheritBeatVideoRole
               ? { role: 'beat-video', name: srcItem!.name }   // preserve "BV-S1"
-              : { name: result.outputs.length > 1 ? `${cap.label} ${i + 1}` : cap.label }),
+              : { name: output.label ?? (result.outputs.length > 1 ? `${cap.label} ${i + 1}` : cap.label) }),
             content: output.url ?? '',
+            ...usedInputs,
           })
           const size = isVideoOutput
             ? { width: 360, height: 200 }
             : { width: 280, height: 200 }
+          // Shots stack in a column between the source and the final cut, so
+          // the film reads left to right: source -> storyboard + shots -> final.
+          let at = { x: pos.x + srcW + 60 + i * (280 + nodeGap), y: pos.y }
+          if (output.role === 'shot') {
+            at = { x: pos.x + srcW + 380, y: pos.y + shotIndex * (200 + nodeGap) }
+            shotIndex += 1
+          } else if (output.role === 'final') {
+            at = { x: pos.x + srcW + 820, y: pos.y + Math.max(0, (shotCount - 1) / 2) * (200 + nodeGap) }
+          } else if (output.role === 'storyboard') {
+            at = { x: pos.x + srcW + 60, y: pos.y }
+          }
           const newNodeId = useCanvasStore.getState().addItemNode(
-            newItemId, isVideoOutput ? 'video' : 'image',
-            { x: pos.x + srcW + 60 + i * (280 + nodeGap), y: pos.y },
-            size,
+            newItemId, isVideoOutput ? 'video' : 'image', at, size,
           )
-          useCanvasStore.getState().addEdge(args.nodeId, newNodeId)
+          if (output.role === 'shot') {
+            shotNodeIds.push(newNodeId)
+            useCanvasStore.getState().addEdge(args.nodeId, newNodeId)
+          } else if (output.role === 'final') {
+            finalNodeId = newNodeId
+          } else {
+            useCanvasStore.getState().addEdge(args.nodeId, newNodeId)
+          }
         }
       }
 
-      const output = result.outputs[0]
+      // The final cut is fed by its shots, not by the image the run started from.
+      if (finalNodeId) {
+        const sources = shotNodeIds.length ? shotNodeIds : [args.nodeId]
+        for (const s of sources) useCanvasStore.getState().addEdge(s, finalNodeId)
+      }
+
+      const output = result.outputs.find((o) => o.role === 'final') ?? result.outputs[0]
       updateTask(taskId, { status: 'done', resultUrl: output.url ?? '', resultKind: (output.kind === 'video' ? 'video' : 'image') as 'image' | 'video' })
       // Log to generation history
       useProjectDB.getState().addHistoryEntry({
