@@ -2,11 +2,13 @@ import { memo, useRef, useState, useCallback } from 'react'
 import { Handle, Position, NodeResizer, useNodeId } from '@xyflow/react'
 import { toast } from 'sonner'
 import { NodeFloatingToolbar } from '../NodeFloatingToolbar'
-import { ImageIcon, Upload, Link as LinkIcon, User, MapPin, Package, Film, Mic, Star, ShieldCheck } from 'lucide-react'
+import { ImageIcon, Upload, Link as LinkIcon, User, MapPin, Package, Film, Mic, Star, ShieldCheck, Download } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useCanvasItemStore } from '@/stores/canvas-item-store'
 import { useCanvasStore } from '@/stores/canvas-store'
 import { useLibtvTasksStore } from '@/stores/libtv-tasks-store'
+import { usePrevisRunsStore } from '@/stores/previs-runs-store'
+import { cancelPrevisRun } from '@/lib/previs-export/run'
 import { useAssetStore } from '@/stores/asset-store'
 import { useStoryboardStore } from '@/stores/storyboard-store'
 import { useProjectDB } from '@/stores/project-db'
@@ -49,6 +51,10 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
     Object.values(s.tasks).find(
       (t) => t.itemId === data.itemId && (t.status === 'pending' || t.status === 'polling'),
     ),
+  )
+  // 「生成 3D 预演」placeholder: returns the stored run object (stable ref).
+  const previsRun = usePrevisRunsStore((s) =>
+    Object.values(s.runs).find((r) => r.itemId === data.itemId && r.status !== 'done'),
   )
 
   // For keyframe / beat-video items: is this the one the storyboard table
@@ -214,7 +220,7 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
       className={cn(
         'relative w-full h-full rounded-lg border-2 border-border bg-card shadow-md overflow-hidden',
         selected && 'ring-2 ring-primary',
-        (activeTask || regenerating) && 'bragi-generating'
+        (activeTask || regenerating || previsRun?.status === 'running') && 'bragi-generating'
       )}
     >
       <NodeFloatingToolbar nodeId={nodeId} itemId={data.itemId} isVisible={selected} />
@@ -474,6 +480,56 @@ export const ImageCanvasNode = memo(function ImageCanvasNode({ data, selected }:
             </div>
           )}
         </div>
+      )}
+
+      {previsRun?.status === 'running' && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/70 text-white p-3 text-center">
+          <div className="w-6 h-6 border-2 border-sky-300 border-t-transparent rounded-full animate-spin" />
+          <div className="text-[11px]">3D 预演 · {previsRun.phase}</div>
+          <div className="text-[9px] text-white/60">
+            已调用 {previsRun.toolCalls} 次工具 · {Math.max(1, Math.round((Date.now() - previsRun.startedAt) / 60000))} 分钟
+          </div>
+          <button
+            className="mt-1 px-2 py-0.5 text-[10px] rounded bg-white/10 hover:bg-white/20"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={() => void cancelPrevisRun(previsRun.shortId)}
+          >取消</button>
+        </div>
+      )}
+      {previsRun?.status === 'error' && !item.content && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/70 text-center p-3">
+          <div className="text-[11px] text-red-300">3D 预演失败</div>
+          <div className="text-[9px] text-white/70 line-clamp-4">{previsRun.error}</div>
+        </div>
+      )}
+      {item.sessionUrl && (
+        <a
+          href={item.sessionUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="在 3D 导演台打开这个预演（可继续调站位、机位、动作）"
+          className="absolute top-1 left-9 z-20 px-1.5 py-0.5 text-[10px] rounded bg-sky-600/80 text-white hover:bg-sky-500"
+          onMouseDown={(e) => e.stopPropagation()}
+        >3D</a>
+      )}
+      {item.bundleUrl && (
+        <a
+          href={item.bundleUrl}
+          download
+          title="下载 .previs.json 项目包（单镜头约 30 MB，多镜头可达上百 MB；含白模布景 / 人物 / 机位 / 参考图）：到 3D 导演台「场景文件 → 从本地加载项目」上传后继续编辑"
+          className={`absolute top-1 ${item.sessionUrl ? 'left-[4.25rem]' : 'left-9'} z-20 inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] rounded bg-emerald-600/80 text-white hover:bg-emerald-500`}
+          onMouseDown={(e) => e.stopPropagation()}
+        ><Download className="w-2.5 h-2.5" />.previs.json</a>
+      )}
+      {item.reportUrl && (
+        <a
+          href={item.reportUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="导演报告：布景、走位图、每个 beat 的分镜与取舍"
+          className="absolute top-7 left-9 z-20 px-1.5 py-0.5 text-[10px] rounded bg-violet-600/80 text-white hover:bg-violet-500"
+          onMouseDown={(e) => e.stopPropagation()}
+        >报告</a>
       )}
 
       <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onFile} />

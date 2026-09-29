@@ -11,13 +11,15 @@ import { assetProxyPlugin } from './vite-asset-proxy-plugin'
 import { timelineExportPlugin } from './vite-timeline-export-plugin'
 import { avatarsPlugin } from './vite-avatars-plugin'
 import { tracePlugin } from './vite-trace-plugin'
+import { storyversePlugin } from './vite-storyverse-plugin'
+import { previsPlugin } from './vite-previs-plugin'
 
 // HTTPS toggle: opt-out by setting DEV_HTTPS=0 (e.g. when port-forwarding to localhost).
 // Otherwise the dev server serves a self-signed cert so getUserMedia works over LAN/public IPs.
 const useHttps = process.env.DEV_HTTPS !== '0'
 
 export default defineConfig({
-  plugins: [react(), ...(useHttps ? [basicSsl()] : []), libtvPlugin(), providersPlugin(), capabilitiesPlugin(), sessionSnapshotPlugin(), assetProxyPlugin(), timelineExportPlugin(), avatarsPlugin(), tracePlugin()],
+  plugins: [react(), ...(useHttps ? [basicSsl()] : []), libtvPlugin(), providersPlugin(), capabilitiesPlugin(), sessionSnapshotPlugin(), assetProxyPlugin(), timelineExportPlugin(), avatarsPlugin(), tracePlugin(), storyversePlugin(), previsPlugin()],
   server: {
     host: '0.0.0.0',
     port: 8080,

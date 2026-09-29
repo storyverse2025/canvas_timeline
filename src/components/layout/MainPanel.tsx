@@ -4,6 +4,7 @@ import { AssetCanvas } from '@/components/canvas/AssetCanvas'
 import { StoryboardTable } from '@/components/table/StoryboardTable'
 import { MultiTrackTimeline } from '@/components/timeline/MultiTrackTimeline'
 import { ShotEditorOverlay } from '@/components/shot-editor/ShotEditorOverlay'
+import { StoryverseProjectsPage } from '@/components/projects/StoryverseProjectsPage'
 
 /**
  * Tab mounting strategy:
@@ -43,6 +44,11 @@ export function MainPanel() {
       {visited.current.has('timeline') && (
         <div className={activeTab === 'timeline' ? 'flex-1 overflow-hidden' : 'hidden'}>
           <MultiTrackTimeline />
+        </div>
+      )}
+      {visited.current.has('projects') && (
+        <div className={activeTab === 'projects' ? 'flex-1 overflow-hidden' : 'hidden'}>
+          <StoryverseProjectsPage />
         </div>
       )}
       <ShotEditorOverlay />

@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import { User, MapPin, Package, Film, Trash2, ImageIcon, Type, FlaskConical, LayoutGrid, Palette } from 'lucide-react'
+import { User, MapPin, Package, Film, Trash2, ImageIcon, Type, FlaskConical, LayoutGrid, Palette, Clapperboard } from 'lucide-react'
 import { useReactFlow } from '@xyflow/react'
 import { toast } from 'sonner'
 import { resolveOverlaps } from '@/lib/canvas-layout'
+import { DIRECTOR_STUDIO_URL } from '@/lib/previs-export/studio-url'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
@@ -105,6 +106,12 @@ export function AssetCanvasToolbar() {
     clearSelection()
   }
 
+  // 3D导演台 (storyai-director-studio)。选中视频节点的「生成 3D 预演」走 previs MCP；
+  // 这里只是新标签页打开空白导演台。
+  const handleOpenDirectorStudio = () => {
+    window.open(`${DIRECTOR_STUDIO_URL}/`, '_blank', 'noopener')
+  }
+
   return (
     <TooltipProvider>
       <div className="absolute top-3 left-3 z-10 flex flex-col gap-1">
@@ -148,6 +155,14 @@ export function AssetCanvasToolbar() {
             </Button>
           </TooltipTrigger>
           <TooltipContent side="right">全局风格 → 关联所有资产</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="secondary" size="icon" className="h-8 w-8 shadow-md" onClick={handleOpenDirectorStudio}>
+              <Clapperboard className="w-4 h-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="right">3D 导演台（场景搭建 / 机位规划）</TooltipContent>
         </Tooltip>
         <DropdownMenu>
           <Tooltip>
