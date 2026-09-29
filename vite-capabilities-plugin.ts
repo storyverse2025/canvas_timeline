@@ -1,6 +1,8 @@
 import type { Plugin } from 'vite'
 import type { IncomingMessage, ServerResponse } from 'http'
-import { writeFileSync, mkdirSync, existsSync, statSync, createReadStream } from 'fs'
+import { writeFileSync, mkdirSync, existsSync, statSync, createReadStream, readFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { spawn } from 'child_process'
 import { join } from 'path'
 import { randomUUID, createHash, createHmac } from 'crypto'
 import sharp from 'sharp'
@@ -11,7 +13,7 @@ interface CapReq {
   inputs: CapInput[]
   params?: Record<string, unknown>
 }
-interface CapOut { kind: string; url?: string; text?: string }
+interface CapOut { kind: string; url?: string; text?: string; role?: string; label?: string }
 interface CapRes { outputs: CapOut[] }
 
 async function readJson(req: IncomingMessage): Promise<CapReq> {
@@ -2115,6 +2117,126 @@ async function lipSync(req: CapReq): Promise<CapRes> {
   return { outputs: [{ kind: 'video', url }] }
 }
 
+/**
+ * 生成 MV — one image + one mp3 -> a beat-cut music video.
+ *
+ * Delegates to the `ai-mv-lipsync` skill's Python pipeline rather than
+ * reimplementing it here: song analysis (librosa), bar-line shot planning,
+ * per-framing driving images, and the routing that decides which shots get
+ * audio-driven lip-sync at all. A shot only pays for OmniHuman when the mouth
+ * is large enough on screen to read; wide and overhead framings become
+ * closed-mouth Seedance cutaways, which is both better MV grammar and cheaper.
+ *
+ * This runs for minutes, well past a normal capability. It is still on the
+ * synchronous /capabilities/run path, so the dev server holds the connection —
+ * if that proves fragile, move it to the async pattern in vite-previs-plugin.ts
+ * (/mv/run + /mv/status) rather than trimming the pipeline.
+ */
+async function musicVideo(req: CapReq): Promise<CapRes> {
+  const images = getImages(req.inputs)
+  const audios = getAudios(req.inputs)
+  if (!images.length) throw new Error('需要一张人物图（在图片节点上右键调用）')
+  if (!audios.length) throw new Error('需要一个 mp3：在对话框里点「上传」选择音频文件')
+
+  const skillRoot = process.env.AI_MV_SKILL_ROOT
+    ?? join(process.env.PROMPT_RAG_ROOT ?? '/data/repos/prompt_rag', 'skills', 'ai-mv-lipsync')
+  const script = join(skillRoot, 'scripts', 'run_mv.py')
+  if (!existsSync(script)) {
+    throw new Error(`找不到 MV 流水线脚本：${script}。设置 AI_MV_SKILL_ROOT 指向 ai-mv-lipsync 技能目录。`)
+  }
+
+  const job = join(tmpdir(), `mv-${randomUUID().slice(0, 8)}`)
+  mkdirSync(job, { recursive: true })
+
+  // run_mv.py wants local paths; fetch whatever the canvas handed us.
+  const fetchTo = async (url: string, name: string): Promise<string> => {
+    const dest = join(job, name)
+    if (url.startsWith('/uploads/')) {
+      writeFileSync(dest, readFileSync(join(process.cwd(), 'public', url.slice(1))))
+      return dest
+    }
+    const r = await fetch(url)
+    if (!r.ok) throw new Error(`下载素材失败 ${r.status}: ${url.slice(0, 120)}`)
+    writeFileSync(dest, Buffer.from(await r.arrayBuffer()))
+    return dest
+  }
+
+  const imagePath = await fetchTo(images[0], 'portrait.png')
+  const audioPath = await fetchTo(audios[0], 'song.mp3')
+
+  const style = (req.params?.mvStyle as string) || 'cinematic'
+  const duration = String(req.params?.duration ?? '30')
+  const segment = (req.params?.segment as string) || 'auto'
+  // Density, not a shot count: the planner derives how many shots that length
+  // needs and keeps each one inside the per-call limits of whichever backend
+  // it routes to. duration '0' means the whole mp3.
+  const density = (req.params?.shotDensity as string) === 'busy' ? 'busy' : 'calm'
+
+  const scene = String(req.params?.scene ?? '').trim()
+
+  const args = [script, '--image', imagePath, '--audio', audioPath, '--style', style,
+                '--duration', duration, '--segment', segment, '--density', density,
+                '--outdir', job]
+  if (scene) args.push('--scene', scene)
+  console.log(`[cap] music-video spawn: python3 ${args.join(' ')}`)
+
+  const code = await new Promise<number>((res) => {
+    const proc = spawn(process.env.PYTHON_BIN ?? 'python3', args, {
+      env: { ...process.env, PROMPT_RAG_ROOT: process.env.PROMPT_RAG_ROOT ?? '/data/repos/prompt_rag' },
+    })
+    proc.stdout.on('data', (d: Buffer) => console.log(`[mv] ${d.toString().trimEnd()}`))
+    proc.stderr.on('data', (d: Buffer) => console.log(`[mv!] ${d.toString().trimEnd()}`))
+    proc.on('close', res)
+  })
+
+  const produced = join(job, 'mv.mp4')
+  if (code !== 0 || !existsSync(produced)) {
+    throw new Error(`MV 生成失败（退出码 ${code}），详见 dev server 日志中的 [mv] 行`)
+  }
+
+  const uploadsDir = join(process.cwd(), 'public', 'uploads')
+  mkdirSync(uploadsDir, { recursive: true })
+  const publish = (src: string, ext: string): string => {
+    const name = `mv-${randomUUID()}${ext}`
+    writeFileSync(join(uploadsDir, name), readFileSync(src))
+    return `/uploads/${name}`
+  }
+
+  // The run is handed back as the structure it actually is, not a single file:
+  // the storyboard that the routing was decided from, one node per shot, and
+  // the cut they assemble into. The shots are what makes a re-cut possible —
+  // a bad take can be regenerated without paying for the other four again.
+  const outputs: CapOut[] = []
+
+  const storyboard = join(job, 'storyboard.jpg')
+  if (existsSync(storyboard)) {
+    outputs.push({ kind: 'image', url: publish(storyboard, '.jpg'),
+                   role: 'storyboard', label: '分镜图' })
+  }
+
+  const planPath = join(job, 'plan.json')
+  if (existsSync(planPath)) {
+    try {
+      const plan = JSON.parse(readFileSync(planPath, 'utf8')) as {
+        shots?: { id: string; lipsync?: boolean; framing?: string; span?: number }[]
+      }
+      for (const shot of plan.shots ?? []) {
+        const clip = join(job, 'clips', `${shot.id}.mp4`)
+        if (!existsSync(clip)) continue
+        outputs.push({
+          kind: 'video', url: publish(clip, '.mp4'), role: 'shot',
+          label: `${shot.id} ${shot.lipsync ? '真唱' : '闭口'} ${shot.framing ?? ''}`.trim(),
+        })
+      }
+    } catch (e) {
+      console.log(`[cap] music-video: plan.json unreadable, shots not published: ${(e as Error).message}`)
+    }
+  }
+
+  outputs.push({ kind: 'video', url: publish(produced, '.mp4'), role: 'final', label: '成片' })
+  return { outputs }
+}
+
 async function motionImitation(req: CapReq): Promise<CapRes> {
   const videos = getVideos(req.inputs)
   const images = getImages(req.inputs)
@@ -2303,6 +2425,7 @@ const handlers: Record<string, (req: CapReq) => Promise<CapRes>> = {
   'universal-video': universalToVideo,
   'upscale-video': upscaleVideo,
   'lip-sync': lipSync,
+  'music-video': musicVideo,
   'motion-imitation': motionImitation,
   'video-split': videoSplit,
   'video-style-transfer': videoStyleTransfer,
