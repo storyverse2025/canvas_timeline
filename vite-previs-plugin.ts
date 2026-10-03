@@ -450,6 +450,17 @@ function handleReport(req: IncomingMessage, res: ServerResponse) {
   createReadStream(file).pipe(res)
 }
 
+/**
+ * 假人加上正面标记（脸上五官 + 胸前标识板）的那次 studio 改动的时间线
+ * （storyai-director-studio PR #4，2026-09-26）。
+ *
+ * 早于这个时间渲出来的白模，假人是光溜溜的纯色人形，正面和背面一模一样 ——
+ * 朝向信息根本不在素材里，出片一律把人转过来面朝镜头，换 prompt、换参考图、
+ * 换模型都修不掉（2026-09-19 的 26 次对照实验）。所以这里只能提示「回导演台重渲」，
+ * 这是服务端才知道的事实（白模是 studio 渲的），不放在客户端。
+ */
+const FACING_MARKERS_SINCE = Date.parse('2026-09-26T00:00:00Z')
+
 /** Seedance 2.0 reference_video: 4–15 s per clip, web URL only (base64 is rejected). */
 const REF_VIDEO_MIN_S = 4
 const REF_VIDEO_MAX_S = 15
@@ -691,6 +702,11 @@ async function handleBeats(req: IncomingMessage, res: ServerResponse) {
     }
     beats.push({
       beat: mb.beat,
+      // 白模素材的年龄：客户端据此提醒「这段白模没有朝向标记」。
+      // 按**片段**的时间算，不是 episode —— 片段可以被单独换掉（重渲某一镜时
+      // 直接覆盖这里的 mp4），那时 episode 还是旧的，按 episode 判会误报。
+      renderedAt: Math.round(statSync(target).mtimeMs),
+      facingMarkers: statSync(target).mtimeMs >= FACING_MARKERS_SINCE,
       shotId: mb.shotId,
       start,
       duration,
