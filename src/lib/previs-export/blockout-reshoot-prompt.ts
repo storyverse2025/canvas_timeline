@@ -40,6 +40,12 @@ export interface PrevisBeatClip {
     present?: string[]
   }[]
   beat: number
+  /** 白模（episode.mp4）渲出来的时间戳 ms。用来判断这段白模是不是在假人加上
+   *  正面标记（五官 + 胸标，studio PR #4）之前渲的 —— 那种白模朝向全靠模型猜，
+   *  prompt 和参考图都救不回来，必须回导演台重渲。 */
+  renderedAt?: number | null
+  /** 服务端算好的：这段白模的假人带正面标记吗。 */
+  facingMarkers?: boolean
   /** manifest beat shotId: storyboard row id, else the canvas video item id. */
   shotId: string
   start: number

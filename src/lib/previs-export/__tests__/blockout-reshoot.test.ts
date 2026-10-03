@@ -139,7 +139,10 @@ describe('reshootInputsWithBlockout', () => {
     expect(req.inputs.filter((i) => i.kind === 'image').map((i) => (i as { url: string }).url))
       .toEqual(['/uploads/zach.png', '/uploads/charlie.png'])
     expect(req.inputs.filter((i) => i.kind === 'video')).toEqual([{ kind: 'video', url: beat().clipUrl }])
-    expect(req.inputs.filter((i) => i.kind === 'audio')).toHaveLength(1)
+    // 对白音频不进重拍请求：调出「跟得住白模」那套配置的实验（v28–v30）全程
+    // 只喂 文字 + 参考图 + 白模视频。UI 这条路曾多塞一路 refAudios，等于拿一个
+    // 没测过的变量去跑已经调好的配置（2026-09-29 排查白模重拍不跟镜时发现）。
+    expect(req.inputs.filter((i) => i.kind === 'audio')).toHaveLength(0)
     const prompt = (req.inputs.find((i) => i.kind === 'text') as { text: string }).text
     expect(prompt).toContain('蓝色假人替换成 @图片1 的人物（Zachary）')
     expect(prompt).toContain('红色假人替换成 @图片2 的人物（Charlie）')

@@ -322,13 +322,20 @@ async function reshootOne(t: Target, blockoutNodeId: string): Promise<void> {
     // 场景图跟在角色图后面：白模的职责已在 prompt 里划死为「镜头语言 + 大体运动姿势」，
     // 布景一概不作数，成片的环境就靠这张场景图（否则背景会退化成灰白的自编场景）。
     const images = refs.sceneImage ? [...refs.images, refs.sceneImage] : refs.images
+    // 记下真正发出去的那串字。重试会换一套参考图、重建 prompt，所以记在 shoot() 里
+    // 而不是外面记一次。踩过：4 次重拍跑完，日志里没有任何 prompt 痕迹，
+    // 事后只能靠文件 mtime 反推到底用的哪版白模。
+    logAction('blockout-reshoot.shot.prompt', { beat: t.beat.beat, images: images.length, prompt })
     const r = await runCapability({
       capability: 'text-to-video',
       inputs: [
         { kind: 'text', text: prompt },
         ...images.map((url) => ({ kind: 'image' as const, url })),
         { kind: 'video', url: t.beat.clipUrl },
-        ...audios.map((url) => ({ kind: 'audio' as const, url })),
+        // 对白音频**不进**重拍请求：验证「跟住白模」那批实验（v28–v30）全程只喂
+        // 文字 + 参考图 + 白模视频，没有音轨。UI 这条路原先多塞了一路 refAudios，
+        // 等于拿一个没测过的变量去跑已经调好的配置。音轨仍记在新节点上
+        // （refAudios），配音是后面独立的一条链路。
       ],
       params: {
         provider: SHOOT_PROVIDER,
@@ -350,7 +357,8 @@ async function reshootOne(t: Target, blockoutNodeId: string): Promise<void> {
 
   logAction('blockout-reshoot.shot.start', {
     beat: t.beat.beat, shotId: t.beat.shotId, duration, aspect, resolution: RESHOOT_RESOLUTION,
-    clip: t.beat.clipUrl, sourceItem: t.item?.name, audios: audios.length,
+    clip: t.beat.clipUrl, sourceItem: t.item?.name, refAudiosIgnored: audios.length,
+    blockoutRenderedAt: t.beat.renderedAt ?? null,
   })
 
   let result: Awaited<ReturnType<typeof shoot>>
@@ -482,6 +490,25 @@ async function runTargets(shootable: Target[]): Promise<void> {
  * be iterated without re-running the whole previs. Each run adds another result
  * node under the clip; nothing existing is overwritten.
  */
+/** 确认框里的模型标签。直接从常量推，别手写 —— 文案一度写着「Seedance 2.5」，
+ *  而实际发的是 2.0（2.5 会把白模当创作素材自由发挥，跟不住）。 */
+const RESHOOT_MODEL_LABEL = `Seedance ${RESHOOT_MODEL.includes('2-5') ? '2.5' : '2.0'} ${RESHOOT_RESOLUTION}`
+
+/**
+ * 白模素材过旧的提醒文案。返回空串表示这段白模带正面标记、没问题。
+ *
+ * 为什么必须提醒而不是拦下来：能不能用是用户的判断（有时只想看运镜），
+ * 但「没有五官和胸标的白模朝向全靠模型猜」这件事，不说用户无从知道 ——
+ * 2026-09-29 就是这样：代码是对的、白模是 9/18 的，出片不跟朝向，查了半天。
+ */
+function staleBlockoutWarning(beats: { facingMarkers?: boolean; renderedAt?: number | null }[]): string {
+  const stale = beats.filter((b) => b.facingMarkers === false)
+  if (!stale.length) return ''
+  const when = stale[0]?.renderedAt ? new Date(stale[0].renderedAt).toLocaleDateString('zh-CN') : '较早'
+  return `\n\n⚠️ 这段白模是 ${when} 渲的，假人还没有正面标记（脸上五官 + 胸前标识板），` +
+    `模型判断不了谁朝哪边，出片朝向大概率不跟白模。建议先回 3D 导演台把这个预演重渲一遍。`
+}
+
 export async function reshootOneBeatFromClip(blockoutNodeId: string): Promise<void> {
   const { nodes, edges } = useCanvasStore.getState()
   const items = useCanvasItemStore.getState().items
@@ -521,7 +548,8 @@ export async function reshootOneBeatFromClip(blockoutNodeId: string): Promise<vo
   target.blockoutNodeId = blockoutNodeId
   if (!window.confirm(
     `用这段白模重拍「${beatLabel(target)}」（${Math.round(target.beat.duration)}s）？\n\n` +
-    `会在这个白模节点右边新建一个视频节点（Seedance 2.5 ${RESHOOT_RESOLUTION}），已有的节点都不会被改动。`,
+    `会在这个白模节点右边新建一个视频节点（${RESHOOT_MODEL_LABEL}），已有的节点都不会被改动。` +
+    staleBlockoutWarning([target.beat]),
   )) return
 
   logAction('blockout-reshoot.single.start', { shortId: clip.shortId, beat: clip.beat })
@@ -555,8 +583,9 @@ export async function reshootInputsWithBlockout(previsNodeId: string): Promise<v
   const summary = shootable.map((t) => `${beatLabel(t)}（${Math.round(t.beat.duration)}s）`).join('、')
   if (!window.confirm(
     `用 3D 白模预演作为运镜和动作参考，生成 ${shootable.length} 个新的镜头视频？\n\n${summary}\n\n` +
-    `每镜会在画布上新建一个白模片段节点和一个新视频节点（Seedance 2.5 ${RESHOOT_RESOLUTION}），原来的视频节点不会被改动。` +
-    (skipped.length ? `\n没有原始 prompt、只建白模节点：${skipped.join('、')}` : ''),
+    `每镜会在画布上新建一个白模片段节点和一个新视频节点（${RESHOOT_MODEL_LABEL}），原来的视频节点不会被改动。` +
+    (skipped.length ? `\n没有原始 prompt、只建白模节点：${skipped.join('、')}` : '') +
+    staleBlockoutWarning(shootable.map((t) => t.beat)),
   )) return
 
   // Fan out on canvas first, so the user sees the whole plan while it shoots.
