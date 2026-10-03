@@ -326,6 +326,11 @@ export const CAPABILITIES: CapabilitySpec[] = [
     id: 'music-video',
     category: 'video',
     label: '生成 MV',
+    // Owns its own pipeline: song analysis, shot planning, then OmniHuman for
+    // the sung shots and Seedance for the closed-mouth ones. A single model
+    // choice is meaningless here, and `duration` below is the length of the
+    // finished MV, not of any one clip.
+    pipeline: true,
     description: '一张人物图 + 一首 MP3 ，出一支卡点且口型对得上的音乐 MV。看得清嘴的镜头走音频直驱真唱，远景与俯角走闭口情绪镜头。',
     inputKinds: ['image', 'audio', 'text'],
     outputKind: 'video',
@@ -339,8 +344,12 @@ export const CAPABILITIES: CapabilitySpec[] = [
         { value: 'stage-concert', label: '舞台：灯光、烟雾、高能量' },
         { value: 'anime', label: '动漫：赛璐璐、爆闪、夸张光效' },
       ]},
+      // Length follows the music, not any single model's ceiling: the film is
+      // assembled from clips, so the per-call limits only bound one shot.
       { key: 'duration', label: '成片时长', type: 'select', default: '30', options: [
-        { value: '15', label: '15s' }, { value: '30', label: '30s' }, { value: '60', label: '60s' },
+        { value: '15', label: '15s' }, { value: '30', label: '30s' },
+        { value: '60', label: '60s' }, { value: '90', label: '90s' },
+        { value: '0', label: '整首歌（按 mp3 长度）' },
       ]},
       { key: 'segment', label: '用歌的哪一段', type: 'select', default: 'auto', options: [
         { value: 'auto', label: '自动：取能量最高的段（通常是副歌）' },
@@ -348,9 +357,13 @@ export const CAPABILITIES: CapabilitySpec[] = [
         { value: 'chorus', label: '副歌' },
       ]},
       { key: 'shotDensity', label: '镜头强度', type: 'select', default: 'calm', options: [
-        { value: 'calm', label: '保守：4–5 镜，以景别变化为主' },
-        { value: 'busy', label: '密集：8+ 镜，卡点切' },
+        { value: 'calm', label: '保守：每镜约 6.5s，以景别变化为主' },
+        { value: 'busy', label: '密集：每镜约 3s，卡点切' },
       ]},
+      // The establishing frame is generated once and every framing derives from
+      // it, so this one line decides where the whole film takes place. Left
+      // blank it falls back to the style's default location.
+      { key: 'scene', label: '场景（留空按风格）', type: 'string' },
     ],
   },
   {

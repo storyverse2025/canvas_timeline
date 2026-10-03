@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { User, MapPin, Package, Film, Trash2, ImageIcon, Type, FlaskConical, LayoutGrid, Palette, Clapperboard } from 'lucide-react'
+import { useRef, useState } from 'react'
+import { User, MapPin, Package, Film, Trash2, ImageIcon, Type, FlaskConical, LayoutGrid, Palette, Clapperboard, Music } from 'lucide-react'
 import { useReactFlow } from '@xyflow/react'
 import { toast } from 'sonner'
 import { resolveOverlaps } from '@/lib/canvas-layout'
@@ -62,6 +62,8 @@ export function AssetCanvasToolbar() {
     connectStyleToAllAssets()
   }
 
+  const audioFileRef = useRef<HTMLInputElement>(null)
+
   const handleAddImage = () => {
     const id = addItem({ kind: 'image', name: '图片节点', content: '' })
     addItemNode(id, 'image', randomPosition())
@@ -76,6 +78,39 @@ export function AssetCanvasToolbar() {
   const handleAddText = () => {
     const id = addItem({ kind: 'text', name: '文本节点', content: '' })
     addItemNode(id, 'text', randomPosition())
+  }
+
+  // Audio arrives with its file, unlike image/text nodes which start empty:
+  // an empty audio node has nothing to show and no way to fill it from the
+  // canvas. Uploaded through the JSON/dataUrl branch of /uploads/save, which
+  // is the only one that maps the MIME type to a real extension — the raw
+  // binary branch would save an mp3 as .png.
+  const handleAudioFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    const toastId = toast.loading(`上传 ${file.name}…`)
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result as string)
+        reader.onerror = () => reject(new Error('读取文件失败'))
+        reader.readAsDataURL(file)
+      })
+      const res = await fetch('/uploads/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dataUrl, filename: file.name }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const { url } = (await res.json()) as { url?: string }
+      if (!url) throw new Error('服务端没有返回 url')
+      const id = addItem({ kind: 'audio', name: file.name, content: url })
+      addItemNode(id, 'audio', randomPosition())
+      toast.success(`已添加音频 ${file.name}`, { id: toastId })
+    } catch (err) {
+      toast.error('音频上传失败', { id: toastId, description: String((err as Error).message).slice(0, 200) })
+    }
   }
 
   const relayout = () => {
@@ -140,6 +175,15 @@ export function AssetCanvasToolbar() {
           </TooltipTrigger>
           <TooltipContent side="right">添加图片</TooltipContent>
         </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="secondary" size="icon" className="h-8 w-8 shadow-md" onClick={() => audioFileRef.current?.click()}>
+              <Music className="w-4 h-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="right">添加音频（mp3 / wav）</TooltipContent>
+        </Tooltip>
+        <input ref={audioFileRef} type="file" accept="audio/*" className="hidden" onChange={handleAudioFile} />
         <Tooltip>
           <TooltipTrigger asChild>
             <Button variant="secondary" size="icon" className="h-8 w-8 shadow-md" onClick={handleAddText}>
