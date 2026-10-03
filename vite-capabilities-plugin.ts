@@ -2888,13 +2888,17 @@ async function musicVideo(req: CapReq): Promise<CapRes> {
   const style = (req.params?.mvStyle as string) || 'cinematic'
   const duration = String(req.params?.duration ?? '30')
   const segment = (req.params?.segment as string) || 'auto'
-  // Shot count follows the density choice; the planner rotates framings so
-  // more shots means more framing variety, not just more cuts.
-  const shots = (req.params?.shotDensity as string) === 'busy' ? '8' : '5'
+  // Density, not a shot count: the planner derives how many shots that length
+  // needs and keeps each one inside the per-call limits of whichever backend
+  // it routes to. duration '0' means the whole mp3.
+  const density = (req.params?.shotDensity as string) === 'busy' ? 'busy' : 'calm'
+
+  const scene = String(req.params?.scene ?? '').trim()
 
   const args = [script, '--image', imagePath, '--audio', audioPath, '--style', style,
-                '--duration', duration, '--segment', segment, '--shots', shots,
+                '--duration', duration, '--segment', segment, '--density', density,
                 '--outdir', job]
+  if (scene) args.push('--scene', scene)
   console.log(`[cap] music-video spawn: python3 ${args.join(' ')}`)
 
   const code = await new Promise<number>((res) => {
@@ -2913,16 +2917,44 @@ async function musicVideo(req: CapReq): Promise<CapRes> {
 
   const uploadsDir = join(process.cwd(), 'public', 'uploads')
   mkdirSync(uploadsDir, { recursive: true })
-  const filename = `mv-${randomUUID()}.mp4`
-  writeFileSync(join(uploadsDir, filename), readFileSync(produced))
+  const publish = (src: string, ext: string): string => {
+    const name = `mv-${randomUUID()}${ext}`
+    writeFileSync(join(uploadsDir, name), readFileSync(src))
+    return `/uploads/${name}`
+  }
 
-  const outputs: CapOut[] = [{ kind: 'video', url: `/uploads/${filename}` }]
-  // Hand back the shot table too — the skill treats it as part of the delivery,
-  // not a scratch file, and it is what makes a re-cut possible.
+  // The run is handed back as the structure it actually is, not a single file:
+  // the storyboard that the routing was decided from, one node per shot, and
+  // the cut they assemble into. The shots are what makes a re-cut possible —
+  // a bad take can be regenerated without paying for the other four again.
+  const outputs: CapOut[] = []
+
+  const storyboard = join(job, 'storyboard.jpg')
+  if (existsSync(storyboard)) {
+    outputs.push({ kind: 'image', url: publish(storyboard, '.jpg'),
+                   role: 'storyboard', label: '分镜图' })
+  }
+
   const planPath = join(job, 'plan.json')
   if (existsSync(planPath)) {
-    outputs.push({ kind: 'text', text: readFileSync(planPath, 'utf8') })
+    try {
+      const plan = JSON.parse(readFileSync(planPath, 'utf8')) as {
+        shots?: { id: string; lipsync?: boolean; framing?: string; span?: number }[]
+      }
+      for (const shot of plan.shots ?? []) {
+        const clip = join(job, 'clips', `${shot.id}.mp4`)
+        if (!existsSync(clip)) continue
+        outputs.push({
+          kind: 'video', url: publish(clip, '.mp4'), role: 'shot',
+          label: `${shot.id} ${shot.lipsync ? '真唱' : '闭口'} ${shot.framing ?? ''}`.trim(),
+        })
+      }
+    } catch (e) {
+      console.log(`[cap] music-video: plan.json unreadable, shots not published: ${(e as Error).message}`)
+    }
   }
+
+  outputs.push({ kind: 'video', url: publish(produced, '.mp4'), role: 'final', label: '成片' })
   return { outputs }
 }
 
